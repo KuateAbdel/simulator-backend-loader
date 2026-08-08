@@ -16,9 +16,20 @@ dans l'interface.
 
 Disciplines portees ici :
 
-  D-DEP-1  Creer le Depositaire d'abord, souscrire ENSUITE.
+  D-DEP-1  Creer le Depositaire d'abord, souscrire ENSUITE. **Mesure du 08/08** :
+           la creation seule ne cree AUCUN compte (delta +0). Le Depositaire nait
+           **actif** — aucun `PATCH status/true` n'est necessaire.
   D-DEP-2  Les 6 comptes naissent a la PREMIERE souscription, par Depositaire et
-           non par produit. Souscrire a un 2e produit reutilise les memes.
+           non par produit. **Verifie de bout en bout le 08/08** : 1re
+           souscription -> +6 comptes (CAPITAL, CLASSIC, INTEREST, PENALTY, TAXE,
+           TERM_DEPOSIT, tous a 0 dans la devise du Depositaire) ; 2e
+           souscription -> **+0 compte**, les memes sont reutilises.
+
+  **Modele reel de la souscription** (mesure du 08/08, non documente ailleurs) :
+  il n'existe qu'**UNE SEULE souscription par Depositaire**, dont le champ
+  `product` est un **TABLEAU**. Souscrire n'en cree pas une nouvelle : cela
+  AJOUTE le produit au tableau. Un doublon s'y accumule donc silencieusement —
+  d'ou `a_deja_souscrit()`, qui parcourt le tableau avant tout POST.
   D-DEP-3  GET-avant-POST : aucune unicite de nom cote serveur, et aucun DELETE.
   D-DEP-6  Ne jamais presumer une coherence de devise Company <-> Depositaire :
            `currency` accepte n'importe quelle chaine (`FRA-201`, « ZZZ_INVENTE »

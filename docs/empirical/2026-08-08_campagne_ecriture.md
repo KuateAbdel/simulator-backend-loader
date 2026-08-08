@@ -212,6 +212,45 @@ L'écrasement vers `CORPORATE` de `D-CLI-4` est **propre à client-service**.
 
 ---
 
+## 11. ✅ product-service — trois invariants confirmés en écriture
+
+| Test | Résultat |
+|---|---|
+| `category = "ANY"` | **422** — *« Input should be 'INDIVIDUAL' or 'CORPORATE' »* · `INV-PRD-04` |
+| `policy` omise | **500** + fuite Python `LendingPolicySchema() argument after ** must be a mapping` · `ANO-PRD-POLICY-01`. **Aucun orphelin** : le compteur n'a pas bougé |
+| Payload complet du catalogue | **201** · Policy dédiée `52d02e5a…` · `interest = 24.0` · `amount_by_segment` **intégralement préservé** avec les 5 segments |
+
+**Premier produit LENDING de l'environnement** : 0 → 1. Le module `catalogue.py`
+est validé contre le serveur réel, pas seulement hors ligne.
+
+## 12. ✅ `D-DEP-2` confirmé de bout en bout
+
+| Étape | Comptes | Delta |
+|---|---:|---|
+| Création du Dépositaire seule | 49 → 49 | **+0** |
+| **1re souscription** | 49 → 55 | **+6** |
+| 2e souscription (autre produit) | 55 → 55 | **+0** — les mêmes sont réutilisés |
+| Souscription **dupliquée** | 55 → 55 | +0, mais **HTTP 201** — `FRA-202`, aucune protection |
+
+Les 6 comptes : `CAPITAL, CLASSIC, INTEREST, PENALTY, TAXE, TERM_DEPOSIT`, tous en
+`XAF`, tous à solde 0. Le Dépositaire naît **actif** — aucun `PATCH` requis.
+
+### Modèle réel de la souscription — non documenté ailleurs
+
+Il n'existe **qu'une seule souscription par Dépositaire**, dont le champ `product`
+est un **tableau**. Souscrire n'en crée pas une nouvelle : cela **ajoute au
+tableau**. Le doublon s'y accumule donc silencieusement :
+
+```
+1 souscription  →  product = ['Cotisation 20000/mois', 'plastique', 'plastique']
+```
+
+Validation référentielle confirmée : `product_id` inexistant → **404 « Product not
+found »**, `depositary_id` inexistant → **400 « Depositary not found »**. Deux codes
+différents pour deux références manquantes.
+
+---
+
 ## Corrections apportées au code
 
 | Défaut | Correction |
