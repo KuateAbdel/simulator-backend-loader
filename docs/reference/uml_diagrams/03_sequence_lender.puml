@@ -54,26 +54,38 @@ USR --> LDR : HTTP 200 — access_token
 deactivate USR
 
 note right of LDR
-  **⚠⚠ HYPOTHÈSE NON VÉRIFIÉE, PAS UN FAIT ⚠⚠**
-  UC-10 (CDC) décrit 4 comptes distincts pour
-  un Lender. **JAMAIS testé empiriquement**
-  (Trou #2, document maître §12) — contrairement
-  aux 6 comptes du Dépositaire, confirmés
-  plusieurs fois aujourd'hui. L'endpoint exact,
-  et même l'existence d'une cascade automatique,
-  restent à vérifier avant tout développement réel.
+  **TROU #2 — TRANCHÉ le 08/08/2026, lecture seule**
+  UC-10 (CDC) décrit 4 comptes distincts pour un
+  Lender. **AUCUNE cascade automatique n'existe.**
+  Preuve par comptage exhaustif : les 42 comptes de
+  l'environnement TEST s'expliquent intégralement
+  par 3 cascades connues (7 OPERATION + 5×6
+  Dépositaire + 5 CHECKING), zéro résiduel ;
+  0 Company sur 7 porte les 4 comptes Lender.
+  L'intention du CDC est maintenue — seul le
+  mécanisme change : le Loader crée ces 4 comptes
+  LUI-MÊME, explicitement.
 end note
 
-LDR -> ACC : [HYPOTHÈSE À VÉRIFIER] POST /accounts/ (type=CAPITAL)
+LDR -> ACC : POST /accounts/ (type=CAPITAL, owner_type=COMPANY,\nexternal_class=COMPANY_SERVICE, owner_id=company_id)
 activate ACC
-ACC --> LDR : [non testé empiriquement]
-LDR -> ACC : [HYPOTHÈSE À VÉRIFIER] POST /accounts/ (type=INTEREST)
-ACC --> LDR : [non testé empiriquement]
-LDR -> ACC : [HYPOTHÈSE À VÉRIFIER] POST /accounts/ (type=PENALTY)
-ACC --> LDR : [non testé empiriquement]
-LDR -> ACC : [HYPOTHÈSE À VÉRIFIER] POST /accounts/ (type=TAXE)
-ACC --> LDR : [non testé empiriquement]
+ACC --> LDR : HTTP 201 — capital_account_id
+LDR -> ACC : POST /accounts/ (type=INTEREST)
+ACC --> LDR : HTTP 201 — interest_account_id
+LDR -> ACC : POST /accounts/ (type=PENALTY)
+ACC --> LDR : HTTP 201 — penalty_account_id
+LDR -> ACC : POST /accounts/ (type=TAXE)
+ACC --> LDR : HTTP 201 — taxe_account_id
 deactivate ACC
+
+note right of LDR
+  **Écriture définitive** : account-service n'expose
+  AUCUN endpoint DELETE — un compte ne peut être que
+  passé en CLOSED. Chaque création est irréversible.
+  Un Lender partiellement initialisé reste un état
+  légitime (UC-10, cas d'exception) : les 4 champs
+  *_account_id du registre sont donc optionnels.
+end note
 
 LDR -> DB : insert(lenders_registry,\n{company_id, lender_type=LOCAL,\ncountry_code=CM, 4 account_ids})
 activate DB

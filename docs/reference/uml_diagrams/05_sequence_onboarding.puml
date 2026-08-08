@@ -22,7 +22,15 @@ note right of LDR : **D-FAKER-1** vérifié
 
 LDR -> LDR : product_id déjà choisi\n(Products créés en amont — D-CLI-1)
 
-LDR -> CLI : POST /clients/onboard\n{msisdn, category, identity\n(avec id_expire_on — D-CLI-2),\nproduct_id, currency}
+LDR -> CLI : POST /clients/onboard\n{msisdn, channel, segment, category,\nlanguage, identity (avec _id fourni par le Loader\net id_expire_on — D-CLI-2),\nproduct_id, currency}
+note right of LDR
+  **CORRECTIF 08/08** : 3 champs requis manquaient.
+  channel ∈ {USSD, MOBILE, OFFICE}
+  segment ∈ {ANY, VERY_LOW…VERY_HIGH}
+  language ∈ {en, fr} (défaut "en")
+  **segment** est le point de jonction avec
+  metadata.behavior_segment de Faker (EF-80).
+end note
 activate CLI
 
 CLI -> IDS : créer Identity (cascade interne)

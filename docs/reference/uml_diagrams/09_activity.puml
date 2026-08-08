@@ -79,8 +79,15 @@ partition "Phase 3 — Catalogue Produits (product-service)" #LightYellow {
 }
 
 partition "Phase 4 — Dépositaires (depositary-service)" #LightPink {
-  while (pour chaque Dépositaire, 120-200 total) is (suivant)
+  while (pour chaque Dépositaire, 40-80 total) is (suivant)
     :POST /depositaries/create\n(actif par défaut);
+    note right
+      **CORRECTIF 08/08** : volumétrie alignée sur le CDC.
+      UC-09, scénario nominal : « entre 10 et 20 Kiosques
+      par pays » → 40-80 au total sur les 4 pays.
+      Kiosque = Dépositaire (glossaire CDC ; une seule
+      classe Kiosque_Depositaire en 02_class).
+    end note
     :POST /subscriptions/create\n(6 comptes créés automatiquement);
     note right: D-DEP-2 : 6 comptes UNE SEULE FOIS
     if (2ème produit à souscrire ?) then (oui)

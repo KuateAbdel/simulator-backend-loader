@@ -95,10 +95,19 @@ package "Organisation FinZuu <<FinZuu API — company/user-service>>" {
     IMF
     BANK
     FONDATION
-    FONDS_INSTITUTIONNEL
+    FUNDING_PROVIDER
     MERCHANT
-    AGENCE
-    KIOSQUE
+    AGENCY
+    KIOSK
+    ..
+    ⚠ CORRECTIF 08/08 : valeurs serveur EXACTES.
+    Les noms français AGENCE / KIOSQUE /
+    FONDS_INSTITUTIONNEL n'existent PAS côté
+    serveur — tout écart provoque un HTTP 422.
+    Les 7 types du CDC §6.2 sont inchangés,
+    seule leur écriture sur le fil est corrigée.
+    Les 4 Lenders institutionnels (Nordic, IFC,
+    AFD, BAD) relèvent de FUNDING_PROVIDER.
   }
 
   class Company <<FinZuu API>> {
@@ -106,12 +115,16 @@ package "Organisation FinZuu <<FinZuu API — company/user-service>>" {
     +name: string
     +short_name: string
     +type: CompanyType
+    +industries: string[] {minItems=1}
+    +sectors: string[] {minItems=1}
+    +address: Address
     +admin_email: string
     +parent: UUID {0..1, self-référence}
     +account_id: UUID
     +is_active: bool
     ..
     ⚠ admin_email NE crée AUCUN\nUser en cascade (confirmé empiriquement)
+    ⚠ industries/sectors : tableau vide refusé\n(INV-CPY-03/04, HTTP 422)
   }
 
   class Identity <<FinZuu API>> {
@@ -125,6 +138,8 @@ package "Organisation FinZuu <<FinZuu API — company/user-service>>" {
     +email: string
     ..
     ⚠ id_expire_on optionnel au contrat,\nobligatoire en pratique (crash sinon)
+    ⚠ CORRECTIF 08/08 : trois contrats pour la\nMÊME entité. identity-service déclare\nid_expire_on REQUIS ; les embeds de\ncompany-service et client-service le déclarent\nnullable. Toujours le fournir (D-CLI-2, D-DEP-5).
+    ⚠ En embed, _id est REQUIS et fourni par\nl'appelant — le Loader génère cet UUID\nlui-même avant le POST.
   }
 
   class Branche <<FinZuu API>> {
