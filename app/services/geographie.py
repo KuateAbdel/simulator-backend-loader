@@ -97,6 +97,21 @@ class ReferentielGeo:
 
     # -- Acces indexes ------------------------------------------------------
 
+    def region(self, region_id: str) -> Region | None:
+        """Acces direct par identifiant — renvoie None plutot que de lever.
+
+        Un identifiant absent du referentiel ne doit jamais interrompre une
+        generation : l'appelant retombe sur l'identifiant brut et le rapport
+        garde la trace. Meme principe que `parse_datetime`.
+        """
+        return self.regions.get(region_id)
+
+    def ville(self, city_id: str) -> City | None:
+        return self.villes.get(city_id)
+
+    def quartier(self, district_id: str) -> District | None:
+        return self.quartiers.get(district_id)
+
     def regions_du_pays(self, pays: str) -> list[Region]:
         return sorted(
             (r for r in self.regions.values() if r.country_iso2 == pays),

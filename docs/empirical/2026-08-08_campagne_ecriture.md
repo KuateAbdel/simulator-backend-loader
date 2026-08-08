@@ -251,6 +251,63 @@ différents pour deux références manquantes.
 
 ---
 
+## 13. 🔴 `ANO-DEP-TYPE-02` — aucun contrôle de cohérence de type
+
+**Question posée** : LENDING = prêt, COLLECT = épargne — et concrètement ?
+
+La différence n'est pas décorative, elle est **dans le schéma** :
+
+| | LENDING | COLLECT |
+|---|---|---|
+| Champs propres | `loan_duration`, `recovery_day`, `interest_calculation`, `interest_application`, `penalty_day`, `is_reconductable`, **`amount_by_segment`** | `type` (CASH/CASH_DAT/PRODUCT), `measure`, `measure_price`, `interest_rate`, `vat` |
+| Ce que ça dit | combien on prête, sur quelle durée, quand on recouvre | combien on collecte, à quelle cadence, sur quel support |
+| Requis | 10 champs | 8 champs |
+| Communs | `amount_min`, `amount_max`, `penalty_*` | idem |
+
+**Mais le serveur ne vérifie rien.** Souscrire un **Dépositaire** — une structure
+d'épargne — à un produit **LENDING** :
+
+```
+POST /depositaries/subscriptions/create  { product_id: <LENDING>, ... }
+  → HTTP 201
+
+produits = [('Cotisation 20000/mois','COLLECT'), ('plastique','COLLECT'),
+            ('plastique','COLLECT'), ('DEMO_QA0808_Nano','LENDING')]
+```
+
+Un kiosque d'épargne peut donc « vendre » un prêt, et rien ne l'en empêche.
+
+> **La barrière est côté Loader — `D-DEP-9`.** `valider_type_produit()` lève
+> **avant le réseau**, même patron que `valider_montant()` (`FRA-195`) : ce qui
+> n'a pas de sens ne doit pas partir. Elle est `@staticmethod`, donc éprouvable
+> sans client HTTP — une barrière testable seulement contre le serveur n'est pas
+> une barrière.
+
+Double garde : `filtrer_catalogue()` écarte les LENDING **avant** la boucle (une
+fois, pas 54), et `souscrire()` revalide de son côté au cas où le filtre serait
+contourné.
+
+### Qui consomme réellement les produits
+
+| Service | `product_id` au contrat |
+|---|---:|
+| client-service | 4 |
+| collect-service | 4 |
+| depositary-service | 4 |
+| account-service | **0** |
+| company-service | **0** |
+
+Les trois consommateurs sont **tous du côté épargne**. Aucun service livré ne
+consomme un produit LENDING : le module de prêt relève du **Sprint 5** (`CT-02`).
+
+**Un produit LENDING sert-il quand même au Loader ?** Oui, pour trois raisons :
+`UC-11` et `EF-69` en exigent le catalogue ; `amount_by_segment` est la **source
+des montants** de la simulation comportementale `UC-02` ; et le jour où
+loan-service arrive, le catalogue est déjà en place. Ce qu'il ne fait **pas** :
+alimenter une souscription.
+
+---
+
 ## Corrections apportées au code
 
 | Défaut | Correction |
@@ -259,8 +316,9 @@ différents pour deux références manquantes.
 | `password/f/change` avec le token ROOT | → `token_alternatif` dans `base.py`, `auth_token` transmis |
 | Admin User référençant l'`identity_id` généré localement | → l'identifiant **rendu par le serveur** |
 | `admin_email` = `owner.email` | → adresse distincte, pour éviter le conflit d'unicité |
+| `souscrire()` sans contrôle de type | → `type_produit` **obligatoire et nommé** + `D-DEP-9` |
 
-**88 tests verts** après corrections.
+**97 tests verts** après corrections.
 
 ---
 
@@ -272,6 +330,9 @@ différents pour deux références manquantes.
 3. **`admin_email` inutilisé** — le champ est requis, accepté, et sans effet.
 4. **`id_number`** — le message d'erreur annonce une contrainte de casse qui n'est
    pas appliquée.
+5. **`ANO-DEP-TYPE-02`** — aucun contrôle de cohérence de type : un Dépositaire
+   peut souscrire à un produit `LENDING` en HTTP 201. Neutralisé côté Loader par
+   `D-DEP-9`, mais la validation manque côté serveur.
 
 ---
 

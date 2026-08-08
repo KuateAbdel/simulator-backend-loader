@@ -34,6 +34,14 @@ Disciplines portees ici :
   D-DEP-6  Ne jamais presumer une coherence de devise Company <-> Depositaire :
            `currency` accepte n'importe quelle chaine (`FRA-201`, « ZZZ_INVENTE »
            a ete accepte). Le Loader valide lui-meme contre config-service.
+  D-DEP-9  **Un Depositaire ne souscrit QU'A DES PRODUITS `COLLECT`.** Le
+           serveur, lui, ne verifie rien : mesure du 08/08, souscrire un
+           Depositaire a un produit `LENDING` renvoie **HTTP 201** et le produit
+           de pret se retrouve dans le tableau, a cote des produits d'epargne
+           (`ANO-DEP-TYPE-02`). Un kiosque d'epargne peut donc « vendre » un
+           pret, ce qui n'a aucun sens metier. La barriere est ICI, cote Loader,
+           et elle leve **avant le reseau** — meme patron que
+           `valider_montant()` : ce qui n'a pas de sens ne doit pas partir.
   D-DEP-8  Desactiver un Depositaire **n'arrete NI les collectes NI les retraits**
            sur les souscriptions existantes (`FRA-203`), et desactiver la Company
            parente n'a aucun effet en cascade (`FRA-204`). Ne jamais concevoir de
@@ -49,6 +57,7 @@ from typing import Any
 from uuid import UUID
 
 from app.clients.base import ClientFinZuu, JournalRequetes, normaliser_id
+from app.clients.contracts import ProductType
 from app.core.config import settings
 
 #: Les 6 comptes crees par la premiere souscription. Le Loader ne les cree
@@ -115,18 +124,50 @@ class DepositaryServiceClient:
             return [x for x in data if isinstance(x, dict)]
         return [data] if isinstance(data, dict) else []
 
-    async def souscrire(self, depositary_id: UUID | str, product_id: UUID | str) -> dict[str, Any]:
+    @staticmethod
+    def valider_type_produit(type_produit: ProductType) -> None:
+        """D-DEP-9 — leve AVANT le reseau si le produit n'est pas `COLLECT`.
+
+        Le serveur accepte un produit `LENDING` en HTTP 201 (`ANO-DEP-TYPE-02`,
+        mesure du 08/08) : il ne verifie aucune coherence de type. Un Depositaire
+        est une structure d'EPARGNE ; lui attacher un produit de PRET est une
+        aberration metier qu'aucune requete ne doit porter.
+
+        Separee de `souscrire()` pour etre testable sans reseau, et pour que
+        l'appelant puisse filtrer un catalogue entier avant d'ecrire quoi que ce
+        soit.
+        """
+        if type_produit is not ProductType.COLLECT:
+            raise ValueError(
+                f"D-DEP-9 — un Depositaire ne souscrit qu'a des produits COLLECT, "
+                f"jamais {type_produit.value}. Le serveur l'accepterait (201), "
+                f"c'est precisement pourquoi la barriere est ici."
+            )
+
+    async def souscrire(
+        self,
+        depositary_id: UUID | str,
+        product_id: UUID | str,
+        *,
+        type_produit: ProductType,
+    ) -> dict[str, Any]:
         """D-DEP-1 et D-DEP-2 — c'est CETTE operation qui cree les 6 comptes.
 
         Elle ne les cree qu'UNE FOIS, par Depositaire. Souscrire a un second
         produit reutilise exactement les memes 6 comptes : verifie
         empiriquement, et c'est pour ca que le Loader ne les compte qu'une fois.
 
+        `type_produit` est **obligatoire et nomme** : le serveur ne validant pas
+        la coherence de type (`D-DEP-9`), aucun appelant ne doit pouvoir souscrire
+        sans avoir su ce qu'il souscrivait. Un parametre optionnel aurait laisse
+        la porte ouverte par simple oubli.
+
         Validations serveur reelles : `product_id` inexistant -> HTTP 404
         « Product not found » ; `depositary_id` inexistant -> HTTP 400
         « Depositary not found ». Deux codes differents pour deux references
         manquantes — incoherence notee, sans impact fonctionnel.
         """
+        self.valider_type_produit(type_produit)
         payload = {"product_id": str(product_id), "depositary_id": str(depositary_id)}
         reponse = await self._client.requete(
             "POST", "/api/v1/depositaries/subscriptions/create", json_body=payload
