@@ -162,6 +162,22 @@ Le catalogue à 4 produits (6 créations) reprend donc tout son sens.
 | **A-03** | **Raisons sociales non crédibles** | Faker renvoie `Test Business CM 748`. `UC-08` exige *« un nom métier crédible »* et la démo cible IFC, AFD, BAD. Le Loader devra générer les raisons sociales. |
 | **A-04** | **Où stocker les ~700 prêts simulés** | `CR-10` exige de vérifier 100 séquences de remboursement, `ENF-14` les indicateurs PAR. Sans persistance, invérifiable. Une 7ᵉ collection `simulated_loans` ? |
 | **A-05** | **Permissions exactes des 12 rôles** | Arbitrage produit, pas technique. Proposition rédigée, non validée. |
+| **A-06** | **Code source `ready_scoring/` (Duhamel)** | `EF-76` est une exigence **M** : réutiliser `_wall_from_sim_day`, `_current_sim_day`, `_wall_time_for_sim_day`, `_scoring_date_to_sim_day`. **Aucune de ces 4 fonctions n'apparaît dans `lifecycle_orchestrator_README.md`** — il faut le code du paquet, plus `config/behaviors.example.json` (poids des profils, Annexe D). Sans cela, `EF-76` est insatisfaisable à la lettre. |
+
+### Note sur l'outillage Duhamel — frontière à tenir
+
+`docs/reference/lifecycle_orchestrator_README.md` documente *ReadyScore Kafka simulation tools* :
+un paquet `ready_scoring/` (`kafka_consume`, `repayment_simulator`, `loan_tracker`,
+`push_commands`) qui **consomme des topics Kafka** et y pousse des commandes
+(bootstrap `152.53.140.115:9092`, tunnel SSH).
+
+**Le Loader ne suit pas ce transport.** `ENF-16` l'interdit explicitement :
+*« aucune dépendance à un cluster Kafka de production »*, et la Stack Technique fait du
+Loader un orchestrateur **HTTP pur**.
+
+> Du travail de Duhamel, le Loader reprend **la méthodologie** — les 4 fonctions de dates
+> et les 4 profils comportementaux — **jamais le canal Kafka**. Les deux outils opèrent sur
+> des plans différents : Duhamel sur des événements, le Loader sur des API REST.
 
 ---
 
