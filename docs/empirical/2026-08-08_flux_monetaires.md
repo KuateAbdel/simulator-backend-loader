@@ -128,3 +128,129 @@ masse est conservée, le rejeu est protégé. La séquence du Loader sera :
 
 *12 tests, chacun encadré d'une lecture de solde avant et après. Empreinte
 financière nette : zéro.*
+
+---
+
+# Partie II — account-service terminé (T13 → T19)
+
+## 6. La table des frais — `transaction-configs`
+
+12 configurations, une par `TransactionType`. **Onze sont à zéro. Une ne l'est pas :**
+
+| Type | `fees_type` | Montant |
+|---|---|---:|
+| `TAXE` | **`AMOUNT`** | **100** |
+| les 11 autres | `PERCENT` | 0 |
+
+`TAXE` a été modifiée le **28/07** — elle n'était pas à 100 à l'origine.
+
+> **Conséquence pour le Loader** : une transaction de type `TAXE` coûte 100
+> unités de plus que le montant envoyé. Le solde ne correspondra pas au montant.
+> Le Loader **n'émettra jamais de `TAXE`** ; s'il devait le faire, il lirait
+> cette table d'abord. Elle est modifiable par API — donc elle peut changer sans
+> nous prévenir. **On la lit au démarrage, on ne la présume pas.**
+
+---
+
+## 7. 🔴 `ANO-ACC-STATUS-06` — `change-status` répond **500** et **fonctionne**
+
+```
+PUT /accounts/change-status/{id}/SUSPENDED → HTTP 500 · statut relu = SUSPENDED ✅
+PUT /accounts/change-status/{id}/ACTIVE    → HTTP 500 · statut relu = ACTIVE    ✅
+```
+
+**C'est le piège exactement inverse de `FRA-195`.** Là-bas, un rejet apparent
+cachait une mutation. Ici, une **erreur apparente cache un succès**.
+
+> **Règle** : sur `change-status`, ne jamais se fier au code HTTP. **Relire le
+> statut.** Un Loader qui traiterait ce 500 comme un échec rejouerait
+> indéfiniment une opération déjà réussie.
+
+Bonne nouvelle : **l'opération est réversible**, vérifié dans les deux sens avant
+toute utilisation réelle.
+
+---
+
+## 8. ✅ `SUSPENDED` bloque réellement les opérations
+
+```
+credit sur un compte SUSPENDED
+  → 400 « Only active accounts can be credited or debited » · solde inchangé
+```
+
+> **Contraste avec `FRA-203`** : désactiver un Dépositaire n'arrête ni les
+> collectes ni les retraits. Ici, suspendre un compte bloque vraiment.
+> **Le même geste métier n'a pas le même effet selon le service.** C'est
+> précisément le genre de dissymétrie qui produit de mauvaises surprises.
+
+---
+
+## 9. 🔴 `POST /accounts/` n'valide **aucune** de ses références
+
+Compte créé avec un `owner_id`, un `external_id` et un `account_number`
+**entièrement inventés** :
+
+```
+POST /accounts/  { owner_id: <UUID au hasard>, external_id: <UUID au hasard>, … }
+  → HTTP 201
+```
+
+Même famille que `ANO-DEP-FK-04`. **Créer un compte orphelin est trivial.** Le
+Loader ne crée donc jamais un compte en direct sans avoir lu l'entité
+propriétaire au préalable — et de toute façon, les comptes naissent en cascade.
+
+---
+
+## 10. 🟠 Transfert entre devises : accepté 1:1, **sans conversion**
+
+```
+600 XOF → transfert de 200 vers un compte XAF
+  → HTTP 200 · XOF 600 → 400 · XAF 0 → 200
+```
+
+**Je ne conclus pas à une corruption**, et voici pourquoi : le référentiel
+déclare `XAF` = *CFA Franc BEAC* et `XOF` = *CFA Franc BCEAO*. Ce sont deux
+francs CFA, **arrimés à l'euro au même taux — ils sont réellement à parité**.
+Pour ce couple précis, 1:1 est **économiquement juste**.
+
+**Le vrai problème est ailleurs** : le serveur ne fait **aucun contrôle de
+devise**, et le référentiel **ne porte aucun taux de change**. N'importe quel
+couple passerait à 1:1 — y compris un couple qui ne serait pas à parité.
+
+> **Pour le Loader** : les 4 pays n'utilisent que `XAF` et `XOF`, à parité.
+> Le risque est donc nul **par chance, pas par conception**. On ne transfère
+> jamais entre devises différentes, et on ne s'appuie sur aucune conversion
+> serveur — il n'y en a pas.
+
+---
+
+## 11. 🟠 Le référentiel des devises contient des **entrées parasites**
+
+Sur 4 devises déclarées, **2 sont des déchets de test** :
+
+| `iso_name` | `name_fr` | |
+|---|---|---|
+| `XAF` | Franc CFA (BEAC) | ✅ |
+| `XOF` | Franc CFA (BCEAO) | ✅ |
+| `cv` | CD | ❌ |
+| `00` | 00 | ❌ |
+
+> **`D-DEP-6` est à durcir.** « Valider la devise contre config-service » ne
+> suffit pas : le référentiel accepterait `00`. Le Loader valide contre la liste
+> **ISO 4217** *et* contre `is_active`, jamais contre le seul contenu du
+> référentiel.
+
+---
+
+## Bilan account-service — 19 tests, service **terminé**
+
+| Ce qui est fiable | Ce qui ne l'est pas |
+|---|---|
+| Conservation de la masse sur `transfer` | Le **statut** de transaction (4 valeurs pour un même résultat) |
+| Découvert impossible (`debit` et `transfer`) | Le **code HTTP** de `change-status` (500 = succès) |
+| Montant négatif refusé sans mutation | Les **références** à la création (aucune validation) |
+| Idempotence réelle par `reference` | Le **contrôle de devise** (inexistant) |
+| `SUSPENDED` bloque vraiment | Le **référentiel des devises** (2 entrées parasites) |
+
+**Empreinte** : 1 compte XOF créé (aucun `DELETE` sur ce service), soldes tous
+revenus à **zéro**.
