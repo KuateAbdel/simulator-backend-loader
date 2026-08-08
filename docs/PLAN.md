@@ -62,9 +62,9 @@ l'exigence. Une exigence sans ligne ici est une exigence oubliée.
 
 | Réf | Exigence | État | Note |
 |---|---|---|---|
-| EF-20 | Payloads clients complets via Faker | 🔴 | famille A ne fournit ni date de naissance, ni adresse, ni occupation, ni email — à compléter par le Loader |
+| EF-20 | Payloads clients complets via Faker | 🟡 | famille A ne fournit ni date de naissance, ni adresse, ni occupation, ni email — **`generateur.py` les compose désormais** |
 | EF-21 | Vérifier le pays retourné | ⬜ | |
-| EF-22 | 60 % de moins de 25 ans, **2 femmes pour 1 homme** | 🔴 | **aucun paramètre `sex`** chez Faker — quota par tirage et rejet |
+| EF-22 | 60 % de moins de 25 ans, **2 femmes pour 1 homme** | 🟡 | **aucun paramètre `sex`** chez Faker. L'âge est piloté par `generateur.identite(jeune=…)` ; le quota de genre reste à orchestrer |
 | EF-23 | 80 % Individual / 20 % Corporate | ⬜ | quota à forcer (`repartition_clients()`) |
 | EF-24 | 20 % des professionnels en agriculture | ⬜ | `sector_assignments` exploitable |
 | EF-25 | Unicité des MSISDN | ⬜ | |
