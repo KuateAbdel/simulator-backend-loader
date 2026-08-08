@@ -16,6 +16,7 @@ applicatif n'est ajoute par le Loader.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -24,11 +25,29 @@ from fastapi import FastAPI
 from app.core import database
 from app.core.config import settings
 from app.routes import health
+from app.services.bootstrap import amorcer_super_admin
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Ouvre la persistance, pose les index, amorce le Super-Admin.
+
+    Aucune de ces trois etapes n'est fatale : une base injoignable doit laisser
+    l'application demarrer et repondre sur /health. Un processus qui refuse de
+    demarrer ne dit RIEN a l'exploitant, alors qu'une sonde vivante avec une
+    base absente est immediatement diagnosticable.
+    """
     database.connect()
+    try:
+        await database.ensure_indexes()
+        await amorcer_super_admin()
+    except Exception:
+        logger.exception(
+            "Initialisation MongoDB incomplete : index et/ou bootstrap Super-Admin "
+            "non appliques. L'API demarre malgre tout."
+        )
     yield
     database.close()
 

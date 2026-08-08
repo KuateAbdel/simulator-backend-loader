@@ -1,0 +1,159 @@
+"""
+app/repositories/org_hierarchy.py
+=================================
+Arbre operationnel Branche -> Agence -> Kiosque, cote Loader (decision D-05).
+
+Cette collection porte a elle seule la verification de recette **CR-02** :
+« aucune incoherence geo-organisationnelle apres une generation complete —
+chaque Kiosque a un District valide, chaque Agence une Ville valide ».
+
+Elle est indispensable parce que `CreateDepositaireSchema` ne comporte **aucun
+champ geographique** : `name`, `currency`, `company_id`, rien d'autre.
+depositary-service ignore tout du quartier ou se trouve un Kiosque. Si nous ne
+le stockons pas, l'information n'existe nulle part.
+
+L'index unique `(run_id, district_id)` garantit qu'un quartier n'heberge qu'un
+seul Kiosque par execution — sans lui, plusieurs guichets se superposeraient au
+meme endroit, ce qu'un bailleur reperait immediatement.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from uuid import UUID, uuid4
+
+from pymongo.errors import DuplicateKeyError
+
+from app.core.database import COLLECTION_ORG_HIERARCHY
+from app.models.domain import OrgHierarchyNode
+from app.models.enums import NiveauOrganisation
+from app.repositories.base import RepositoryBase, en_document
+
+
+class OrgHierarchyRepository(RepositoryBase):
+    collection_name = COLLECTION_ORG_HIERARCHY
+
+    async def ajouter_branche(
+        self, run_id: UUID, company_id: UUID, name: str, country_code: str, region_id: str
+    ) -> OrgHierarchyNode:
+        noeud = OrgHierarchyNode(
+            id=uuid4(),
+            run_id=run_id,
+            niveau=NiveauOrganisation.BRANCHE,
+            parent_id=None,
+            company_id=company_id,
+            name=name,
+            country_code=country_code.upper(),
+            region_id=region_id,
+        )
+        await self._inserer(noeud)
+        return noeud
+
+    async def ajouter_agence(
+        self,
+        run_id: UUID,
+        branche_id: UUID,
+        company_id: UUID,
+        name: str,
+        country_code: str,
+        city_id: str,
+    ) -> OrgHierarchyNode:
+        """Une Agence ne peut exister sans sa Branche (EF-18)."""
+        if await self.collection.find_one({"_id": str(branche_id)}) is None:
+            raise ValueError(f"Branche {branche_id} introuvable — emboitement viole (EF-18)")
+        noeud = OrgHierarchyNode(
+            id=uuid4(),
+            run_id=run_id,
+            niveau=NiveauOrganisation.AGENCE,
+            parent_id=branche_id,
+            company_id=company_id,
+            name=name,
+            country_code=country_code.upper(),
+            city_id=city_id,
+        )
+        await self._inserer(noeud)
+        return noeud
+
+    async def ajouter_kiosque(
+        self,
+        run_id: UUID,
+        agence_id: UUID,
+        company_id: UUID,
+        name: str,
+        country_code: str,
+        district_id: str,
+        depositary_id: UUID,
+    ) -> OrgHierarchyNode | None:
+        """Renvoie None si le quartier heberge deja un Kiosque de ce run.
+
+        `depositary_id` est la seule reference vers une entite reellement creee
+        cote serveur — les niveaux BRANCHE et AGENCE n'ont aucune contrepartie
+        distante, c'est tout l'objet de la decision D-05.
+        """
+        if await self.collection.find_one({"_id": str(agence_id)}) is None:
+            raise ValueError(f"Agence {agence_id} introuvable — emboitement viole (EF-18)")
+        noeud = OrgHierarchyNode(
+            id=uuid4(),
+            run_id=run_id,
+            niveau=NiveauOrganisation.KIOSQUE,
+            parent_id=agence_id,
+            company_id=company_id,
+            name=name,
+            country_code=country_code.upper(),
+            district_id=district_id,
+            depositary_id=depositary_id,
+        )
+        try:
+            await self.collection.insert_one(en_document(noeud))
+        except DuplicateKeyError:
+            return None
+        return noeud
+
+    async def par_niveau(self, run_id: UUID, niveau: NiveauOrganisation) -> list[OrgHierarchyNode]:
+        curseur = self.collection.find({"run_id": str(run_id), "niveau": niveau.value})
+        return [OrgHierarchyNode.model_validate(d) async for d in curseur]
+
+    async def enfants(self, parent_id: UUID) -> list[OrgHierarchyNode]:
+        curseur = self.collection.find({"parent_id": str(parent_id)})
+        return [OrgHierarchyNode.model_validate(d) async for d in curseur]
+
+    async def verifier_cr02(self, run_id: UUID) -> list[str]:
+        """CR-02 — renvoie la liste des incoherences. Vide = recette passee.
+
+        Controle les trois invariants d'emboitement en une seule lecture de la
+        collection, sans aucun appel reseau.
+        """
+        noeuds = {n.id: n async for n in self._tous(run_id)}
+        anomalies: list[str] = []
+
+        for noeud in noeuds.values():
+            if noeud.niveau is NiveauOrganisation.BRANCHE:
+                if not noeud.region_id:
+                    anomalies.append(f"Branche {noeud.name} sans region_id")
+                if noeud.parent_id is not None:
+                    anomalies.append(f"Branche {noeud.name} avec un parent — niveau racine attendu")
+                continue
+
+            parent = noeuds.get(noeud.parent_id) if noeud.parent_id else None
+            if parent is None:
+                anomalies.append(f"{noeud.niveau.value} {noeud.name} : parent introuvable")
+                continue
+
+            if noeud.niveau is NiveauOrganisation.AGENCE:
+                if not noeud.city_id:
+                    anomalies.append(f"Agence {noeud.name} sans city_id")
+                if parent.niveau is not NiveauOrganisation.BRANCHE:
+                    anomalies.append(f"Agence {noeud.name} rattachee a un {parent.niveau.value}")
+            elif noeud.niveau is NiveauOrganisation.KIOSQUE:
+                if not noeud.district_id:
+                    anomalies.append(f"Kiosque {noeud.name} sans district_id")
+                if noeud.depositary_id is None:
+                    anomalies.append(f"Kiosque {noeud.name} sans depositary_id")
+                if parent.niveau is not NiveauOrganisation.AGENCE:
+                    anomalies.append(f"Kiosque {noeud.name} rattache a un {parent.niveau.value}")
+
+        return anomalies
+
+    async def _tous(self, run_id: UUID) -> AsyncIterator[OrgHierarchyNode]:
+        async for document in self.collection.find({"run_id": str(run_id)}):
+            yield OrgHierarchyNode.model_validate(document)

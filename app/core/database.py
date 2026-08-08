@@ -46,7 +46,15 @@ def connect() -> AsyncIOMotorClient[MongoDocument]:
     """Ouvre le client motor partage. Idempotent."""
     global _client
     if _client is None:
-        _client = AsyncIOMotorClient(settings.mongodb_uri, uuidRepresentation="standard")
+        _client = AsyncIOMotorClient(
+            settings.mongodb_uri,
+            uuidRepresentation="standard",
+            # Mesure du 08/08 : avec le defaut de 30 s, un demarrage sans MongoDB
+            # bloque 30 s avant de rendre la main. Beaucoup trop long pour une
+            # sonde de disponibilite. 5 s suffisent a diagnostiquer une base
+            # absente sans immobiliser l'application.
+            serverSelectionTimeoutMS=5000,
+        )
     return _client
 
 
