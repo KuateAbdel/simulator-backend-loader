@@ -5,9 +5,18 @@ Client user-service — Users applicatifs et rôles RBAC.
 
 **Le flow en 3 requêtes est obligatoire, jamais raccourci** (D-CMP-2) :
 
-    POST /auth/register        -> HTTP 201, auth_token (10 min)
-    PUT  /auth/password/f/change  -> HTTP 200, is_first_login passe a false
-    POST /auth/login           -> access_token (4 h) + refresh_token (7 j)
+    POST /auth/register           -> 201, auth_token (type "auth", 10 min)
+    PUT  /auth/password/f/change  -> 200, avec le AUTH_TOKEN, pas le token ROOT
+    POST /auth/login              -> access_token (4 h) + refresh_token (7 j)
+
+⚠️ **L'etape 2 refuse le token ROOT** : « Type de token invalide. Attendu: auth ».
+Elle n'accepte que l'`auth_token` rendu par `register`. Ce detail n'apparait dans
+aucune documentation, et c'est lui qui explique l'etat de l'environnement :
+**15 users sur 18 sont bloques a `is_first_login=true`** parce que le flow n'a
+jamais pu aboutir. Verifie de bout en bout le 08/08.
+
+Autre detail mesure : tant que `is_first_login=true`, `access_token` est present
+dans la reponse mais **VIDE** — la cle existe, la valeur non.
 
 Pourquoi trois et pas une : `admin_email` sur une Company ne cree AUCUN User —
 confirme empiriquement, contrairement a `owner` qui cascade vraiment vers
@@ -29,7 +38,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from app.clients.base import ClientFinZuu, JournalRequetes, normaliser_id
+from app.clients.base import ClientFinZuu, ErreurService, JournalRequetes, normaliser_id
 from app.clients.contracts import TagGroupe, UserType
 from app.core.config import settings
 
@@ -83,7 +92,26 @@ class UserServiceClient:
         if company_id is not None:
             inscription["company_id"] = str(company_id)
 
-        await self._client.requete("POST", "/api/v1/auth/register", json_body=inscription)
+        enregistrement = await self._client.requete(
+            "POST", "/api/v1/auth/register", json_body=inscription
+        )
+
+        # L'etape 2 refuse le token ROOT : « Type de token invalide. Attendu: auth ».
+        # Elle n'accepte QUE l'auth_token rendu par register, valide 10 minutes.
+        # Mesure du 08/08 — et c'est exactement ce qui a laisse 15 users sur 18
+        # bloques a is_first_login=true dans l'environnement.
+        auth_token = (
+            enregistrement.data.get("auth_token") if isinstance(enregistrement.data, dict) else None
+        )
+        if not auth_token:
+            raise ErreurService(
+                "user-service",
+                "POST",
+                "/api/v1/auth/register",
+                200,
+                "auth_token absent de la reponse — l'etape 2 du flow est impossible",
+                "-",
+            )
 
         await self._client.requete(
             "PUT",
@@ -93,6 +121,7 @@ class UserServiceClient:
                 "password": mot_de_passe_initial,
                 "new_password": nouveau_mot_de_passe,
             },
+            token_alternatif=str(auth_token),
         )
 
         connexion = await self._client.requete(

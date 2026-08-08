@@ -19,10 +19,15 @@ Les anomalies anticipees ici, une par une :
                    terminal LEGITIME et non un echec.
   FRA-199          `currency` est perdue a la persistance — le Loader garde sa
                    propre trace, dans le rapport et dans `lenders_registry`.
-  D-CMP-2          La cascade Identity est verifiee APRES coup (`owner._id`),
-                   jamais presumee.
-  admin_email      Ne cree aucun User : l'Admin est cree explicitement, en 3
-                   requetes.
+  D-CMP-2          Corrige le 08/08 par mesure directe : creer une Company
+                   cascade vers TROIS services — identity, account ET user.
+                   Mais le User cascade est inutilisable (mot de passe
+                   inconnu, company_id vide, `identity` pointant vers la
+                   Company). Le Loader cree donc son propre Admin.
+  admin_email      Ne cree RIEN. Le User cascade porte `owner.email`.
+                   Verifie deux fois, y compris en differe.
+  owner._id        Exige au contrat mais IGNORE : le serveur genere le sien.
+                   Toujours relire l'identifiant RENDU.
   INV-CPY-01       GET-avant-POST par `short_name`.
   Aucun DELETE     Ni sur account-service, ni sur company-service. D'ou le mode
                    DRY_RUN, qui deroule toute la chaine sans rien ecrire.
@@ -289,7 +294,17 @@ class ExecuteurOrganisation:
             after={"name": raison, "short_name": court, "currency": devise, "pays": pays},
         )
 
-        await self._creer_admin(company_id, court, owner.identity_id, owner.email, rapport)
+        # L'Identity reelle est celle que le SERVEUR a generee, pas celle que
+        # nous avons envoyee : `owner._id` est exige au contrat mais IGNORE —
+        # mesure du 08/08, l'UUID envoye n'est jamais celui rendu.
+        identity_reelle = self._companies.identifiant_owner(company) or str(owner.identity_id)
+
+        # L'adresse de l'Admin doit differer de `owner.email` : la cascade a
+        # deja cree un User portant l'email de l'owner, et `INV-USR-02` impose
+        # l'unicite. Reutiliser la meme adresse produirait un HTTP 400.
+        await self._creer_admin(
+            company_id, court, UUID(identity_reelle), f"admin.{owner.email}", rapport
+        )
         return company
 
     async def _creer_admin(
@@ -302,10 +317,21 @@ class ExecuteurOrganisation:
     ) -> None:
         """Cree l'Admin User de la Company — explicitement, en 3 requetes.
 
-        `admin_email` envoye a company-service ne cree AUCUN User : confirme
-        empiriquement, et visible dans l'environnement ou **0 user sur 18** porte
-        un `company_id`. Sans cette etape, la Company n'aurait aucun
-        administrateur capable de se connecter.
+        **Pourquoi cette etape reste indispensable alors qu'une cascade existe.**
+        Mesure du 08/08 : creer une Company cascade vers TROIS services —
+        identity (+1), account (+1) et **user (+1)**. Un User EST donc cree.
+        Mais il est inutilisable :
+
+          - il porte `owner.email`, jamais `admin_email` (qui ne sert a rien)
+          - son nom est auto-genere (`user-<hex>`), donc imprevisible
+          - **nous ne connaissons pas son mot de passe** — il reste bloque a
+            `is_first_login=true`, incapable de se connecter
+          - son `company_id` est VIDE : il n'est pas rattache a sa Company
+          - son champ `identity` pointe vers la **Company**, pas vers l'Identity
+            (defaut referentiel, 6 cas sur 6 cote company-service)
+
+        Le Loader cree donc son PROPRE Admin, dont il maitrise le mot de passe
+        et le rattachement.
         """
         initial = self._generateur.mot_de_passe_initial()
         durable = self._generateur.mot_de_passe_initial()

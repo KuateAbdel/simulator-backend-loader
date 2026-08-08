@@ -69,7 +69,10 @@ class TestIdentite:
         i = self._identite(generateur, jeune=True)
         assert i.date_of_birth < date.today()
         assert i.occupation and i.email and i.adresse.address_line_1
-        assert i.nationality == "Cameroun"
+        assert i.nationality == "CM", (
+            "nationality exige un code ISO 3166-1 alpha-2 — « Cameroun » "
+            "provoque un HTTP 422 (mesure du 08/08)"
+        )
         assert i.adresse.country == "CM", "le pays est normalise en majuscules"
 
     def test_id_number_alphanumerique_majuscules(self, generateur: Generateur) -> None:

@@ -283,6 +283,7 @@ class ClientFinZuu:
         params: Mapping[str, Any] | None = None,
         json_body: Mapping[str, Any] | None = None,
         vide_si_404: bool = False,
+        token_alternatif: str | None = None,
     ) -> ReponseServeur:
         """Emet une requete authentifiee et renvoie le wrapper serveur parse.
 
@@ -290,8 +291,15 @@ class ClientFinZuu:
         une erreur — necessaire par exemple sur les souscriptions d'un
         Depositaire qui n'en a aucune, ou le serveur repond 404 la ou un 200
         avec liste vide serait attendu.
+
+        `token_alternatif` remplace le token ROOT pour CET appel. Un seul cas
+        l'exige, mais il est imperatif : `PUT /auth/password/f/change` refuse le
+        token ROOT avec « Type de token invalide. Attendu: auth » et n'accepte
+        que l'`auth_token` rendu par `register` (mesure du 08/08). C'est
+        precisement ce qui a laisse 15 users sur 18 bloques a
+        `is_first_login=true` dans l'environnement.
         """
-        token = await self._token_valide()
+        token = token_alternatif or await self._token_valide()
         url = f"{self.base_url}{chemin}"
         params_bornes = self._borner_pagination(params)
         derniere_erreur: str = ""

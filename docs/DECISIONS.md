@@ -157,6 +157,7 @@ Le catalogue à 4 produits (6 créations) reprend donc tout son sens.
 
 | # | Sujet | Pourquoi c'est bloqué |
 |---|---|---|
+| ~~ANO-CPY-BUG-06~~ | ~~Création de Company bloquée~~ | ✅ **LEVÉ, mesuré le 08/08** — `POST /companies/` → HTTP 201. L'étape Organisation est débloquée. |
 | **A-01** | **Sénégal indisponible chez Faker** | 500 clients concernés. Trois voies : générateur interne pour SN · demande à Oti d'ajouter SN au `run_id` · réduction à 3 pays (contredirait `OBJ-01`). **Arbitrage utilisateur.** |
 | **A-02** | **`EF-80` inapplicable tel qu'écrit** | Les champs `decision.*` n'existent pas, et les 2000 clients viennent de la famille A qui ne porte aucune décision. Deux options : le Loader attribue lui-même APPROVED/DECLINED dans les proportions du CDC (l'isolation vis-à-vis de ReadyScore reste totale), ou seuls quelques clients ont un vrai scoring. **Recommandation : la première.** |
 | ~~A-03~~ | ~~Raisons sociales non crédibles~~ | ✅ **RÉSOLU** — `app/services/generateur.py`. Le Loader **compose** à partir de la matière réelle de Faker (patronymes, formes juridiques, secteurs) : `DEMO_SARL Kouassi Textile` au lieu de `Test Business CI 200`. Rien n'est inventé à partir de rien. |
@@ -191,6 +192,9 @@ Consignées pour que personne ne les refasse.
 | 24 appels à `/random` sans varier de paramètre, conclu « distribution 100 % APPROVED » | Le cache Faker est **clé par jeu de paramètres complet** — c'était 24 fois le même client |
 | SN testé uniquement sur la famille A (enum strict) | Testé ensuite sur la famille B (sans enum) : **404**, SN absent des deux côtés |
 | Pagination attachée à un modèle Pydantic via `object.__setattr__` | Remplacé par un champ typé `paginate` sur `ReponseServeur` |
+| `nationality` renseignée avec le libellé du pays (« Cameroun ») | → code ISO 3166-1 alpha-2. **Bug trouvé uniquement par écriture réelle** — aucun test hors ligne ne pouvait le voir |
+| `password/f/change` appelé avec le token ROOT | Refusé en 401. L'étape 2 n'accepte que l'`auth_token` de `register` |
+| Admin User référençant l'`identity_id` généré localement | Le serveur **ignore** l'`_id` envoyé et génère le sien — toujours relire celui qui est rendu |
 
 ---
 

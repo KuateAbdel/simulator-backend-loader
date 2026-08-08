@@ -72,7 +72,9 @@ TYPES_DE_VOIE: Final[tuple[str, ...]] = ("Rue", "Avenue", "Boulevard", "Carrefou
 #: adresses ne doivent atteindre aucune boite aux lettres existante.
 DOMAINE_EMAIL: Final = "demo.fintech4esg.local"
 
-_NATIONALITES: Final[dict[str, str]] = {
+#: Libelles des pays, pour les rapports et les journaux UNIQUEMENT.
+#: `Identity.nationality` n'accepte PAS ces libelles — voir plus bas.
+LIBELLES_PAYS: Final[dict[str, str]] = {
     "CM": "Cameroun",
     "CI": "Cote d'Ivoire",
     "BF": "Burkina Faso",
@@ -243,7 +245,11 @@ class Generateur:
             last_name=last_name,
             date_of_birth=self._date_de_naissance(jeune=jeune),
             gender=gender.upper(),
-            nationality=_NATIONALITES.get(pays, pays),
+            # `nationality` exige un code ISO 3166-1 alpha-2, JAMAIS le libelle
+            # du pays. Mesure du 08/08 : « Cameroun » -> HTTP 422
+            # « nationality must be a valid ISO 3166-1 alpha-2 country code ».
+            # Defaut trouve par la campagne d'ecriture, invisible hors ligne.
+            nationality=pays,
             id_number=self.numero_piece(pays),
             id_place=_sans_accents(ville).title(),
             id_expire_on=self._expiration_piece(),
