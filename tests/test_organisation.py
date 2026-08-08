@@ -105,3 +105,22 @@ def test_referentiel_absent_echoue_avec_le_chemin(tmp_path: Path) -> None:
     echec silencieux."""
     with pytest.raises(FileNotFoundError, match="Chemin attendu"):
         charger_referentiel(tmp_path / "absent.xlsx")
+
+
+def test_ef03_coordonnees_gps_associees(referentiel: ReferentielGeo) -> None:
+    """EF-03 : « associer a chaque niveau geographique ses coordonnees GPS
+    lorsqu'elles sont disponibles dans le referentiel »."""
+    avec_gps = [v for v in referentiel.villes.values() if v.latitude and v.longitude]
+    assert len(avec_gps) == referentiel.rapport.nb_villes, "toutes les villes portent un GPS"
+
+    for ville in avec_gps:
+        assert ville.latitude is not None and ville.longitude is not None
+        # Afrique de l'Ouest et centrale : latitudes positives, longitudes
+        # de part et d'autre du meridien de Greenwich.
+        assert 0 < ville.latitude < 30, f"{ville.name} hors zone : {ville.latitude}"
+        assert -20 < ville.longitude < 20, f"{ville.name} hors zone : {ville.longitude}"
+
+
+def test_une_coordonnee_absente_reste_none(referentiel: ReferentielGeo) -> None:
+    """Jamais 0.0 par defaut : ce point designerait le golfe de Guinee."""
+    assert all(v.latitude != 0.0 for v in referentiel.villes.values())

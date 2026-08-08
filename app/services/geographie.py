@@ -41,6 +41,13 @@ class City:
     region_id: str
     name: str
     poids_economique: float
+    #: EF-03 — coordonnees GPS « lorsqu'elles sont disponibles dans le
+    #: referentiel ». Seule la feuille Cities les porte : Regions et Districts
+    #: n'ont que `population_est`. Elles serviront a deriver les coordonnees des
+    #: Address generees (02_class : Address.latitude / Address.longitude).
+    latitude: float | None
+    longitude: float | None
+    population: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +186,9 @@ def charger_referentiel(chemin: Path) -> ReferentielGeo:
             region_id=region_id,
             name=str(ligne.get("city_name") or ""),
             poids_economique=_flottant(ligne.get("weight_economic")),
+            latitude=_flottant_ou_none(ligne.get("latitude")),
+            longitude=_flottant_ou_none(ligne.get("longitude")),
+            population=_entier_ou_none(ligne.get("population_est")),
         )
 
     quartiers: dict[str, District] = {}
@@ -224,3 +234,19 @@ def _flottant(valeur: Any) -> float:
         return float(valeur)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _flottant_ou_none(valeur: Any) -> float | None:
+    """EF-03 : « lorsqu'elles sont disponibles ». Une coordonnee absente reste
+    None — jamais 0.0, qui designerait le golfe de Guinee."""
+    try:
+        return float(valeur)
+    except (TypeError, ValueError):
+        return None
+
+
+def _entier_ou_none(valeur: Any) -> int | None:
+    try:
+        return int(float(valeur))
+    except (TypeError, ValueError):
+        return None
