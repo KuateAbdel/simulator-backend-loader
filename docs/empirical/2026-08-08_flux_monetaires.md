@@ -254,3 +254,117 @@ Sur 4 devises déclarées, **2 sont des déchets de test** :
 
 **Empreinte** : 1 compte XOF créé (aucun `DELETE` sur ce service), soldes tous
 revenus à **zéro**.
+
+---
+
+# Partie III — Les frais et les devises, au franc près
+
+## 12. 🔴 `ANO-ACC-FEES-07` — `amount` n'est **pas** ce qui quitte le compte
+
+Mesure encadrée d'un instantané des **56 comptes**, avant et après :
+
+```
+DEBIT de 500, type = TAXE (frais AMOUNT = 100)
+  compte : 1000 → 600          DELTA = −400
+  masse totale : 1 154 762 → 1 154 362   VARIATION = −400
+  comptes dont le solde a changé : UN SEUL, le compte débité
+```
+
+**Témoin, même chemin, type sans frais :**
+
+```
+DEBIT de 100, type = WITHDRAWAL (frais 0)
+  compte : 600 → 500           DELTA = −100   ← exact
+```
+
+### Ce que cela établit
+
+| | |
+|---|---|
+| Le mouvement réel | **`amount − fees`**, pas `amount` |
+| Les 100 de frais | **crédités nulle part** — vérifié sur les 56 comptes |
+| Le compte `TAXE` du Kiosque | reste à **0** — il ne collecte pas les frais |
+| La masse totale | varie de **−400**, cohérente avec le seul mouvement observé |
+
+> Demander un débit de 500 sur un type à 100 de frais retire **400** du compte.
+> Ni 500, ni 600. Les frais ne sont pas *ajoutés* au débit ni *reversés* à un
+> compte de perception : ils sont **retranchés du montant demandé**.
+
+> **Règle absolue pour le Loader** : ne **jamais** présumer qu'un solde a bougé
+> de `amount`. **Toujours relire le solde.** Sur un type à frais, un Loader qui
+> tiendrait sa propre comptabilité dériverait silencieusement.
+
+**Parade retenue** : le Loader n'émet que des types dont les frais sont vérifiés
+à **0** au démarrage, et il lit `transaction-configs` **avant** toute campagne
+— cette table est modifiable par API, `TAXE` l'a été le 28/07.
+
+---
+
+## 13. Les 12 types de transaction et leurs frais
+
+| # | Type | `fees_type` | Montant | % | Utilisé par le Loader |
+|---:|---|---|---:|---:|---|
+| 1 | `CAPITAL` | PERCENT | 0 | 0 | — |
+| 2 | `CHECKING` | PERCENT | 0 | 0 | — |
+| 3 | `INTEREST` | PERCENT | 0 | 0 | — |
+| 4 | `REFUND` | PERCENT | 0 | 0 | remboursements (étape 7) |
+| 5 | `RECONDUCTION` | PERCENT | 0 | 0 | — |
+| 6 | `PENALTY` | PERCENT | 0 | 0 | retards (étape 7) |
+| 7 | **`TAXE`** | **AMOUNT** | **100** | 0 | ⛔ **jamais** |
+| 8 | `RECONCILIATION` | PERCENT | 0 | 0 | — |
+| 9 | **`DEPOSIT`** | PERCENT | 0 | 0 | ✅ amorçage |
+| 10 | **`WITHDRAWAL`** | PERCENT | 0 | 0 | ✅ retraits |
+| 11 | `INVESTMENT` | PERCENT | 0 | 0 | — |
+| 12 | **`TRANSFERT`** | PERCENT | 0 | 0 | ✅ mouvements internes |
+
+**Aucune config n'est rattachée à une Company** (`company_id = null` sur les 12),
+mais la route `GET /transaction-configs/type/{type}/company` existe : **une
+surcharge par Company est possible**. Le Loader devra la vérifier s'il crée des
+frais différenciés — ce que le CDC ne demande pas.
+
+> ⚠️ Ne pas confondre : **12 `TransactionType`** (la nature d'un mouvement) et
+> **9 `AccountType`** (la nature d'un compte). Les noms se recouvrent
+> partiellement (`CAPITAL`, `CHECKING`, `INTEREST`, `PENALTY`, `TAXE`) mais ce
+> sont **deux enums distincts**. `AccountType` ajoute `CLASSIC`, `TERM_DEPOSIT`,
+> `OPERATION`, `COMMITMENT` ; `TransactionType` ajoute `DEPOSIT`, `WITHDRAWAL`,
+> `TRANSFERT`, `REFUND`, `RECONDUCTION`, `RECONCILIATION`, `INVESTMENT`.
+
+---
+
+## 14. 🔴 `ANO-ACC-CUR-08` — un compte client porte la devise **`ANY`**
+
+Audit des **56 comptes** de l'environnement :
+
+| Devise | Comptes |
+|---|---:|
+| `XAF` | 54 |
+| `XOF` | 1 *(le nôtre, créé aujourd'hui)* |
+| **`ANY`** | **1** ❌ |
+
+Le compte fautif : un `CHECKING` de client, propriétaire *David Kuate*.
+
+> **`ANY` n'est pas une devise.** C'est une valeur de l'enum **segment** qui a
+> fui dans le champ `currency`. Elle n'existe ni en ISO 4217, ni dans le
+> référentiel config-service.
+
+**Réponse à la question posée : non, les comptes clients ne respectent pas
+systématiquement leur devise.** Le champ n'est pas contrôlé — `FRA-201` l'avait
+déjà établi sur les Dépositaires (`« ZZZ_INVENTE »` accepté), c'est confirmé ici
+sur un compte client réellement en base.
+
+**Conséquence** : le Loader impose la devise **par pays**, depuis sa propre
+table (`DEVISE_PAR_PAYS`), et ne la lit jamais depuis une réponse serveur pour
+la réutiliser. C'est déjà ce que fait `organisation_execution.py` — la mesure
+confirme que c'était le bon choix.
+
+### Et l'environnement est presque entièrement en `XAF`
+
+54 comptes sur 56. Or le Loader opère sur **4 pays dont 3 en `XOF`**. Cette
+asymétrie n'a rien d'anormal — tout ce qui existait visait le Cameroun — mais
+elle signifie que **le chemin `XOF` n'a quasiment jamais été emprunté** avant
+aujourd'hui. Point de vigilance pour la première campagne réelle.
+
+---
+
+*Empreinte de la partie III : nette. Tous les soldes QA sont revenus à zéro,
+vérifiés compte par compte.*
