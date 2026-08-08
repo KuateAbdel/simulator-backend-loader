@@ -31,6 +31,30 @@ class FakerConsumptionType(StrEnum):
     COLLECT_CLIENT = "COLLECT_CLIENT"
 
 
+class NiveauOrganisation(StrEnum):
+    """Niveaux 3 a 5 de l'arbre operationnel (CDC §6.2), cote Loader.
+
+    Decision d'architecture du 08/08 (option b) : Branche et Agence ne sont
+    JAMAIS persistees cote serveur. company-service n'expose aucune route pour
+    elles, et son enum CompanyType ne comporte aucune valeur BRANCH — les
+    materialiser en Companies filles ferait exploser le budget de 12-20
+    Companies fixe par UC-07, sans aucun benefice.
+
+    Elles restent donc des niveaux LOGIQUES, dont l'unique role est de
+    distribuer geographiquement : Branche -> Region, Agence -> Ville,
+    Kiosque -> Quartier. La coherence exigee par EF-11/14/15/16/18 est
+    integralement preservee, puisque c'est le Loader qui choisit ces trois
+    niveaux AVANT d'appeler depositary-service.
+
+    Seul le niveau KIOSQUE a une contrepartie serveur : le Depositaire, cree
+    avec company_id = l'IMF racine.
+    """
+
+    BRANCHE = "BRANCHE"
+    AGENCE = "AGENCE"
+    KIOSQUE = "KIOSQUE"
+
+
 class RunMode(StrEnum):
     """Mode d'execution d'un run.
 

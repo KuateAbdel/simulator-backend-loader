@@ -26,7 +26,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import FakerConsumptionType, LenderType, RunMode, RunStatus
+from app.models.enums import (
+    FakerConsumptionType,
+    LenderType,
+    NiveauOrganisation,
+    RunMode,
+    RunStatus,
+)
 
 
 class LoaderDocument(BaseModel):
@@ -110,6 +116,45 @@ class AuditTrailEntry(LoaderDocument):
     before: dict[str, Any] | None = None
     after: dict[str, Any] | None = None
     timestamp: datetime
+
+
+class OrgHierarchyNode(LoaderDocument):
+    """Collection `org_hierarchy` -- arbre operationnel cote Loader (niveaux 3 a 5).
+
+    SIXIEME collection, ajoutee le 08/08/2026 en consequence directe de la
+    decision (b) sur Branche/Agence. Elle n'est pas un confort : sans elle,
+    CR-02 devient invérifiable -- ce critere de recette exige de controler que
+    « chaque Kiosque a un District valide, chaque Agence une Ville valide ».
+
+    Un seul document par noeud, les trois niveaux dans la meme collection :
+    l'arbre se relit alors par une seule requete, et la verification de
+    recette porte sur une seule source.
+
+    Invariant structurel (EF-18) : un noeud ne peut exister sans son superieur.
+    - BRANCHE : parent_id = None, region_id renseigne
+    - AGENCE  : parent_id = une BRANCHE, city_id renseigne
+    - KIOSQUE : parent_id = une AGENCE, district_id ET depositary_id renseignes
+
+    `depositary_id` est la SEULE reference vers une entite reellement creee
+    cote serveur (depositary-service). Les niveaux BRANCHE et AGENCE n'ont
+    aucune contrepartie distante -- c'est tout l'objet de la decision (b).
+    """
+
+    id: UUID = Field(alias="_id")
+    run_id: UUID = Field(description="Reference vers LoaderRun._id (EF-64)")
+    niveau: NiveauOrganisation
+    parent_id: UUID | None = Field(
+        default=None, description="None pour BRANCHE, sinon le noeud du niveau superieur"
+    )
+    company_id: UUID = Field(description="IMF racine — porte toute la descendance")
+    name: str
+    country_code: str = Field(min_length=2, max_length=2)
+    region_id: str | None = None
+    city_id: str | None = None
+    district_id: str | None = None
+    depositary_id: UUID | None = Field(
+        default=None, description="Renseigne au niveau KIOSQUE uniquement (depositary-service)"
+    )
 
 
 class SuperAdminAccount(LoaderDocument):

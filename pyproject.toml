@@ -14,6 +14,9 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "pyjwt>=2.9",
+    # EF-01 : lecture du referentiel Loader_Base_FinZuu_v1_1.xlsx.
+    # Pur Python, donc compatible ARM64 sans roue native.
+    "openpyxl>=3.1",
 ]
 
 [dependency-groups]
@@ -41,6 +44,10 @@ strict = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
 exclude = ["^docs/reference/"]
+
+[[tool.mypy.overrides]]
+module = ["openpyxl.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

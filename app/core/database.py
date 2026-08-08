@@ -35,6 +35,9 @@ COLLECTION_LENDERS_REGISTRY: Final = "lenders_registry"
 COLLECTION_LOADER_RUNS: Final = "loader_runs"
 COLLECTION_AUDIT_TRAIL: Final = "audit_trail"
 COLLECTION_SUPER_ADMIN_ACCOUNTS: Final = "super_admin_accounts"
+#: Sixieme collection — arbre operationnel Branche/Agence/Kiosque cote Loader.
+#: Consequence de la decision (b) du 08/08 : sans elle, CR-02 est invérifiable.
+COLLECTION_ORG_HIERARCHY: Final = "org_hierarchy"
 
 _client: AsyncIOMotorClient[MongoDocument] | None = None
 
@@ -109,4 +112,23 @@ async def ensure_indexes() -> None:
         [("email", 1)],
         name="uniq_email",
         unique=True,
+    )
+    # CR-02 : la verification de recette se fait par une seule requete sur
+    # (run_id, niveau). L'unicite du district par run garantit qu'aucun quartier
+    # n'heberge deux Kiosques du meme run — c'est ce qui rend la repartition
+    # geographique credible plutot que concentree (partial : seuls les noeuds
+    # KIOSQUE portent un district_id).
+    await db[COLLECTION_ORG_HIERARCHY].create_index(
+        [("run_id", 1), ("niveau", 1)],
+        name="idx_run_niveau",
+    )
+    await db[COLLECTION_ORG_HIERARCHY].create_index(
+        [("parent_id", 1)],
+        name="idx_parent",
+    )
+    await db[COLLECTION_ORG_HIERARCHY].create_index(
+        [("run_id", 1), ("district_id", 1)],
+        name="uniq_district_par_run",
+        unique=True,
+        partialFilterExpression={"district_id": {"$type": "string"}},
     )
