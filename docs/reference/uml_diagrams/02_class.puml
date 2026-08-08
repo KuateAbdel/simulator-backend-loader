@@ -1,0 +1,333 @@
+@startuml Loader_FinZuu_Class_v1
+
+title Loader FinZuu — Diagramme de Classe (v1.0.0)
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide empty members
+
+' ============================================================
+' PACKAGE 1a — config-service RÉEL (confirmé Confluence, 6 juin 2026)
+' ============================================================
+package "Référentiel config-service <<FinZuu API — RÉEL, 3 entités seulement>>" {
+  class Country <<FinZuu API>> {
+    +iso_name: string
+    +name_en: string
+    +name_fr: string
+    +dial_code: string
+    +region: string
+    +continent: string
+    +cities: string[]
+    +currencies: UUID[]
+    +telcos: UUID[]
+    ..
+    ⚠ "cities" = simple tableau de TEXTE LIBRE,
+    aucune entité City séparée, aucun endpoint
+    CRUD dédié, aucune unicité (confirmé
+    Confluence "Anomalies config-service", 06/06/2026)
+    ⚠ "region" = sous-région CONTINENTALE
+    (ex: "Middle Africa"), PAS une division
+    administrative — ne pas confondre avec
+    l'arbre Loader_Base ci-dessous
+  }
+  class Currency <<FinZuu API>> {
+    +iso_name: string
+    +name_en: string
+    +name_fr: string
+    +accepts_decimal: bool
+  }
+  class Telco <<FinZuu API>> {
+    +name: string
+    +phone_regex: string
+  }
+
+  Country "1" o-- "1..*" Currency : référence (snapshotée\nà la création, embed-at-creation)
+  Country "1" o-- "1..*" Telco : référence (snapshotée)
+}
+
+' ============================================================
+' PACKAGE 1b — Référentiel géographique enrichi, PROPRE AU LOADER
+' Source : Loader_Base_FinZuu_v1_1.xlsx — JAMAIS stocké dans config-service
+' ============================================================
+package "Référentiel Géo Enrichi <<Loader interne, PAS config-service>>" {
+  class LoaderCountry <<Loader interne>> {
+    +country_code: string
+  }
+  class LoaderRegion <<Loader interne>> {
+    +region_id: string
+    +name: string
+  }
+  class LoaderCity <<Loader interne>> {
+    +city_id: string
+    +name: string
+  }
+  class LoaderDistrict <<Loader interne>> {
+    +district_id: string
+    +name: string
+  }
+  class Address <<Loader généré>> {
+    +address_line_1: string
+    +street_name: string
+    +latitude: float
+    +longitude: float
+  }
+
+  LoaderCountry "1" *-- "1..*" LoaderRegion : contient (51 total)
+  LoaderRegion "1" *-- "1..*" LoaderCity : contient (50 total)
+  LoaderCity "1" *-- "1..*" LoaderDistrict : contient (82 total)
+  LoaderDistrict "1" o-- "0..*" Address : rattache
+
+  note bottom of LoaderDistrict
+    **CORRECTIF v1.9→v2** : cet arbre enrichi
+    (51 régions, 50 villes, 82 quartiers) n'est
+    JAMAIS poussé dans config-service. Il sert
+    UNIQUEMENT en interne au Loader pour générer
+    des adresses réalistes (Branches/Agences/
+    Kiosques/Agents). config-service ne connaît
+    que Country.cities[] en texte libre (ci-dessus).
+  end note
+}
+
+' ============================================================
+' PACKAGE 2 — Organisation FinZuu (company-service, user-service, consommé)
+' ============================================================
+package "Organisation FinZuu <<FinZuu API — company/user-service>>" {
+  enum CompanyType <<enumeration>> {
+    IMF
+    BANK
+    FONDATION
+    FONDS_INSTITUTIONNEL
+    MERCHANT
+    AGENCE
+    KIOSQUE
+  }
+
+  class Company <<FinZuu API>> {
+    +_id: UUID
+    +name: string
+    +short_name: string
+    +type: CompanyType
+    +admin_email: string
+    +parent: UUID {0..1, self-référence}
+    +account_id: UUID
+    +is_active: bool
+    ..
+    ⚠ admin_email NE crée AUCUN\nUser en cascade (confirmé empiriquement)
+  }
+
+  class Identity <<FinZuu API>> {
+    +_id: UUID
+    +type: string
+    +first_name: string
+    +date_of_birth: date
+    +id_number: string
+    +id_expire_on: date
+    +phone: string
+    +email: string
+    ..
+    ⚠ id_expire_on optionnel au contrat,\nobligatoire en pratique (crash sinon)
+  }
+
+  class Branche <<FinZuu API>> {
+    +branche_id: UUID
+    +name: string
+  }
+  class Agence <<FinZuu API>> {
+    +agence_id: UUID
+    +name: string
+  }
+  class Kiosque_Depositaire <<FinZuu API>> {
+    +_id: UUID
+    +name: string
+    +currency: string
+    +total_saving: float
+    +is_active: bool
+    ..
+    ⚠ is_active INEFFICACE sur\ncollecte/retrait existants (FRA-203)
+  }
+  class Agent <<FinZuu API>> {
+    +agent_id: UUID
+    +name: string
+  }
+
+  class User <<FinZuu API>> {
+    +_id: UUID
+    +user_name: string
+    +email: string
+    +type_user: string
+    +company_id: UUID {0..1}
+    +is_active: bool
+  }
+  class Groupe <<FinZuu API>> {
+    +name: string
+    +tag: string
+    +permissions: list
+  }
+
+  Company "1" *-- "1" Identity : owner (embed)
+  Company "0..1" o-- "0..*" Company : parent/filiale
+  Company "1" o-- "0..*" Branche : rattache
+  Branche "1" *-- "0..*" Agence : décline
+  Agence "1" *-- "0..*" Kiosque_Depositaire : rattache
+  Kiosque_Depositaire "1" o-- "0..*" Agent : opère
+
+  User "0..*" o-- "0..1" Company : rattaché à
+  User "*" o-- "*" Groupe : porte
+}
+
+' ============================================================
+' PACKAGE 3 — Domaine Loader propriétaire (MongoDB, notre backend)
+' ============================================================
+package "Domaine Loader <<propriétaire — MongoDB via motor>>" {
+  enum LenderType <<enumeration>> {
+    LOCAL
+    INSTITUTIONNEL
+  }
+  enum FakerConsumptionType <<enumeration>> {
+    DEPOSITARY
+    LENDER_LOCAL
+    COLLECT_CLIENT
+  }
+
+  class LenderRegistryEntry <<Loader MongoDB>> {
+    +company_id: UUID {réf. Company}
+    +lender_type: LenderType
+    +country_code: string
+    +capital_account_id: UUID
+    +interest_account_id: UUID
+    +penalty_account_id: UUID
+    +taxe_account_id: UUID
+    ..
+    ⚠ Lender = RÔLE porté par Company.\ncompany-service NE connaît PAS ce concept\nnativement (0 occurrence "lender").
+    Le Loader porte cette logique lui-même.
+  }
+
+  class FakerConsumptionLedger <<Loader MongoDB>> {
+    +client_id: string {clé, = client_id Faker}
+    +consumed_at: timestamp
+    +consumed_for: FakerConsumptionType
+    +resulting_entity_id: UUID
+    +country_code: string
+    ..
+    D-FAKER-1 : vérifié AVANT chaque\ntirage Faker, jamais réutilisé
+  }
+
+  class LoaderRun <<Loader MongoDB>> {
+    +run_id: UUID {propre au Loader, ≠ run_id Faker}
+    +sim_start_date: date
+    +sim_end_date: date
+    +status: string
+    +checkpoints: list
+    +mode: string {DRY_RUN | REAL}
+  }
+
+  class AuditTrailEntry <<Loader MongoDB>> {
+    +entity_type: string
+    +entity_id: UUID
+    +action: string
+    +before: object
+    +after: object
+    +timestamp: timestamp
+    +run_id: UUID {réf. LoaderRun}
+  }
+
+  class SuperAdminAccount <<Loader MongoDB>> {
+    +email: string
+    +password_hash: string
+    +must_change_password: bool
+    ..
+    Bootstrap via variables d'environnement\nau premier démarrage (v1.0.0)
+  }
+
+  LoaderRun "1" *-- "0..*" AuditTrailEntry : journalise
+  LoaderRun "1" o-- "0..*" FakerConsumptionLedger : consomme durant
+  LenderRegistryEntry "1" o-- "1" Company : porte le rôle sur
+}
+
+' ============================================================
+' PACKAGE 4 — Produits & Comptes financiers (product/account-service, consommé)
+' ============================================================
+package "Produits & Comptes <<FinZuu API — product/account-service>>" {
+  enum ProductType <<enumeration>> {
+    COLLECT
+    LENDING
+  }
+  enum ProductCategory <<enumeration>> {
+    INDIVIDUAL
+    CORPORATE
+  }
+  enum PolicyType <<enumeration>> {
+    CASH
+    CASH_DAT
+    PRODUCT
+  }
+
+  class Product <<FinZuu API>> {
+    +_id: UUID
+    +type: ProductType
+    +name: string
+    +category: ProductCategory
+    +policy_id: UUID {0..1, référence VIVANTE}
+    ..
+    ⚠ INV-PRD-07 : modifier une Policy modifie\nRÉTROACTIVEMENT tous les Products liés
+  }
+
+  class Policy <<FinZuu API>> {
+    +_id: UUID
+    +type: PolicyType
+    +interest_rate: float
+    +amount_min: float
+    +amount_max: float
+    +measure: string {KILOGRAM|LITER}
+  }
+
+  class Account <<FinZuu API>> {
+    +_id: UUID
+    +type: string {CHECKING|CLASSIC|CAPITAL|...}
+    +balance: float
+    +owner_id: UUID
+    +owner_type: string
+  }
+
+  class DepositarySubscription <<FinZuu API>> {
+    +depositary_id: UUID
+    +product_id: UUID
+  }
+
+  Product "0..*" --> "0..1" Policy : référence (vivante)
+  Kiosque_Depositaire "1" *-- "6" Account : capital/interest/\npenalty/taxe/classic/term_deposit
+  Kiosque_Depositaire "1" -- "0..*" DepositarySubscription
+  DepositarySubscription "*" --> "1" Product
+}
+
+' ============================================================
+' PACKAGE 5 — Client & Collecte (client/collect-service, consommé)
+' ============================================================
+package "Client & Collecte <<FinZuu API — client/collect-service>>" {
+  class Client <<FinZuu API>> {
+    +_id: UUID
+    +msisdn: string
+    +category: ProductCategory
+    +status: string {="PENDING", jamais observé transitionner}
+    +account_id: UUID
+  }
+
+  class Collect <<FinZuu API>> {
+    +_id: UUID
+    +capital: float
+    +withdrawal: float
+    +balance: float
+    +is_active: bool
+    ..
+    ⚠ client/product/depositary embarqués =\nCOPIE FIGÉE à la création (INV-COL-DATA-MODEL-01)
+    Jamais synchronisée après coup.
+  }
+
+  Client "1" *-- "1" Identity : identity (embed)
+  Client "1" o-- "1..3" Product : souscrit
+  Client "1" --> "1" Account : account_id (CHECKING)
+  Collect "*" --> "1" Client : client_id (copie figée)
+  Collect "*" --> "1" Product : product (copie figée)
+  Collect "*" --> "1" Kiosque_Depositaire : depositary (copie figée)
+}
+
+@enduml

@@ -1,0 +1,88 @@
+@startuml Loader_FinZuu_State_v1
+
+title Loader FinZuu — Diagramme d'État (v1.0.0)
+
+' ============================================================
+' MACHINE D'ÉTAT 1 — Client.status (entité FinZuu, consommée)
+' ============================================================
+
+state "Client.status <<FinZuu API — client-service>>" as ClientState {
+
+  [*] --> PENDING : POST /clients/onboard (HTTP 201)
+
+  state PENDING
+  state "??? état théorique jamais atteint" as UNKNOWN
+
+  PENDING --> UNKNOWN : Aucune transition trouvée\n(0 endpoint activate/transition/suspend)
+  UNKNOWN --> [*]
+
+  note right of PENDING
+    **FACT confirmé empiriquement, 100% des cas** :
+    TOUS les Clients observés (production
+    ET tests créés aujourd'hui) restent
+    bloqués à "PENDING", sans exception.
+  end note
+
+  note right of UNKNOWN
+    **Vérifié négativement, avec certitude** :
+    - status = string LIBRE, PAS un enum fermé
+      (SearchRequestSchema.status: anyOf[string,null])
+    - 0 occurrence "activate", "transition", "suspend"
+      dans tout le contrat OpenAPI
+    - Aucun mécanisme technique de transition
+      n'existe dans client-service à ce jour.
+
+    **D-CLI-8** : ne JAMAIS concevoir de logique
+    Loader dépendant d'une transition de ce champ.
+  end note
+}
+
+' ============================================================
+' MACHINE D'ÉTAT 2 — LoaderRun.status (entité Loader, propriétaire)
+' ============================================================
+
+state "LoaderRun.status <<Loader MongoDB — propriétaire>>" as RunState {
+
+  [*] --> PENDING2 : Super-Admin configure\n(UC_CFG)
+
+  state PENDING2 : PENDING
+  state RUNNING
+  state PAUSED
+  state COMPLETED
+  state FAILED
+  state PARTIAL
+
+  PENDING2 --> RUNNING : Super-Admin lance\n(UC_RUN)
+  RUNNING --> PAUSED : Super-Admin interrompt\n(manuel)
+  PAUSED --> RUNNING : Super-Admin reprend
+  RUNNING --> COMPLETED : Toutes les phases\n(géo→...→180j) réussies
+  RUNNING --> PARTIAL : Une entité échoue,\nexécution poursuit\n(cas alternatif CDC UC-07/UC-08)
+  RUNNING --> FAILED : Erreur bloquante\n(ex: Faker down, DB inaccessible)
+  PARTIAL --> [*]
+  COMPLETED --> [*]
+  FAILED --> [*]
+
+  note right of RUNNING
+    Chaque transition de phase
+    (géo, organisation, identités,
+    crédit) écrit un checkpoint
+    dans LoaderRun.checkpoints.
+  end note
+
+  note right of PARTIAL
+    Cohérent avec le CDC :
+    "Cas alternatif : si la création
+    d'une Company échoue, le Loader
+    journalise l'erreur et poursuit
+    avec la suivante."
+  end note
+
+  note bottom of FAILED
+    **Proposition architecte, à valider
+    Super-Admin** — pas encore vérifiée
+    par un test, c'est une DÉCISION
+    de conception, pas un FACT empirique.
+  end note
+}
+
+@enduml

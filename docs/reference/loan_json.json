@@ -1,0 +1,51 @@
+{
+	{
+	"Nano": {
+		"Very High":[100000, 200000],
+		"High":     [60000, 100000],
+		"Medium":   [30000, 60000],
+		"Low":      [15000, 30000], 
+		"Very Low": [5000, 15000]
+	
+		},
+	"Duration":[15],
+	"Interest Rate": [7, 25],
+	"Category" : [Individual]
+	},
+	{
+	"Macro": {
+		"Very High":[300000, 600000],
+		"High":     [150000, 300000],
+		"Medium":   [100000, 200000],
+		"Low":      [75000,  100000],
+			"Very Low": [25000,  75000]
+	},
+	"Duration":[15],
+	"Interest Rate": [7, 25],
+	"Category" : [Business]
+	},
+	{
+	"BNPL": {
+		"Very High":[200000, 500000],
+		"High":     [100000, 200000],
+		"Medium":   [50000, 100000],
+		"Low":      [25000, 50000],
+		"Very Low": [5000, 25000],
+		},
+	"Duration":[30],
+	"Interest Rate": [7, 25],
+	"Category" : [Any]
+	},
+	{
+	"ReadyToGo": {
+		"Very High":[100000, 1000000],
+		"High":     [100000, 400000],
+		"Medium":   [50000,  200000],
+		"Low":      [35000,   49000],
+		"Very Low": [20000,   30000],
+		},
+	"Duration":[15],
+	"Interest Rate": [7, 25],
+	"Category" : [Any]
+	}
+}

@@ -1,0 +1,130 @@
+@startuml Loader_FinZuu_Sequence_Product
+
+title Séquence — Création du catalogue Produits (UC-11, avec split "Any" et référence vivante)
+
+participant "Loader" as LDR
+participant "product-service" as PRD
+
+LDR -> LDR : Lire loan_json.json\n(parser tolérant — D-PRD-5,\nJSON malformé confirmé)
+
+loop pour chaque Produit du catalogue (Nano, Macro, BNPL, ReadyToGo)
+
+  alt category == "Individual" ou "Business" (valeur unique)
+    LDR -> PRD : POST /products/\n{type: LENDING, category: INDIVIDUAL|CORPORATE,\npolicy: {...} complet (D-PRD-1)}
+    activate PRD
+    PRD --> LDR : HTTP 201
+    deactivate PRD
+
+  else category == "Any" (BNPL, ReadyToGo)
+    note right of LDR
+      **D-PRD-4, CRITIQUE** : l'enum serveur
+      n'accepte QUE 2 valeurs strictes
+      (INDIVIDUAL/CORPORATE) — "Any" provoque
+      HTTP 422 (INV-PRD-04).
+      Split OBLIGATOIRE en 2 créations.
+    end note
+    LDR -> PRD : POST /products/\n{name, category: INDIVIDUAL, policy: {...}}
+    activate PRD
+    PRD --> LDR : HTTP 201 (exemplaire 1/2)
+    deactivate PRD
+    LDR -> PRD : POST /products/\n{name (identique), category: CORPORATE, policy: {...}}
+    activate PRD
+    PRD --> LDR : HTTP 201 (exemplaire 2/2)
+    deactivate PRD
+    note right
+      Rendu possible sans conflit :
+      ANO-PRD-UNIQ-01 confirme l'absence
+      de contrainte d'unicité sur `name`.
+    end note
+  end
+
+  LDR -> LDR : GET-avant-POST (D-PRD-2)\nvérifier absence de doublon avant chaque création
+
+end
+
+note over LDR, PRD
+  **⚠ D-PRD-7, DANGER CRITIQUE, à ne JAMAIS violer** :
+  Chaque Product ci-dessus reçoit sa PROPRE Policy
+  embarquée (embed inline), JAMAIS un `policy_id`
+  partagé entre 2 Products distincts.
+
+  Preuve empirique (INV-PRD-07, Casquette 4) :
+  Policy = RÉFÉRENCE VIVANTE. Modifier une Policy
+  via son endpoint dédié modifie RÉTROACTIVEMENT
+  et SILENCIEUSEMENT tous les Products qui la
+  référencent — même s'ils sont censés être
+  indépendants.
+end note
+
+note over LDR, PRD
+  **Résultat final catalogue LENDING** : 6 Products
+  créés (Nano×1, Macro×1, BNPL×2, ReadyToGo×2)
+  — jamais 4, contrairement à la lecture naïve
+  du catalogue source.
+end note
+
+== Catalogue COLLECT (⚠ trou corrigé — oublié dans la v1 de ce diagramme) ==
+
+note over LDR, PRD
+  **CDC (Config_Loader)** : "Souscriptions 1 à 3 par
+  CollectClient — Variété CASH/CASH_DAT/PRODUCT."
+
+  **⚠ Principe de non-duplication (cohérent D-FAKER-1)** :
+  "Cotisation 20000/mois" (CASH/INDIVIDUAL) et
+  "plastique" (PRODUCT/INDIVIDUAL) existent DÉJÀ
+  en production — JAMAIS recréés, toujours réutilisés.
+end note
+
+LDR -> PRD : GET /products/?limit=100\n(D-PRD-2 : inventaire avant toute création)
+activate PRD
+PRD --> LDR : catalogue existant\n("Cotisation 20000/mois", "plastique")
+deactivate PRD
+
+note over LDR, PRD
+  **Catalogue COLLECT cible, noms réels, non génériques** :
+  - Cotisation 20000/mois (CASH/INDIVIDUAL) → RÉUTILISÉ
+  - Cotisation Commerçants (CASH/CORPORATE) → nouveau
+  - Dépôt à Terme 6 Mois (CASH_DAT/INDIVIDUAL) → nouveau
+    (comble le vide : 0 CASH_DAT existant à ce jour)
+  - Dépôt à Terme Entreprise 12 Mois (CASH_DAT/CORPORATE) → nouveau
+  - plastique (PRODUCT/INDIVIDUAL) → RÉUTILISÉ
+  - Collecte Cacao (PRODUCT/CORPORATE) → nouveau
+    (produit d'export réel, cohérent avec "plastique")
+end note
+
+loop pour chaque produit MANQUANT du catalogue cible (4 nouveaux, 2 réutilisés)
+
+  alt Produit déjà existant (nom trouvé dans l'inventaire)
+    LDR -> LDR : Réutiliser product_id existant\n(AUCUNE création — non-duplication stricte)
+  else Produit manquant
+    LDR -> PRD : POST /products/\n{type: COLLECT, name (réel), category,\npolicy: {type: PolicyType, ...} (D-PRD-1)}
+    activate PRD
+
+    alt policy.type == PRODUCT
+      note right of LDR
+        **D-PRD-8** : `measure` (KILOGRAM pour Cacao)
+        toujours choisi explicitement.
+      end note
+    end
+
+    PRD --> LDR : HTTP 201
+    deactivate PRD
+  end
+
+end
+
+note over LDR, PRD
+  **Résultat final catalogue COLLECT** : 6 produits
+  au total, dont 2 RÉUTILISÉS (jamais dupliqués) et
+  4 nouveaux à noms réels — variété complète
+  PolicyType×Category, sans aucune duplication.
+end note
+
+note over LDR, PRD
+  **Résultat final catalogue COLLECT** : 6 Products
+  minimum créés, croisement complet PolicyType×Category,
+  garantissant une vraie variété pour les 1-3
+  souscriptions par client (UC-13).
+end note
+
+@enduml

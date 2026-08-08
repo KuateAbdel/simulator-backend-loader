@@ -1,0 +1,143 @@
+@startuml Loader_FinZuu_UseCase_v1
+
+title Loader FinZuu — Diagramme de Cas d'Utilisation (v1.0.0)
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+left to right direction
+
+' ============================================================
+' ACTEURS — 2 acteurs distincts, jamais confondus
+' ============================================================
+actor "Super-Admin\n(humain, équipe FinZuu)" as SA
+actor "Loader\n(acteur système autonome)" as LDR
+actor "Faker fintech4esg\n(système externe)" as FAKER
+actor "Services FinZuu\n(9 microservices)" as SVC
+
+' ============================================================
+' PACKAGE 1 — Pilotage plateforme (Super-Admin, Phase 1 = v1.0.0)
+' ============================================================
+package "Pilotage Plateforme (Super-Admin — v1.0.0)" {
+  usecase "Configurer une génération\n(pays, volume, mode)" as UC_CFG
+  usecase "Lancer une génération" as UC_RUN
+  usecase "Suivre la progression\nen temps réel" as UC_TRACK
+  usecase "Consulter le journal\nd'erreurs en direct" as UC_LOG
+  usecase "Consulter l'historique\ndes runs" as UC_HIST
+  usecase "Auditer les données créées\n(audit_trail)" as UC_AUDIT
+  usecase "Réinitialiser sélectivement\n(préfixe DEMO_)" as UC_RESET
+  usecase "Consulter le registre\ndes Lenders" as UC_LENDREG
+  usecase "Consulter le registre de\nconsommation Faker" as UC_FAKEREG
+  usecase "Vérifier la santé\nde Faker" as UC_HEALTH
+}
+
+' ============================================================
+' PACKAGE 2 — Génération de l'écosystème (Loader, UC-05 à UC-17 CDC)
+' ============================================================
+package "Génération Écosystème (Loader — UC-05 à UC-17, CDC v1.2)" {
+  usecase "UC-05 : Charger le référentiel\ngéographique (5 niveaux)" as UC05
+  usecase "UC-06 : Charger devises\net opérateurs télécom" as UC06
+  usecase "UC-07 : Créer les Companies\navec licences" as UC07
+  usecase "UC-08 : Générer les Lenders\nlocaux et institutionnels" as UC08
+  usecase "UC-09 : Générer la hiérarchie\nBranche/Agence/Kiosque/Agent" as UC09
+  usecase "UC-10 : Créer les comptes\nfinanciers des Lenders" as UC10
+  usecase "UC-11 : Créer le catalogue\nProduits Collecte et Prêt" as UC11
+  usecase "UC-12 : Consommer Faker,\nvalider cohérence pays/opérateur" as UC12
+  usecase "UC-13 : Onboarder\nun Client (KYC + Kiosque)" as UC13
+  usecase "UC-14 : Créer le compte financier\nClient + solde initial" as UC14
+  usecase "UC-15 : Simuler la vie commune\njournalière (Type 1)" as UC15
+  usecase "UC-16 : Simuler la vie sans crédit\n(Type 3, DECLINED/NOT SCORED)" as UC16
+  usecase "UC-17 : Re-scorer périodiquement\nles clients DECLINED" as UC17
+}
+
+' ============================================================
+' RELATIONS — Super-Admin
+' ============================================================
+SA --> UC_CFG
+SA --> UC_RUN
+SA --> UC_TRACK
+SA --> UC_LOG
+SA --> UC_HIST
+SA --> UC_AUDIT
+SA --> UC_RESET
+SA --> UC_LENDREG
+SA --> UC_FAKEREG
+SA --> UC_HEALTH
+
+UC_RUN ..> UC05 : <<include>>
+UC_RUN ..> UC06 : <<include>>
+UC_RUN ..> UC07 : <<include>>
+UC_RUN ..> UC08 : <<include>>
+UC_RUN ..> UC09 : <<include>>
+UC_RUN ..> UC10 : <<include>>
+UC_RUN ..> UC11 : <<include>>
+UC_RUN ..> UC12 : <<include>>
+UC_RUN ..> UC13 : <<include>>
+UC_RUN ..> UC14 : <<include>>
+UC_RUN ..> UC15 : <<include>>
+UC_RUN ..> UC16 : <<include>>
+UC_RUN ..> UC17 : <<include>>
+
+' ============================================================
+' RELATIONS — Loader (acteur système autonome exécute les UC métier)
+' ============================================================
+LDR --> UC05
+LDR --> UC06
+LDR --> UC07
+LDR --> UC08
+LDR --> UC09
+LDR --> UC10
+LDR --> UC11
+LDR --> UC12
+LDR --> UC13
+LDR --> UC14
+LDR --> UC15
+LDR --> UC16
+LDR --> UC17
+
+' ============================================================
+' RELATIONS — Dépendances externes
+' ============================================================
+UC12 --> FAKER : consomme
+UC13 --> FAKER : consomme (payload client)
+UC15 --> FAKER : consomme (comportement)
+UC16 --> FAKER : consomme (comportement)
+UC17 --> FAKER : consomme (re-scoring)
+
+UC05 --> SVC : injecte (config-service)
+UC06 --> SVC : injecte (config-service)
+UC07 --> SVC : injecte (company-service)
+UC08 --> SVC : injecte (company-service)
+UC09 --> SVC : injecte (company-service + user-service)
+UC10 --> SVC : injecte (account-service)
+UC11 --> SVC : injecte (product-service)
+UC13 --> SVC : injecte (client-service + identity-service)
+UC14 --> SVC : injecte (account-service)
+UC15 --> SVC : injecte (collect-service + account-service + depositary-service)
+UC16 --> SVC : injecte (collect-service + account-service)
+
+' ============================================================
+' RELATIONS — Frontière Phase 2 (hors scope v1.0.0)
+' ============================================================
+note right of SA
+  **Phase 1 (v1.0.0) : Super-Admin UNIQUEMENT.**
+  Le modèle Admin multi-tenant
+  (utilisateurs des clients FinZuu externes,
+  scope limité à leurs propres données)
+  est reporté en **Phase 2 (v2.0.0)**.
+end note
+
+note bottom of UC12
+  **D-FAKER-1** : avant toute consommation,
+  vérifier le client_id contre le registre
+  de consommation (faker_consumption_ledger).
+  Jamais de réutilisation d'un client déjà
+  consommé pour un autre usage.
+end note
+
+note bottom of UC08
+  **Lender = RÔLE, pas une entité technique.**
+  Porté par une Company (via lenders_registry,
+  propriété du Loader — company-service ne
+  connaît PAS ce concept nativement).
+end note
+
+@enduml

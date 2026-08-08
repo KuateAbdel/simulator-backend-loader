@@ -1,0 +1,91 @@
+@startuml Loader_FinZuu_Deployment_v1
+
+title Loader FinZuu — Diagramme de Déploiement (v1.0.0)
+skinparam nodeStyle rectangle
+
+' ============================================================
+' POSTE SUPER-ADMIN (client)
+' ============================================================
+node "Poste Super-Admin\n<<navigateur>>" as CLIENT {
+  artifact "Navigateur Web" as BROWSER
+}
+
+' ============================================================
+' SERVEUR LOADER — coordonnées exactes confirmées
+' ============================================================
+node "Serveur Loader\n152.53.118.110\nUbuntu 24.04.4 LTS — ARM64 — 10 vCPU" as SERVER {
+
+  node "Nginx\n<<reverse proxy, déjà en place>>" as NGINX {
+  }
+
+  node "Docker\n<<images multi-arch ARM64 obligatoire>>" as DOCKER {
+    artifact "Loader Backend\n(FastAPI, Python 3.12,\nuvicorn/gunicorn)" as BE_ART
+    artifact "Loader Frontend\n(Next.js build, Zidane)" as FE_ART
+    artifact "MongoDB\n(via motor)" as DB_ART
+  }
+}
+
+CLIENT -down-> NGINX : HTTPS\nsimul.fintech4esg.com (Frontend)
+
+NGINX -down-> FE_ART : proxy_pass\n(routes UI)
+NGINX -down-> BE_ART : proxy_pass\nsimul.api.fintech4esg.com\n(REST + Swagger /docs, pour Zidane)
+BE_ART -down-> DB_ART : mongodb://\n(motor async driver)
+
+note right of SERVER
+  **⚠ ARM64 obligatoire** : toute image
+  Docker doit être multi-architecture,
+  sinon échec silencieux au déploiement
+  uniquement (jamais visible en dev
+  local x86).
+
+  **⚠ Nginx jamais dupliqué** : déjà en
+  place, le Backend s'y intègre, ne le
+  remplace pas.
+
+  Historique : configuré 19/07/2026 après
+  panne SSH serveur netcup initial
+  (152.53.53.139).
+end note
+
+' ============================================================
+' RÉFÉRENTIEL SOURCE — GitHub
+' ============================================================
+node "GitHub\n<<finzuu-score-platform/simul-ussd>>" as GITHUB {
+  artifact "Code source\n(Admin: Yaniv+Zidane)" as CODE
+}
+GITHUB .down.> SERVER : déploiement\n(⚠ AUCUN commit à ce jour)
+
+' ============================================================
+' DÉPENDANCE EXTERNE 1 — Faker fintech4esg
+' ============================================================
+node "Serveur Faker\nfaker.fintech4esg.com\n<<propriété équipe ReadyScore/Oti>>" as FAKER_SRV {
+  artifact "API Faker\n(15 endpoints, x-api-key,\nrun_id unique 20260620123721)" as FAKER_ART
+}
+BE_ART -right-> FAKER_ART : HTTPS\n(clients, historique, scoring)
+
+' ============================================================
+' DÉPENDANCE EXTERNE 2 — Écosystème FinZuu TEST
+' ============================================================
+node "Environnement TEST FinZuu\n*.test.services.fintech4esg.com\n<<9 microservices, APISIX 3.13.0>>" as FINZUU_TEST {
+  artifact "user-service" as N_USR
+  artifact "config-service" as N_CFG
+  artifact "identity-service" as N_IDS
+  artifact "account-service" as N_ACC
+  artifact "company-service" as N_CMP
+  artifact "product-service" as N_PRD
+  artifact "depositary-service" as N_DEP
+  artifact "client-service" as N_CLI
+  artifact "collect-service" as N_COL
+}
+BE_ART -left-> FINZUU_TEST : HTTPS\n(orchestration des 9 services)
+
+note bottom of FINZUU_TEST
+  **⚠ Environnement TEST uniquement**
+  (ENF-16, CDC v1.2) — jamais de connexion
+  à un environnement de production.
+  MongoDB backend (signature BSON),
+  Kafka présent mais production
+  JAMAIS consommée par le Loader.
+end note
+
+@enduml

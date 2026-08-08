@@ -1,0 +1,13 @@
+country_iso2,name,phone_regex
+CM,MTN Cameroon,^237(67\d{7}|68[0-4]\d{6}|65[0-4]\d{6})$
+CM,Orange Cameroon,^237(69\d{7}|65[5-9]\d{6}|68[5-9]\d{6})$
+CM,Camtel/Blue,^237(62\d{7})$
+CI,Orange Cote d'Ivoire,^225(07\d{8}|47\d{8}|57\d{8})$
+CI,MTN Cote d'Ivoire,^225(05\d{8}|45\d{8}|55\d{8})$
+CI,Moov Africa CI,^225(01\d{8}|41\d{8}|51\d{8})$
+BF,Orange Burkina Faso,^226(0[56]\d{7}|5[45]\d{7})$
+BF,Moov Africa Burkina,^226(0[12]\d{7}|5[12]\d{7})$
+BF,Telecel Faso,^226(0[78]\d{7}|5[678]\d{7})$
+SN,Orange (Sonatel),^221(77\d{7}|78\d{7})$
+SN,Free (Yas Senegal),^221(76\d{7})$
+SN,Expresso Senegal,^221(70\d{7})$

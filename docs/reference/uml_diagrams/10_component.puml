@@ -1,0 +1,101 @@
+@startuml Loader_FinZuu_Component_v1
+
+title Loader FinZuu — Diagramme de Composant (v1.0.0)
+skinparam componentStyle rectangle
+
+' ============================================================
+' SYSTÈME LOADER — 4 composants internes
+' ============================================================
+package "Loader FinZuu <<notre système>>" {
+
+  component [Loader Frontend\n(Next.js + TypeScript)] as FE <<Zidane>>
+  component [Loader Backend\n(FastAPI, Python 3.12)] as BE
+  component [Module Bootstrap/Auth\n(Super-Admin, v1.0.0)] as AUTH
+  database [MongoDB Loader\n(via motor)] as DB
+
+  interface "REST API\n(OpenAPI/Swagger)" as API_LOADER
+  interface "Auth interne" as API_AUTH
+
+  BE -up- API_LOADER
+  FE ..> API_LOADER : consomme\n(contrat Swagger)
+  BE -- AUTH
+  AUTH -- API_AUTH
+  BE ..> DB : lecture/écriture\n(faker_consumption_ledger,\nlenders_registry, LoaderRun,\naudit_trail, SuperAdminAccount)
+}
+
+' ============================================================
+' DÉPENDANCE EXTERNE 1 — Faker fintech4esg
+' ============================================================
+component [Faker fintech4esg\n<<système externe>>] as FAKER
+interface "API Faker\n(15 endpoints, run_id unique)" as API_FAKER
+FAKER -- API_FAKER
+BE ..> API_FAKER : consomme\n(clients, historique, scoring)
+
+' ============================================================
+' DÉPENDANCES EXTERNES 2 — Les 9 microservices FinZuu,
+' INDIVIDUELLEMENT, jamais fusionnés (chacun ses propres défauts)
+' ============================================================
+package "Écosystème FinZuu <<9 microservices, dépendances externes>>" {
+
+  component [user-service] as SVC_USR
+  interface "Auth/RBAC" as API_USR
+  SVC_USR -- API_USR
+  BE ..> API_USR : orchestre\n(43 écarts documentés,\nD-USR-1 à D-USR-10)
+
+  component [config-service] as SVC_CFG
+  interface "Référentiel géo" as API_CFG
+  SVC_CFG -- API_CFG
+  BE ..> API_CFG : orchestre\n(peuplé par nous)
+
+  component [identity-service] as SVC_IDS
+  interface "KYC" as API_IDS
+  SVC_IDS -- API_IDS
+  BE ..> API_IDS : consommé en cascade\n(via company/client-service)
+
+  component [account-service] as SVC_ACC
+  interface "Comptes/Transactions" as API_ACC
+  SVC_ACC -- API_ACC
+  BE ..> API_ACC : orchestre\n(double déduction, atomicité\nRetrait confirmée fiable)
+
+  component [company-service] as SVC_CMP
+  interface "Companies" as API_CMP
+  SVC_CMP -- API_CMP
+  BE ..> API_CMP : orchestre\n(FRA-199, FRA-200,\nD-CMP-2 cascade Identity)
+
+  component [product-service] as SVC_PRD
+  interface "Catalogue Produits" as API_PRD
+  SVC_PRD -- API_PRD
+  BE ..> API_PRD : orchestre\n(D-PRD-1 à D-PRD-9,\nréférence VIVANTE Policy)
+
+  component [depositary-service] as SVC_DEP
+  interface "Dépositaires" as API_DEP
+  SVC_DEP -- API_DEP
+  BE ..> API_DEP : orchestre\n(⚠ FRA-205 : AUCUNE RBAC,\nD-DEP-1 à D-DEP-8)
+
+  component [client-service] as SVC_CLI
+  interface "Clients" as API_CLI
+  SVC_CLI -- API_CLI
+  BE ..> API_CLI : orchestre\n(D-CLI-1 à D-CLI-8)
+
+  component [collect-service] as SVC_COL
+  interface "Collectes" as API_COL
+  SVC_COL -- API_COL
+  BE ..> API_COL : orchestre\n(⚠ FRA-194 IDOR,\nFRA-195 écriture fantôme,\nD-COL-1 à D-COL-16)
+}
+
+note bottom of SVC_DEP
+  **Pourquoi les 9 services restent SÉPARÉS,
+  jamais fusionnés en un bloc "API FinZuu" :**
+  chacun porte ses propres défauts spécifiques,
+  découverts individuellement aujourd'hui.
+  Les fusionner effacerait cette réalité.
+end note
+
+note top of AUTH
+  **Distinct de user-service** — authentification
+  propre au Loader (bootstrap via variables
+  d'environnement, Phase 1 = Super-Admin seul,
+  multi-tenant Admin reporté Phase 2).
+end note
+
+@enduml

@@ -1,0 +1,5 @@
+iso_name,name_en,name_fr,dial_code,region,continent,cities,currency_iso,telco_names
+CM,Cameroon,Cameroun,237,Middle Africa,Africa,Yaounde|Douala|Bamenda|Bafoussam|Garoua|Maroua|Ngaoundere|Bertoua|Buea|Nkongsamba|Limbe|Kribi,XAF,MTN Cameroon|Orange Cameroon|Camtel/Blue
+CI,Ivory Coast,Cote d'Ivoire,225,Western Africa,Africa,Abidjan|Bouake|Yamoussoukro|Daloa|Korhogo|San-Pedro|Man|Gagnoa|Abengourou|Dimbokro|Dabou|Bondoukou,XOF,Orange Cote d'Ivoire|MTN Cote d'Ivoire|Moov Africa CI
+BF,Burkina Faso,Burkina Faso,226,Western Africa,Africa,Ouagadougou|Bobo-Dioulasso|Koudougou|Ouahigouya|Banfora|Kaya|Tenkodogo|Fada N'gourma|Dedougou|Manga|Ziniare|Dori,XOF,Orange Burkina Faso|Moov Africa Burkina|Telecel Faso
+SN,Senegal,Senegal,221,Western Africa,Africa,Dakar|Pikine|Touba|Guediawaye|Thies|Kaolack|Mbour|Rufisque|Saint-Louis|Ziguinchor|Diourbel|Louga|Tambacounda|Kolda,XOF,Orange (Sonatel)|Free (Yas Senegal)|Expresso Senegal

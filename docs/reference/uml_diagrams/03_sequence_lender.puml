@@ -1,0 +1,88 @@
+@startuml Loader_FinZuu_Sequence_Lender
+
+title Séquence — Création d'un Lender local (cascade complète)
+
+actor "Super-Admin" as SA
+participant "Loader\n(Backend FastAPI)" as LDR
+participant "Faker\nfintech4esg" as FAKER
+participant "company-service" as CMP
+participant "user-service" as USR
+participant "account-service" as ACC
+database "MongoDB Loader" as DB
+
+SA -> LDR : Lancer génération\n(pays=CM, mode=REAL)
+activate LDR
+
+LDR -> FAKER : GET /client/business?country_code=CM&seed=<X>
+activate FAKER
+FAKER --> LDR : payload client Business\n(company.company_name, company.company_type)
+deactivate FAKER
+
+LDR -> DB : find_one(faker_consumption_ledger, client_id)
+activate DB
+DB --> LDR : non trouvé
+deactivate DB
+note right of LDR
+  **D-FAKER-1** : vérification stricte
+  AVANT toute consommation.
+  Si trouvé → re-tirer avec seed différent.
+end note
+
+LDR -> CMP : POST /companies/\n{name: company_name Faker, type: BANK,\nowner (Identity), admin_email, currency: XAF}
+activate CMP
+CMP -> CMP : créer Identity (owner)\nen cascade INTERNE
+note right : **D-CMP-2, CONFIRMÉ empiriquement**\n(compteur identity-service 10→11,\nHTTP 200 sur l'Identity exacte)
+CMP --> LDR : HTTP 201 — Company créée\n(account_id inclus)
+deactivate CMP
+
+note right of LDR
+  **⚠ TROU CONFIRMÉ EMPIRIQUEMENT** :
+  admin_email NE crée AUCUN User
+  en cascade (contrairement à owner/Identity,
+  qui LUI est bien créé en cascade réelle).
+  Le Loader doit créer l'Admin User
+  lui-même, explicitement.
+end note
+
+LDR -> USR : POST /auth/register\n(email=admin_email, company_id, groupes=[COMPANY])
+activate USR
+USR --> LDR : HTTP 201 — auth_token (10min)
+LDR -> USR : PUT /auth/password/f/change
+USR --> LDR : HTTP 200
+LDR -> USR : POST /auth/login
+USR --> LDR : HTTP 200 — access_token
+deactivate USR
+
+note right of LDR
+  **⚠⚠ HYPOTHÈSE NON VÉRIFIÉE, PAS UN FAIT ⚠⚠**
+  UC-10 (CDC) décrit 4 comptes distincts pour
+  un Lender. **JAMAIS testé empiriquement**
+  (Trou #2, document maître §12) — contrairement
+  aux 6 comptes du Dépositaire, confirmés
+  plusieurs fois aujourd'hui. L'endpoint exact,
+  et même l'existence d'une cascade automatique,
+  restent à vérifier avant tout développement réel.
+end note
+
+LDR -> ACC : [HYPOTHÈSE À VÉRIFIER] POST /accounts/ (type=CAPITAL)
+activate ACC
+ACC --> LDR : [non testé empiriquement]
+LDR -> ACC : [HYPOTHÈSE À VÉRIFIER] POST /accounts/ (type=INTEREST)
+ACC --> LDR : [non testé empiriquement]
+LDR -> ACC : [HYPOTHÈSE À VÉRIFIER] POST /accounts/ (type=PENALTY)
+ACC --> LDR : [non testé empiriquement]
+LDR -> ACC : [HYPOTHÈSE À VÉRIFIER] POST /accounts/ (type=TAXE)
+ACC --> LDR : [non testé empiriquement]
+deactivate ACC
+
+LDR -> DB : insert(lenders_registry,\n{company_id, lender_type=LOCAL,\ncountry_code=CM, 4 account_ids})
+activate DB
+DB --> LDR : ack
+LDR -> DB : insert(faker_consumption_ledger,\n{client_id, consumed_for=LENDER_LOCAL})
+DB --> LDR : ack
+deactivate DB
+
+LDR --> SA : Lender local créé\n(progression mise à jour)
+deactivate LDR
+
+@enduml

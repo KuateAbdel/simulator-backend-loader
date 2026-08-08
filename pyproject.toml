@@ -1,0 +1,47 @@
+[project]
+name = "simulator-backend"
+version = "0.1.0"
+description = "Loader FinZuu — backend d'orchestration HTTP (FZ-STACK-LOADER-2026-001)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Stack verrouillee par FZ-STACK-LOADER-2026-001 section 8.
+    # Toute dependance ajoutee ici DOIT disposer d'une roue linux_aarch64
+    # (serveur cible 152.53.118.110 = Ubuntu 24.04 ARM64).
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx[http2]>=0.27",
+    "motor>=3.6",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pyjwt>=2.9",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# docs/reference contient des documents et un script fournis en reference
+# (loader-config-service). Ils sont lus, jamais maintenus par ce depot.
+extend-exclude = ["docs/reference"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "RUF"]
+ignore = ["S101"]  # assert autorise dans les tests
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+exclude = ["^docs/reference/"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

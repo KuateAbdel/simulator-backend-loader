@@ -1,0 +1,78 @@
+@startuml Loader_FinZuu_Sequence_Depositary
+
+title Séquence — Création d'un Dépositaire + souscription (avec garde-fous FRA-203/204/205)
+
+participant "Loader" as LDR
+participant "company-service" as CMP
+participant "depositary-service" as DEP
+participant "product-service" as PRD
+participant "account-service" as ACC
+
+LDR -> LDR : Company déjà créée\n(cascade Identity confirmée — D-CMP-2)
+
+LDR -> DEP : POST /depositaries/create\n{name (source Faker), currency, company_id}
+activate DEP
+DEP --> LDR : HTTP 201 — Dépositaire créé\n(total_saving=0.0)
+deactivate DEP
+
+note right of LDR
+  **CORRECTIF** : PATCH status/true retiré —
+  confirmé empiriquement plusieurs fois
+  aujourd'hui, un Dépositaire est ACTIF
+  PAR DÉFAUT dès sa création. Cette étape
+  n'existe jamais en pratique.
+end note
+
+note right of LDR
+  **⚠ D-DEP-7 (FRA-205, CRITIQUE)** :
+  ROOT exclusivement pour CETTE écriture.
+  Aucune restriction RBAC réelle sur
+  depositary-service — jamais utiliser
+  un token de moindre privilège, même
+  si techniquement accepté.
+end note
+
+LDR -> DEP : POST /depositaries/subscriptions/create\n{product_id, depositary_id}
+activate DEP
+DEP -> ACC : créer compte CAPITAL
+DEP -> ACC : créer compte INTEREST
+DEP -> ACC : créer compte PENALTY
+DEP -> ACC : créer compte TAXE
+DEP -> ACC : créer compte CLASSIC
+DEP -> ACC : créer compte TERM_DEPOSIT
+activate ACC
+ACC --> DEP : 6 comptes créés
+deactivate ACC
+DEP --> LDR : HTTP 201 — Souscription créée
+deactivate DEP
+
+note right of LDR
+  **D-DEP-2** : ces 6 comptes ne sont créés
+  qu'UNE SEULE FOIS, à la première
+  souscription. Souscrire à un 2ème
+  produit réutilise les mêmes comptes.
+end note
+
+alt Souscription à un 2ème produit
+  LDR -> PRD : GET /products/{id}\n(vérifier existence — D-DEP-3)
+  activate PRD
+  PRD --> LDR : Product confirmé
+  deactivate PRD
+  LDR -> DEP : POST /depositaries/subscriptions/create\n{product_id_2, depositary_id}
+  activate DEP
+  DEP --> LDR : HTTP 201\n(réutilise les 6 comptes existants)
+  deactivate DEP
+end
+
+note over LDR, ACC
+  **⚠ D-DEP-8 (FRA-203/204, CRITIQUE)** :
+  Si le Loader doit simuler la "fermeture"
+  d'un Dépositaire, PATCH status/false
+  N'ARRÊTE PAS les collectes/retraits sur
+  souscriptions existantes (confirmé empiriquement).
+  Ne jamais concevoir de logique supposant
+  le contraire. Idem pour la désactivation
+  de la Company parente — aucune cascade.
+end note
+
+@enduml

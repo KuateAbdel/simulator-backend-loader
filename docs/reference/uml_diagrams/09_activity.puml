@@ -1,0 +1,140 @@
+@startuml Loader_FinZuu_Activity_v1
+
+title Loader FinZuu — Diagramme d'Activité (v1.0.0) — Orchestration globale
+
+start
+
+:Super-Admin configure la génération\n(pays actifs, volume, mode DRY_RUN|REAL);
+
+partition "Phase 1 — Vérification référentiel (config-service, LECTURE SEULE)" #LightBlue {
+  note right
+    **CORRECTIF** : config-service est un référentiel
+    STABLE, déjà peuplé manuellement une fois durant
+    l'investigation (4 pays, 51 régions, 50 villes,
+    82 quartiers, devises, telcos). Le Loader ne le
+    REPEUPLE JAMAIS à chaque exécution — il LIT
+    uniquement, pour valider la cohérence géographique
+    de ce qu'il crée ailleurs (Company, Dépositaire,
+    Client). Réécrire à chaque run n'aurait aucun sens
+    (données statiques, jamais de raison de changer).
+  end note
+  :GET /countries/ (vérifier présence des 4 pays);
+  :GET /currencies/, GET /telcos/ (vérifier présence);
+  if (Référentiel complet et cohérent ?) then (non)
+    :ALERTE — arrêt, intervention manuelle requise;
+    stop
+  endif
+}
+
+partition "Phase 2 — Organisation (company/user-service)" #LightGreen {
+  while (pour chaque Company à créer, 12-20 total) is (suivant)
+    :Tirer client Faker Business;
+    if (client_id déjà dans\nfaker_consumption_ledger ?) then (oui)
+      :Re-tirer avec seed différent;
+      stop
+    else (non)
+      :POST /companies/\n(nom Faker, admin_email);
+      note right: Cascade Identity CONFIRMÉE\n(D-CMP-2, empirique)
+      :Marquer client Faker consommé;
+    endif
+    :POST /auth/register (Admin User);
+    note right: admin_email NE crée PAS\nle User automatiquement —\nà faire explicitement
+    :Flow 3 étapes (register→f-change→login);
+  endwhile (terminé)
+
+  while (pour chaque Lender, 16 total\n(12 locaux + 4 institutionnels)) is (suivant)
+    if (Lender institutionnel ?) then (oui)
+      :Nom fixe (Nordic/IFC/AFD/BAD);
+    else (non — local)
+      :Nom source Faker Business\n(pays identique — cohérence stricte);
+    endif
+    :[HYPOTHÈSE non vérifiée]\nCréer 4 comptes financiers;
+    :Insérer lenders_registry;
+  endwhile (terminé)
+
+  :Générer hiérarchie\nBranche→Agence→Kiosque→Agent (UC-09);
+}
+
+partition "Phase 3 — Catalogue Produits (product-service)" #LightYellow {
+  :GET /products/ (inventaire — D-PRD-2);
+  fork
+    :Catalogue LENDING;
+    while (pour chaque produit loan_json.json) is (suivant)
+      if (category == "Any" ?) then (oui)
+        :Split : créer 2 exemplaires\n(INDIVIDUAL + CORPORATE) — D-PRD-4;
+      else (non)
+        :Créer 1 exemplaire;
+      endif
+    endwhile (terminé)
+    note right: Résultat : 6 Products LENDING
+  fork again
+    :Catalogue COLLECT;
+    if ("Cotisation 20000/mois"\nou "plastique" existe ?) then (oui)
+      :RÉUTILISER — jamais dupliquer;
+    else (non)
+      :Créer avec nom réel\n(Dépôt à Terme, Collecte Cacao...);
+    endif
+    note right: Résultat : 6 Products COLLECT\n(D-PRD-9, croisement Type×Category)
+  end fork
+}
+
+partition "Phase 4 — Dépositaires (depositary-service)" #LightPink {
+  while (pour chaque Dépositaire, 120-200 total) is (suivant)
+    :POST /depositaries/create\n(actif par défaut);
+    :POST /subscriptions/create\n(6 comptes créés automatiquement);
+    note right: D-DEP-2 : 6 comptes UNE SEULE FOIS
+    if (2ème produit à souscrire ?) then (oui)
+      :Réutiliser les 6 comptes existants;
+    endif
+  endwhile (terminé)
+}
+
+partition "Phase 5 — Clients (client-service, Faker)" #LightCyan {
+  while (pour chaque Client, 2000 total) is (suivant)
+    :Tirer client Faker\n(Individual 80% / Business 20%);
+    if (client_id déjà consommé ?) then (oui)
+      :Re-tirer avec seed différent;
+    endif
+    :POST /clients/onboard\n(id_expire_on toujours fourni — D-CLI-2);
+    note right: Cascade Identity + Account\nCONFIRMÉE empiriquement
+    if (1 à 3 produits ?) then (2ème/3ème)
+      :PUT /clients/subscribe;
+    endif
+  endwhile (terminé)
+}
+
+partition "Phase 6 — Vie commune 180 jours (collect/account-service)" #Lavender {
+  :sim_day = SIM_START_DATE;
+  while (sim_day <= SIM_END_DATE ?) is (oui — 180 itérations)
+    :_wall_from_sim_day(sim_day);
+    while (pour chaque Client actif) is (suivant)
+      switch (Type de vie ?)
+      case (Type 1 — 100% clients)
+        :Collecte périodique (collect-service);
+        :Paiements/P2P (account-service);
+      case (Type 2 — APPROVED)
+        :Historique crédit (Faker);
+        note right: Hors périmètre —\nloan-service non développé
+      case (Type 3 — DECLINED/NOT SCORED)
+        :Vie commune SEULEMENT;
+        note right: JAMAIS d'événement crédit (EF-78)
+      endswitch
+    endwhile (terminé)
+    if (sim_day % 30/60/90 == 0 ?) then (oui)
+      :Re-scoring DECLINED (EF-79);
+    endif
+    :sim_day += 1;
+  endwhile (non — terminé)
+}
+
+:Générer rapport d'exécution final\n(audit_trail, statistiques);
+
+if (Erreurs bloquantes rencontrées ?) then (oui)
+  :LoaderRun.status = FAILED ou PARTIAL;
+else (non)
+  :LoaderRun.status = COMPLETED;
+endif
+
+stop
+
+@enduml

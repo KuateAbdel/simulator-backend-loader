@@ -1,0 +1,62 @@
+@startuml Loader_FinZuu_Sequence_OnboardingClient
+
+title Séquence — Onboarding d'un Client (avec Faker, UC-13/UC-14)
+
+participant "Loader" as LDR
+participant "Faker\nfintech4esg" as FAKER
+database "MongoDB Loader" as DB
+participant "client-service" as CLI
+participant "identity-service" as IDS
+participant "account-service" as ACC
+
+LDR -> FAKER : GET /client/individual?country_code=CM&seed=<X>
+activate FAKER
+FAKER --> LDR : payload client\n(identity, msisdn, id_expire_on...)
+deactivate FAKER
+
+LDR -> DB : find_one(faker_consumption_ledger, client_id)
+activate DB
+DB --> LDR : non trouvé
+deactivate DB
+note right of LDR : **D-FAKER-1** vérifié
+
+LDR -> LDR : product_id déjà choisi\n(Products créés en amont — D-CLI-1)
+
+LDR -> CLI : POST /clients/onboard\n{msisdn, category, identity\n(avec id_expire_on — D-CLI-2),\nproduct_id, currency}
+activate CLI
+
+CLI -> IDS : créer Identity (cascade interne)
+activate IDS
+IDS --> CLI : Identity créée (HTTP 200)
+deactivate IDS
+
+CLI -> ACC : créer compte CHECKING (cascade interne)
+activate ACC
+ACC --> CLI : Account créé (balance=0.0)
+deactivate ACC
+
+CLI --> LDR : HTTP 201 — Client créé\n(account_id inclus)
+deactivate CLI
+
+note right of LDR
+  **⚠ Confirmé empiriquement (D-CLI-4)** :
+  identity.type envoyé est IGNORÉ,
+  serveur l'écrase systématiquement
+  vers CORPORATE.
+end note
+
+LDR -> DB : insert(faker_consumption_ledger,\n{client_id, consumed_for=COLLECT_CLIENT})
+activate DB
+DB --> LDR : ack
+deactivate DB
+
+alt Client possède 2 ou 3 produits (CDC : 1 à 3)
+  LDR -> CLI : PUT /clients/subscribe\n{msisdn, product_id_2}
+  activate CLI
+  CLI --> LDR : HTTP 200
+  deactivate CLI
+end
+
+LDR -> LDR : Client prêt pour\nUC-15 (vie commune 180j)
+
+@enduml

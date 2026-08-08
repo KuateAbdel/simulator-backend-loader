@@ -1,0 +1,20 @@
+# Environnement Python (uv)
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets -- ne JAMAIS committer le .env reel (seul .env.example est versionne)
+.env
+.env.local
+
+# Etat et journaux d'execution
+logs/
+state/
+
+# Outillage local
+.coverage
+htmlcov/
+.DS_Store

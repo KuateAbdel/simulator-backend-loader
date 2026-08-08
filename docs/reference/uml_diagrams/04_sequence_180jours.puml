@@ -1,0 +1,83 @@
+@startuml Loader_FinZuu_Sequence_180Jours
+
+title Séquence — Boucle de vie commune sur 180 jours (EF-76 à EF-80)
+
+participant "Loader\n(orchestrateur)" as LDR
+participant "Fonctions Duhamel\n(_wall_from_sim_day...)" as DTF
+participant "Faker\nfintech4esg" as FAKER
+participant "collect-service" as COL
+participant "account-service" as ACC
+
+LDR -> LDR : sim_day = SIM_START_DATE
+loop pour chaque sim_day jusqu'à SIM_END_DATE (180 itérations)
+
+  LDR -> DTF : _wall_from_sim_day(sim_day)
+  activate DTF
+  DTF --> LDR : wall_date (horodatage réel)
+  deactivate DTF
+
+  loop pour chaque Client actif (2000 au total)
+
+    alt Type 1 — Vie commune (100% des clients, UC-15)
+      note right of LDR
+        **CORRECTIF** : collect-service gère
+        EXCLUSIVEMENT l'épargne (Collecte).
+        Les mouvements P2P/paiements/mobile money
+        relèvent d'account-service — flux distinct,
+        jamais fusionné (EF-77 : "comptes, épargne,
+        paiements, P2P, Collecte" = 4 flux séparés).
+      end note
+
+      opt Sous-population avec souscription Collecte active
+        LDR -> COL : POST /collects/collect\n(contribution périodique, wall_date)
+        activate COL
+        COL --> LDR : HTTP 201
+        deactivate COL
+      end
+
+      LDR -> ACC : transfer/credit/debit\n(P2P, paiement marchand, mobile money)
+      activate ACC
+      ACC --> LDR : HTTP 201
+      deactivate ACC
+
+    else Type 2 — Client APPROVED (sous-population crédit)
+      LDR -> FAKER : GET /loan-history/{client_id}
+      activate FAKER
+      FAKER --> LDR : décaissement/remboursement du jour
+      deactivate FAKER
+      note right : Hors périmètre Séquence —\nvoir module loan-service (non développé)
+
+    else Type 3 — DECLINED/NOT SCORED (UC-16)
+      LDR -> COL : POST /collects/collect\n(vie commune SEULEMENT)
+      COL --> LDR : HTTP 201
+      note right
+        **EF-78** : JAMAIS d'événement crédit
+        (CREATE_LOAN, REPAY_LOAN, SET_DPD)
+        pour cette sous-population
+      end note
+    end
+
+  end
+
+  alt sim_day % 30 == 0 (ou 60, ou 90 — paramétrable)
+    LDR -> FAKER : GET /real-scoring-payload/{client_id}\n(re-scoring DECLINED)
+    activate FAKER
+    FAKER --> LDR : nouveau decision_status
+    deactivate FAKER
+    note right
+      **EF-79** : re-scoring périodique
+      (30/60/90j — jamais confondre
+      avec la fenêtre globale 180j)
+    end note
+  end
+
+  LDR -> LDR : sim_day += 1
+end
+
+note over LDR, ACC
+  **ENF-15** : deux exécutions avec mêmes paramètres
+  et même run_id DOIVENT produire le même écosystème
+  (reproductibilité stricte).
+end note
+
+@enduml
