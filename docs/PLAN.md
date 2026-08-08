@@ -152,7 +152,7 @@ nomme n'existent pas chez Faker.
 | UC-06 | Devises et opérateurs telco | ✅ lecture seule |
 | UC-07 | Companies typées avec licences | ⬜ **étape 2** |
 | UC-08 | Lenders locaux et institutionnels | ⬜ **étape 2** |
-| UC-09 | Hiérarchie Branche→Agence→Kiosque→Agent | 🟡 planifiée, exécution étape 4 |
+| UC-09 | Hiérarchie Branche→Agence→Kiosque→Agent | 🟡 planifiée **et exécuteur écrit** (`D-DEP-9` inclus) |
 | UC-10 | 4 comptes financiers des Lenders | ⬜ mécanisme tranché **D-01** |
 | UC-11 | Catalogue Produits | ⬜ **étape 3** |
 | UC-12 | Consommation Faker + cohérence pays/opérateur | 🟡 `D-FAKER-1` structurellement garanti |
@@ -206,7 +206,7 @@ générée côté Loader), licences explicites, Admin User en 3 requêtes, 16 Le
 embarquée par produit, **taux borné à 24 %**.
 **Doit précéder les étapes 4 et 5** (souscription et onboarding exigent un `product_id`).
 
-### ⬜ Étape 4 — Dépositaires et hiérarchie
+### 🟡 Étape 4 — Dépositaires et hiérarchie · *exécuteur écrit, en attente des étapes 2-3*
 `UC-09` · EF-14 à EF-18
 40‑80 Dépositaires, souscription déclenchant les 6 comptes, `org_hierarchy`
 peuplé, `verifier_cr02()` passant. Agents.
