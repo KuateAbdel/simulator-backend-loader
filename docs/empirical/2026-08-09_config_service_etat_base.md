@@ -4,7 +4,7 @@
 |---|---|
 | **Motif** | Avant d'écrire quoi que ce soit, savoir **ce qui existe déjà**. Le référentiel a été chargé le 30/07 par `loader_config_service.py`. Duplique-t-on ? |
 | **Méthode** | Inventaire complet en lecture seule, puis **comparaison ligne à ligne** avec `Loader_Base_FinZuu_v1_1.xlsx`. |
-| **Résultat** | **Aucune duplication à craindre.** Mais **6 entrées parasites sur 24**, et une chaîne référentielle **rompue**. |
+| **Résultat** | **Aucune duplication à craindre.** **6 entrées parasites sur 24**, dont une dangereuse. La chaîne pays → devise, elle, **est saine**. |
 
 ---
 
@@ -58,28 +58,41 @@ Déjà documenté — `ANO-CFG-CUR-10`, recommandation n°3 de `FRA-222`. **Touj
 
 ---
 
-## 3. 🔴 La chaîne **pays → devise n'existe pas** côté serveur
+## 3. ✅ La chaîne pays → devise **existe** — correction d'une erreur de lecture
 
-| Pays | `currency` côté serveur | Ce que le référentiel dit |
+> ⚠️ **Rectification.** Une première version de ce relevé annonçait que les
+> quatre pays n'avaient **aucune devise rattachée**, et en tirait une anomalie
+> `ANO-CFG-COUNTRY-02` de gravité moyenne. **C'était faux.** Je lisais un champ
+> `currency` (singulier) **qui n'existe pas**. Le champ réel est **`currencies`**
+> — pluriel, tableau d'objets complets. L'anomalie est **retirée**.
+
+Relecture sur le bon champ :
+
+| Pays | `currencies` | Référentiel | Opérateurs | Villes | Verdict |
+|---|---|---|---|---|---|
+| CM | `['XAF']` | `XAF` | 3 | 12 | ✅ |
+| CI | `['XOF']` | `XOF` | 3 | 12 | ✅ |
+| BF | `['XOF']` | `XOF` | 3 | 12 | ✅ |
+| SN | `['XOF']` | `XOF` | 3 | 14 | ✅ |
+
+**Les quatre pays légitimes sont parfaitement rattachés** — devise, opérateurs et
+villes. Le chargement du 30/07 a fait son travail.
+
+### Ce qui reste vrai, et qui est le vrai écart
+
+Notre référentiel demeure **plus riche**, et sur des dimensions que config-service
+n'a aucun moyen de porter :
+
+| Dimension | config-service | Notre référentiel |
 |---|---|---|
-| CM | **`None`** | `XAF` (zone CEMAC, BEAC) |
-| CI | **`None`** | `XOF` (zone UEMOA, BCEAO) |
-| BF | **`None`** | `XOF` |
-| SN | **`None`** | `XOF` |
+| Villes | `cities: array[string]` — **texte libre** | 50 villes, avec `region_id`, GPS, population, poids économique, capitales |
+| **Régions administratives** | **aucune notion** — `region` y désigne `"Middle Africa"`, la région **continentale** | **51 régions**, avec capitale et population |
+| **Quartiers** | **aucune notion** | **82 quartiers**, avec `zone_type` |
+| TVA, fuseau, régulateurs | absents | présents |
 
-**Les quatre pays légitimes n'ont aucune devise rattachée**, alors que leur
-`dial_code` est correctement renseigné et que leurs opérateurs sont bien liés
-(3 chacun). Le lien pays → devise a été perdu au chargement, ou n'a jamais été
-posé.
-
-**Conséquence directe** : rien, côté serveur, ne permet de savoir qu'un client
-camerounais doit être en `XAF`. C'est exactement ce que `FRA-222` a rendu visible
-en aval — un compte client porteur de `currency="ANY"`.
-
-> **Notre référentiel est donc la seule source où la chaîne
-> `pays → devise → opérateur → région → ville → quartier` est complète et
-> vérifiée.** Ce n'est pas une redondance de confort : c'est la seule
-> matérialisation existante de cette cohérence.
+> ⚠️ **Piège de vocabulaire à ne jamais commettre** : `Country.region` côté
+> serveur vaut `"Middle Africa"` ou `"Western Africa"`. Ce **n'est pas** une de
+> nos 51 régions administratives. Deux mots identiques, deux notions sans rapport.
 
 ---
 
@@ -91,7 +104,7 @@ en aval — un compte client porteur de `currency="ANY"`.
 | 2 devises légitimes présentes | **Réutilisées** |
 | 4 pays légitimes présents | **Réutilisés** |
 | 6 entrées parasites | **Ignorées à la lecture, jamais supprimées** — la purge d'un référentiel partagé n'est pas notre rôle |
-| `Country.currency = None` | **Le Loader ne s'y fie pas** : la devise vient de notre référentiel (`devise_du_pays`) |
+| `currencies` correct sur les 4 pays | **Concordance vérifiée** avec notre référentiel — mais la devise émise reste la nôtre, seule à porter la zone monétaire |
 | `MTNcongo1` avec `6\|333` | **Jamais utilisé pour valider** — nos 12 motifs sont ancrés et vérifiés au chargement |
 
 **Le Loader ne répare pas config-service.** Il constate, journalise, et reste
@@ -104,7 +117,7 @@ cohérent chez lui.
 | Code | Constat | Gravité |
 |---|---|---|
 | **`ANO-CFG-TELCO-01`** | `MTNcongo1` porte le regex **`6\|333`**, sans ancres — accepte quasiment tout numéro. Validation en apparence, aucune en réalité. | 🔴 **HAUTE** |
-| **`ANO-CFG-COUNTRY-02`** | **Aucun des 4 pays n'a de devise rattachée** (`currency: null`) — la chaîne pays → devise est rompue à la racine | 🟠 moyenne |
+| ~~`ANO-CFG-COUNTRY-02`~~ | ~~Aucun pays n'a de devise rattachée~~ — ❌ **RETIRÉE le 09/08 : erreur de lecture de ma part.** Le champ est `currencies` (pluriel), et il est correct sur les 4 pays. | — |
 | `ANO-CFG-TELCO-03` | Opérateur `cm` : doublon exact d'Expresso Senegal | 🟡 basse |
 | `ANO-CFG-COUNTRY-04` | Pays parasites `CV` (`name_fr: "cm"`) et `ca` (`name_fr: "cmer"`) | 🟡 basse |
 | `ANO-CFG-CUR-10` | Devises parasites `cv` et `00` — **déjà signalé dans `FRA-222`, toujours présent** | 🟡 basse |
