@@ -1,10 +1,11 @@
-# Anomalies découvertes le 8 août 2026 — **aucun ticket n'existe**
+# Anomalies découvertes le 8 août 2026 — **toutes ticketées**
 
 | | |
 |---|---|
 | **Origine** | Campagne d'écriture contrôlée + audit d'intégration + investigation des flux monétaires |
 | **Méthode** | Chaque anomalie est **mesurée**, contre-vérifiée, et accompagnée de sa reproduction exacte |
 | **Périmètre** | Ce document ne liste **que le nouveau**. Les `FRA-xxx` (invariants Jira) et les anomalies des pages Service Anatomy existent déjà. |
+| **Ticketage** | ✅ **Clos le 9 août 2026** — 11 tickets `FRA-218` → `FRA-228` couvrent les 14 anomalies (voir Récapitulatif). |
 
 ---
 
@@ -175,24 +176,35 @@ n'existe plus, l'étape Organisation est débloquée.
 
 ## Récapitulatif
 
-| Code | Service | Gravité |
-|---|---|---|
-| `ANO-ACC-FEES-07` | account | 🔴 |
-| `ANO-ACC-STATUS-06` | account | 🔴 |
-| `ANO-ACC-OWNER-03` | account | 🔴 |
-| `ANO-ACC-CUR-08` | account | 🔴 |
-| `ANO-CPY-USER-01` | company | 🟠 |
-| `ANO-CPY-USER-02` | company | 🟠 |
-| `ANO-DEP-FK-04` | depositary | 🟠 |
-| `ANO-ACC-FK-09` | account | 🟠 |
-| `ANO-DEP-TYPE-02` | depositary | 🟠 |
-| `ANO-ACC-STATUS-05` | account | 🟡 |
-| `ANO-CPY-ADMIN-03` | company | 🟡 |
-| `ANO-CPY-OWNERID-05` | company | 🟡 |
-| `ANO-CLI-IDNUM-06` | client | 🟡 |
-| `ANO-CFG-CUR-10` | config | 🟡 |
+| Code | Service | Gravité | Ticket | Épique | Priorité |
+|---|---|---|---|---|---|
+| `ANO-ACC-FEES-07` | account | 🔴 | `FRA-218` | FRA-173 Paiement | Highest |
+| `ANO-ACC-STATUS-06` | account | 🔴 | `FRA-219` | FRA-173 Paiement | Highest |
+| `ANO-ACC-OWNER-03` | account | 🔴 | `FRA-220` | FRA-173 Paiement | Highest |
+| `ANO-ACC-CUR-08` | account | 🔴 | `FRA-222` | FRA-173 Paiement | High |
+| `ANO-CPY-USER-01` | company | 🟠 | `FRA-221` | FRA-175 Administration | High |
+| `ANO-CPY-USER-02` | company | 🟠 | `FRA-221` | FRA-175 Administration | High |
+| `ANO-DEP-FK-04` | depositary | 🟠 | `FRA-225` | FRA-178 Collecte | Medium |
+| `ANO-ACC-FK-09` | account | 🟠 | `FRA-224` | FRA-173 Paiement | Medium |
+| `ANO-DEP-TYPE-02` | depositary | 🟠 | `FRA-223` | FRA-178 Collecte | High |
+| `ANO-ACC-STATUS-05` | account | 🟡 | `FRA-226` | FRA-173 Paiement | Low |
+| `ANO-CPY-ADMIN-03` | company | 🟡 | `FRA-221` | FRA-175 Administration | High |
+| `ANO-CPY-OWNERID-05` | company | 🟡 | `FRA-227` | FRA-175 Administration | Low |
+| `ANO-CLI-IDNUM-06` | client | 🟡 | `FRA-228` | FRA-175 Administration | Low |
+| `ANO-CFG-CUR-10` | config | 🟡 | `FRA-222` | FRA-173 Paiement | High |
 
-**14 anomalies, 4 hautes.** Aucune n'a de ticket à ce jour.
+**14 anomalies, 4 hautes — toutes ticketées** en 11 tickets (`FRA-218` → `FRA-228`).
+Deux tickets couvrent plusieurs anomalies : `FRA-221` en regroupe 3 (une seule et
+même cascade de création d'une Company), `FRA-222` en regroupe 2 (la devise
+invalide et le référentiel pollué qui aurait dû l'arrêter).
+
+**Règle de rattachement aux épiques** — établie et vérifiée le 9 août 2026 :
+
+| Service | Épique |
+|---|---|
+| account-service | `FRA-173` Module de paiement (Mifos) |
+| depositary-service, collect-service | `FRA-178` Module Collecte |
+| company-service, user-service, client-service, config-service | `FRA-175` Module Administration (Central) |
 
 **Toutes sont neutralisées côté Loader** — aucune ne bloque le développement.
 Le Loader ne répare rien côté serveur : il neutralise l'effet chez lui,
