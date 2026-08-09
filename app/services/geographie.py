@@ -20,6 +20,7 @@ lignes dans le fichier source.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,51 @@ class District:
     name: str
 
 
+@dataclass(frozen=True, slots=True)
+class Telco:
+    """Operateur telecom, avec sa regle de numerotation reelle.
+
+    `EF-27` exige de valider le MSISDN « contre le regex de l'operateur telco
+    du pays ». Le referentiel porte ces 12 regex depuis le depart — nous ne
+    les chargions simplement pas.
+
+    `part_marche` est la part de marche **reelle** (MTN CM 46 %, Orange CM
+    43 %, Camtel 3 %). Elle sert a repartir les 2000 clients entre operateurs
+    comme dans la vie, plutot qu'uniformement : un echantillon ou chaque
+    operateur pese un tiers ne ressemble a aucun marche africain.
+    """
+
+    telco_id: str
+    country_iso2: str
+    network_name: str
+    short_name: str
+    ussd_base_code: str
+    regex_msisdn: str
+    part_marche: float
+
+    def accepte(self, msisdn: str) -> bool:
+        return re.match(self.regex_msisdn, str(msisdn).strip()) is not None
+
+
+@dataclass(frozen=True, slots=True)
+class Devise:
+    """Devise, avec la zone monetaire qui la porte.
+
+    Le point decisif : `pays` vient de la colonne `countries_using`. La devise
+    n'est donc **pas** un choix libre parmi deux — elle est **determinee par le
+    pays**. XAF est la zone CEMAC (Cameroun), XOF la zone UEMOA (Cote
+    d'Ivoire, Burkina Faso, Senegal). Emettre XOF pour un client camerounais
+    serait aussi faux qu'emettre une devise inventee, et aucun service ne le
+    refuserait (FRA-222).
+    """
+
+    code: str
+    nom: str
+    decimales: int
+    banque_centrale: str
+    pays: frozenset[str]
+
+
 @dataclass(slots=True)
 class RapportGeographique:
     """Rapport de couverture, exige par EF-06 en debut d'execution."""
@@ -65,6 +111,8 @@ class RapportGeographique:
     nb_regions: int = 0
     nb_villes: int = 0
     nb_quartiers: int = 0
+    nb_telcos: int = 0
+    nb_devises: int = 0
     orphelins: list[str] = field(default_factory=list)
 
     def resume(self) -> str:
@@ -73,6 +121,8 @@ class RapportGeographique:
             f"Regions   : {self.nb_regions}",
             f"Villes    : {self.nb_villes}",
             f"Quartiers : {self.nb_quartiers}",
+            f"Telcos    : {self.nb_telcos}",
+            f"Devises   : {self.nb_devises}",
         ]
         if self.orphelins:
             lignes.append(f"Exclus pour rattachement invalide : {len(self.orphelins)}")
@@ -89,11 +139,47 @@ class ReferentielGeo:
         villes: dict[str, City],
         quartiers: dict[str, District],
         rapport: RapportGeographique,
+        telcos: dict[str, Telco] | None = None,
+        devises: dict[str, Devise] | None = None,
     ) -> None:
         self.regions = regions
         self.villes = villes
         self.quartiers = quartiers
         self.rapport = rapport
+        self.telcos = telcos or {}
+        self.devises = devises or {}
+
+    # -- Telecoms et monnaie — la coherence que le systeme ne verifie pas ----
+
+    def telcos_du_pays(self, pays: str) -> list[Telco]:
+        """Operateurs d'un pays, du plus gros au plus petit."""
+        code = str(pays).strip().upper()
+        return sorted(
+            (t for t in self.telcos.values() if t.country_iso2 == code),
+            key=lambda t: t.part_marche,
+            reverse=True,
+        )
+
+    def operateur_du_msisdn(self, msisdn: str, pays: str) -> Telco | None:
+        """`EF-27` — a quel operateur du pays ce numero appartient-il ?
+
+        Renvoie `None` si aucun ne le reconnait : le numero n'est alors
+        attribuable a aucun reseau reel du pays. Aucun service FinZuu ne fait
+        cette verification.
+        """
+        for telco in self.telcos_du_pays(pays):
+            if telco.accepte(msisdn):
+                return telco
+        return None
+
+    def devise_du_pays(self, pays: str) -> Devise | None:
+        """La devise n'est pas un choix : elle est determinee par la zone
+        monetaire du pays. CM -> XAF (CEMAC) · CI, BF, SN -> XOF (UEMOA)."""
+        code = str(pays).strip().upper()
+        for devise in self.devises.values():
+            if code in devise.pays:
+                return devise
+        return None
 
     # -- Acces indexes ------------------------------------------------------
 
@@ -219,12 +305,74 @@ def charger_referentiel(chemin: Path) -> ReferentielGeo:
             district_id, city_id, str(ligne.get("district_name") or "")
         )
 
+    # Telcos — 12 operateurs avec leur regex de numerotation (EF-27) et leur
+    # part de marche reelle. Ces donnees etaient dans le referentiel depuis le
+    # depart ; nous ne les chargions pas.
+    telcos: dict[str, Telco] = {}
+    for ligne in _lignes(classeur, "Telcos"):
+        telco_id = str(ligne.get("telco_id") or "").strip()
+        pays = str(ligne.get("country_iso2") or "").strip().upper()
+        motif = str(ligne.get("regex_msisdn") or "").strip()
+        if not telco_id:
+            continue
+        if pays not in pays_connus:
+            rapport.orphelins.append(f"Telco {telco_id} : pays {pays!r} inconnu")
+            continue
+        if not motif:
+            rapport.orphelins.append(f"Telco {telco_id} : aucun regex_msisdn — EF-27 impossible")
+            continue
+        try:
+            re.compile(motif)
+        except re.error as erreur:
+            rapport.orphelins.append(f"Telco {telco_id} : regex invalide ({erreur})")
+            continue
+        telcos[telco_id] = Telco(
+            telco_id=telco_id,
+            country_iso2=pays,
+            network_name=str(ligne.get("network_name") or ""),
+            short_name=str(ligne.get("short_name") or ""),
+            ussd_base_code=str(ligne.get("ussd_base_code") or ""),
+            regex_msisdn=motif,
+            part_marche=_flottant(ligne.get("market_share_pct")),
+        )
+
+    # Devises — la zone monetaire determine la devise du pays, elle ne se
+    # choisit pas. `countries_using` porte l'appartenance.
+    devises: dict[str, Devise] = {}
+    for ligne in _lignes(classeur, "Currencies"):
+        code = str(ligne.get("currency_iso") or "").strip().upper()
+        if not code:
+            continue
+        utilisateurs = {
+            morceau.strip().upper()
+            for morceau in str(ligne.get("countries_using") or "").split(",")
+            if morceau.strip()
+        }
+        devises[code] = Devise(
+            code=code,
+            nom=str(ligne.get("currency_name") or ""),
+            decimales=_entier_ou_none(ligne.get("decimal_places")) or 0,
+            banque_centrale=str(ligne.get("central_bank") or ""),
+            pays=frozenset(utilisateurs),
+        )
+
     classeur.close()
+
+    # EF-02 etendu : un pays sans operateur ou sans devise rend impossible la
+    # generation d'un client credible. On le signale plutot que de le decouvrir
+    # au 500e onboarding.
+    for pays in sorted(pays_connus):
+        if not any(t.country_iso2 == pays for t in telcos.values()):
+            rapport.orphelins.append(f"Pays {pays} : aucun operateur telecom — EF-27 inapplicable")
+        if not any(pays in d.pays for d in devises.values()):
+            rapport.orphelins.append(f"Pays {pays} : aucune devise rattachee")
 
     rapport.nb_regions = len(regions)
     rapport.nb_villes = len(villes)
     rapport.nb_quartiers = len(quartiers)
-    return ReferentielGeo(regions, villes, quartiers, rapport)
+    rapport.nb_telcos = len(telcos)
+    rapport.nb_devises = len(devises)
+    return ReferentielGeo(regions, villes, quartiers, rapport, telcos, devises)
 
 
 def _lignes(classeur: Any, feuille: str) -> list[dict[str, Any]]:
