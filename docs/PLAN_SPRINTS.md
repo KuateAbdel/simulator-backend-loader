@@ -107,6 +107,7 @@ Rien n'est masqué. Chaque ligne porte sa preuve et son sprint.
 | **`A-05`** | Permissions exactes des 11 rôles | bloque la finition de `S2` |
 | **`A-04`** | Persistance des ~700 prêts simulés | bloque `CR-10` en `S6` |
 | — | Agents compris ou en sus des 15-25 staff/pays | dimensionne `S2` |
+| **`A-08`** | **« Désactiver un pays » : chez nous, chez eux, ou les deux ?** Le serveur expose `PATCH /countries/deactivate/{id}` — mais config-service est **partagé par toute l'équipe**. *Recommandation : Loader seul par défaut, action serveur explicitement distincte dans l'interface.* | conditionne `CFG-05` |
 
 ---
 
@@ -155,10 +156,25 @@ temps. **Dépend de `A-01`.**
 Profils comportementaux, `_adjust_weights` de Duhamel — **enfin actif, puisque
 nous fournissons la date de naissance**. Re-scoring. **Dépend de `A-07`.**
 
-### ⬜ Sprint 6 — Pilotage et recette
+### ⬜ Sprint 6 — Pilotage, **paramétrage** et recette
 
-Routes Super-Admin, purge par préfixe, verrou d'exécution, `CR-01` → `CR-12`,
-mesure des 30 minutes. **→ v1.0.0**
+Routes Super-Admin (`EF-50` → `EF-58`), purge par préfixe, verrou d'exécution,
+`CR-01` → `CR-12`, mesure des 30 minutes. **→ v1.0.0**
+
+**Ajout du 9 août — exigence de paramétrage de la Direction Technique.**
+Analyse complète dans `docs/EXIGENCE_PARAMETRAGE.md`.
+
+| # | Story |
+|---|---|
+| `CFG-01` | Modèle de configuration — arbre pays/région/ville, **défauts CDC** |
+| `CFG-02` | Persistance de la config dans `loader_runs` — **prérequis d'`ENF-15`** |
+| `CFG-03` | Surcouche référentielle : ajout région/ville, invariants `EF-02` appliqués |
+| `CFG-04` | Résolution des quotas — le niveau le plus fin gagne |
+| `CFG-05` | Actions Super-Admin sur config-service — intention, `DRY_RUN`, jamais de `DELETE` |
+| `CFG-06` | `PUT /countries/{id}` : relecture complète avant écriture (`TS-CFG-09`) |
+
+> **Contrainte immédiate, valable dès le Sprint 2** : toute nouvelle constante de
+> volumétrie doit **naître paramétrable**. Ne rien figer davantage.
 
 ---
 
