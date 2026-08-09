@@ -153,6 +153,63 @@ Le catalogue à 4 produits (6 créations) reprend donc tout son sens.
 
 ---
 
+## D-09 · Les 12 rôles — **11 à créer**, `CUSTOMER` réutilisé
+
+**Précisé le 9 août 2026 · Yaniv** — complète `D-06`, qui disait « 12 groupes créés
+une seule fois » et laissait croire qu'on en crée douze.
+
+**Origine des 12 rôles** : *Stratégie Seed v2.0*, repris en Gap 1 de la page
+Service Anatomy user-service (56360965) et dans
+`docs/empirical/2026-08-08_recon_9_services.md` §4.
+
+**Le 12ᵉ rôle, « Client », EST le groupe `CUSTOMER` déjà en base** (tag `CUSTOMER`,
+12 permissions). On ne le recrée pas : on le réutilise tel quel. **11 groupes à
+créer, 1 réutilisé.**
+
+### Mapping proposé — 12 rôles → 3 `tag` → 5 `UserType`
+
+Le Confluence note explicitement que ce mapping *« n'est pas encore matérialisé »*.
+Voici la proposition, **en attente de validation** (c'est l'arbitrage `A-05`) :
+
+| # | Rôle métier | `tag` | `UserType` | Action |
+|---|---|---|---|---|
+| 1 | Super-Admin | `STAFF` | `ROOT` | créer |
+| 2 | Admin | `STAFF` | `STAFF` | créer |
+| 3 | Marketing | `STAFF` | `STAFF` | créer |
+| 4 | Compliance | `STAFF` | `STAFF` | créer |
+| 5 | Collecte | `STAFF` | `STAFF` | créer |
+| 6 | Comptable | `STAFF` | `STAFF` | créer |
+| 7 | Branche | `STAFF` | `STAFF` | créer |
+| 8 | Employé/IT | `STAFF` | `STAFF` | créer |
+| 9 | Agent | `STAFF` | `STAFF` | créer |
+| 10 | Marchand | `COMPANY` | `COMPANY` | créer |
+| 11 | Kiosque | `COMPANY` | `COMPANY` | créer |
+| 12 | **Client** | `CUSTOMER` | `CUSTOMER` | ♻️ **réutiliser l'existant** |
+
+**Deux conséquences à assumer** :
+
+* Le `UserType` **`GUEST`** n'est porté par **aucun** des 12 rôles métier. Le groupe
+  `GUEST` (3 permissions) reste en base, inutilisé par le Loader.
+* Le `tag` **`ROOT`** est persisté en base bien qu'absent de l'énumération. Le rôle
+  Super-Admin prend donc `tag: STAFF` — **jamais `ROOT` en écriture** (`A4`).
+
+**Réversibilité** : `DELETE /api/v1/groupes/{id}` existe — rare dans cet écosystème.
+La création des 11 rôles est donc la seule opération d'écriture entièrement
+réversible du Loader.
+
+**Correction apportée à `D-06`** : sa preuve affirmait que « les 4 groupes existants
+portent tous `company_id = ''` ». **Faux** — mesuré le 09/08, le groupe `COMPANY`
+porte **`null`**. La décision (groupes globaux, créés une fois) reste valide.
+
+**Périmètre** : c'est du travail **Loader**, hors UML — *« Périmètre à porter par le
+Loader »*, `recon_9_services.md` §4.
+
+**Code : à écrire.** `creer_groupe()` et `supprimer_groupe()` existent déjà dans
+`app/clients/user_service.py` ; il manque l'exécuteur et la table des permissions
+par rôle (`A-05`).
+
+---
+
 ## Décisions en attente
 
 | # | Sujet | Pourquoi c'est bloqué |
