@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Objet** | Les **59 disciplines** que le Loader applique face aux 9 services FinZuu. Chacune neutralise un écart empirique **mesuré**, pas supposé. |
+| **Objet** | Les **63 disciplines** que le Loader applique face aux 9 services FinZuu. Chacune neutralise un écart empirique **mesuré**, pas supposé. |
 | **Nature** | Registre consolidé. Chaque discipline vit dans le code, à l'endroit où elle s'applique — ce document en est l'**index**, pas la source. |
 | **Pourquoi il existe** | 59 disciplines vivaient dans les commentaires ; **26 seulement** figuraient dans les docs. La connaissance était là mais introuvable sans lire 4 000 lignes. |
 | **Écrit le** | 9 août 2026 |
@@ -162,6 +162,32 @@ moins.
 > dans `ProductServiceClient.creer_produit()` **et** dans
 > `ExecuteurCatalogue._verifier_avant_emission()` — deux barrières, parce
 > qu'aucune alarme ne sonnerait après.
+
+---
+
+## Comptes — `D-ACC-*` · 4 disciplines · `app/clients/account_service.py`
+
+**Ajoutées le 9 août.** Elles étaient établies depuis l'audit monétaire du 8
+(19 tests) et vivaient dans `docs/empirical/` **seulement**. Le client
+account-service ne portait aucune discipline. *Une connaissance qui reste dans un
+rapport ne protège rien.*
+
+| # | Discipline | Le fait mesuré |
+|---|---|---|
+| `D-ACC-1` | **Ne jamais présumer qu'un solde a bougé de `amount`** | `ANO-ACC-FEES-07` — un DEBIT de 500 sur un type à 100 de frais retire **400**. Ni 500, ni 600. Les frais sont **retranchés** du montant demandé et **crédités nulle part** (vérifié sur les 56 comptes) |
+| `D-ACC-2` | **Ne jamais lire le statut** pour savoir si l'argent a bougé | `ANO-ACC-STATUS-05` — quatre chemins ont tous déplacé des fonds et rendu `SUCCESS`, `SUCCESS`, `APPROVED` et **`PENDING`**. Le `WITHDRAWAL` de 850 a ramené le solde à zéro **en restant `PENDING`**, relu 20 s plus tard |
+| `D-ACC-3` | **Lire `transaction-configs` avant chaque campagne**, n'émettre que des types à frais **0** | la table est modifiable par API — `TAXE` l'a été le **28/07**. Ce qui était sans frais hier peut ne plus l'être |
+| `D-ACC-4` | **Aucun `DELETE`** — un compte ne peut qu'être `CLOSED` | — |
+
+> **Ce qu'il faut dire aussi : account-service est le service le mieux gardé de
+> l'écosystème.** Masse conservée sur `transfer`, découvert impossible, montant
+> négatif refusé **sans mutation**, idempotence réelle par `reference`,
+> `SUSPENDED` bloquant vraiment.
+>
+> Le contraste avec collect-service est majeur — `FRA-195` y établit une mutation
+> réelle **sous un rejet apparent**. Deux services du même écosystème, deux
+> niveaux de fiabilité opposés. **C'est pourquoi une discipline ne se généralise
+> jamais d'un service à l'autre : elle se mesure, service par service.**
 
 ---
 
