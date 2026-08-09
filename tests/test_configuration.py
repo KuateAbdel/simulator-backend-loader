@@ -17,6 +17,14 @@ from app.core.configuration import (
     ConfigurationExecution,
     Surcharge,
 )
+from app.services.geographie import charger_referentiel
+
+
+@pytest.fixture(scope="module")
+def referentiel() -> object:
+    from pathlib import Path
+
+    return charger_referentiel(Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx"))
 
 
 class TestDefautCdc:
@@ -178,3 +186,119 @@ class TestEmpreinte:
         assert "Pays actifs" in resume
         assert "Faker ne sert pas le Senegal" in resume
         assert "ECARTS AU CDC" in resume
+
+
+class TestRepartitionClients:
+    """`resoudre()` repond « quelle regle s'applique ici ». C'est insuffisant
+    pour une quantite GLOBALE : demander la part du Cameroun ne peut pas rendre
+    2000, sinon quatre pays feraient 8000 clients.
+    """
+
+    def test_repartition_egale_sur_les_quatre_pays(self) -> None:
+        parts = ConfigurationExecution.defaut_cdc().repartir_clients()
+        assert sum(parts.values()) == NB_CLIENTS
+        assert set(parts.values()) == {NB_CLIENTS // 4}
+
+    def test_un_pays_desactive_recoit_zero_sans_disparaitre(self) -> None:
+        """Il reste dans le resultat pour que le tableau de bord montre qu'il a
+        ete exclu."""
+        config = ConfigurationExecution.defaut_cdc()
+        config.desactiver_pays("SN", "A-01")
+        parts = config.repartir_clients()
+        assert parts["SN"] == 0
+        assert "SN" in parts
+        assert sum(parts.values()) == NB_CLIENTS
+
+    def test_le_reste_se_partage_entre_les_pays_libres(self) -> None:
+        config = ConfigurationExecution.defaut_cdc()
+        config.pays["CM"].surcharge = Surcharge(clients=800)
+        parts = config.repartir_clients()
+        assert parts["CM"] == 800
+        assert sum(parts.values()) == NB_CLIENTS
+        assert parts["CI"] == parts["BF"] == parts["SN"] == 400
+
+    def test_l_arrondi_est_absorbe_la_somme_tombe_juste(self) -> None:
+        config = ConfigurationExecution.defaut_cdc()
+        config.nb_clients = 2001
+        parts = config.repartir_clients()
+        assert sum(parts.values()) == 2001
+
+    def test_une_surcharge_depassant_le_total_ne_corrige_pas_en_silence(self) -> None:
+        config = ConfigurationExecution.defaut_cdc()
+        config.pays["CM"].surcharge = Surcharge(clients=3000)
+        parts = config.repartir_clients()
+        assert parts["CM"] == 3000
+        assert parts["CI"] == 0, "on ne complete pas — l'ecart est signale"
+        assert any("repartition impossible" in e for e in config.ecarts_au_cdc())
+
+    def test_aucun_pays_actif_rend_zero_partout(self) -> None:
+        config = ConfigurationExecution.defaut_cdc()
+        for code in list(config.pays):
+            config.desactiver_pays(code, "test")
+        assert set(config.repartir_clients().values()) == {0}
+
+
+class TestValidationContreLeReferentiel:
+    """Nous reprochons a account-service d'accepter un `owner_id` qui ne resout
+    nulle part (FRA-224). Une configuration acceptant `regions["Atlantide"]`
+    commettrait exactement la meme faute — sur nos propres donnees.
+    """
+
+    def test_une_configuration_nue_est_saine(self, referentiel: object) -> None:
+        assert ConfigurationExecution.defaut_cdc().valider_contre_referentiel(referentiel) == []
+
+    def test_une_region_inexistante_est_detectee(self, referentiel: object) -> None:
+        config = ConfigurationExecution.defaut_cdc()
+        config.pays["CM"].regions["Atlantide"] = Surcharge(staff=(5, 5))
+        problemes = config.valider_contre_referentiel(referentiel)
+        assert any("Atlantide" in p and "inexistante" in p for p in problemes)
+
+    def test_une_ville_inexistante_est_detectee(self, referentiel: object) -> None:
+        config = ConfigurationExecution.defaut_cdc()
+        config.pays["SN"].villes["Gotham"] = Surcharge(clients=10)
+        assert any("Gotham" in p for p in config.valider_contre_referentiel(referentiel))
+
+    def test_une_region_reelle_passe(self, referentiel: object) -> None:
+        config = ConfigurationExecution.defaut_cdc()
+        region = referentiel.regions_du_pays("CM")[0].name  # type: ignore[attr-defined]
+        config.pays["CM"].regions[region] = Surcharge(staff=(5, 5))
+        assert config.valider_contre_referentiel(referentiel) == []
+
+    def test_un_pays_hors_referentiel_est_detecte(self, referentiel: object) -> None:
+        from app.core.configuration import ConfigurationPays
+
+        config = ConfigurationExecution.defaut_cdc()
+        config.pays["ZZ"] = ConfigurationPays(code="ZZ")
+        assert any("ZZ" in p for p in config.valider_contre_referentiel(referentiel))
+
+
+class TestSurchargeSurPaysDesactive:
+    def test_une_surcharge_sans_effet_est_signalee(self) -> None:
+        """Ce n'est pas une faute, c'est un oubli probable."""
+        config = ConfigurationExecution.defaut_cdc()
+        config.pays["SN"].surcharge = Surcharge(staff=(30, 30))
+        config.desactiver_pays("SN", "A-01")
+        assert any("sans effet" in e for e in config.ecarts_au_cdc())
+
+
+class TestGardeFouQuantiteGlobale:
+    """L'erreur que j'ai commise en ecrivant ce module, rendue impossible.
+
+    `resoudre("clients", "CM")` rendait 2000 — le TOTAL, pas la part du
+    Cameroun. Quatre pays auraient fait 8000 clients. Plutot que de le
+    documenter, on l'interdit.
+    """
+
+    def test_resoudre_refuse_une_quantite_globale(self) -> None:
+        with pytest.raises(ValueError, match="repartir_clients"):
+            ConfigurationExecution.defaut_cdc().resoudre("clients", "CM")
+
+    def test_le_message_explique_la_consequence(self) -> None:
+        with pytest.raises(ValueError) as erreur:
+            ConfigurationExecution.defaut_cdc().resoudre("clients", "CM")
+        assert "quatre fois le volume" in str(erreur.value)
+
+    def test_les_quantites_par_territoire_restent_resolubles(self) -> None:
+        config = ConfigurationExecution.defaut_cdc()
+        for quantite in ("companies", "kiosques", "staff", "part_femmes", "part_corporate"):
+            assert config.resoudre(quantite, "CM") is not None

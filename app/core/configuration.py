@@ -170,7 +170,19 @@ class ConfigurationExecution:
         Ordre de priorite : **ville → region → pays → defaut CDC**. Une
         quantite absente partout retombe sur le CDC ; **aucun territoire ne
         peut se retrouver sans regle**.
+
+        ⚠️ **`clients` est refuse ici, volontairement.** C'est une quantite
+        GLOBALE : demander « combien de clients au Cameroun » a `resoudre()`
+        rendrait le total, et quatre pays feraient 8000 clients. L'erreur est
+        rendue impossible plutot que documentee — `repartir_clients()` est le
+        seul chemin.
         """
+        if quantite == "clients":
+            raise ValueError(
+                "`clients` est une quantite GLOBALE : utiliser repartir_clients(), qui "
+                "alloue le total entre les pays actifs. resoudre() rendrait le total pour "
+                "chaque pays — quatre pays feraient quatre fois le volume demande."
+            )
         fiche = self.pays.get(pays.strip().upper())
         if fiche is not None:
             for cle, table in ((ville, fiche.villes), (region, fiche.regions)):
@@ -185,9 +197,81 @@ class ConfigurationExecution:
                 return valeur
         if quantite == "part_femmes":
             return PART_FEMMES_CDC
-        if quantite == "clients":
-            return self.nb_clients
         return DEFAUTS_CDC.get(quantite)
+
+    # -- Repartition — resoudre ne suffit pas, il faut ALLOUER --------------
+
+    def repartir_clients(self) -> dict[str, int]:
+        """Repartit le total entre les pays **actifs**, et rend la part de chacun.
+
+        `resoudre()` repond « quelle regle s'applique ici » ; c'est insuffisant
+        pour une quantite **globale**. Demander la part du Cameroun ne peut pas
+        rendre 2000 — sinon quatre pays feraient 8000 clients.
+
+        Regle : les pays qui portent une surcharge `clients` la gardent ; le
+        **reste** se partage a parts egales entre les autres. Le dernier absorbe
+        l'arrondi, pour que la somme tombe **exactement** sur le total.
+
+        Un pays desactive recoit **zero** — sans disparaitre du resultat, pour
+        que le tableau de bord puisse montrer qu'il a ete exclu.
+        """
+        parts: dict[str, int] = {code: 0 for code in sorted(self.pays)}
+        actifs = self.pays_actifs
+        if not actifs:
+            return parts
+
+        imposes: dict[str, int] = {}
+        for code in actifs:
+            impose = self.pays[code].surcharge.clients
+            if impose is not None:
+                imposes[code] = int(impose)
+        libres = [code for code in actifs if code not in imposes]
+        parts.update(imposes)
+
+        reste = self.nb_clients - sum(imposes.values())
+        if not libres:
+            return parts
+        if reste < 0:
+            # Les surcharges depassent deja le total : on ne complete pas, et
+            # `ecarts_au_cdc()` le signalera. On ne corrige jamais en silence.
+            return parts
+
+        base, surplus = divmod(reste, len(libres))
+        for rang, code in enumerate(libres):
+            parts[code] = base + (1 if rang < surplus else 0)
+        return parts
+
+    # -- Validation contre le referentiel reel ------------------------------
+
+    def valider_contre_referentiel(self, referentiel: Any) -> list[str]:
+        """Refuse toute surcharge portant sur un territoire **inexistant**.
+
+        **Pourquoi ce controle existe.** Nous reprochons a account-service
+        d'accepter un `owner_id` qui ne resout nulle part (`FRA-224`), et a
+        depositary-service un `company_id` inexistant (`FRA-225`). Une
+        configuration qui accepterait `regions["Atlantide"]` commettrait
+        exactement la meme faute — sur nos propres donnees.
+
+        Rend la liste des references mortes. Vide = configuration saine.
+        """
+        problemes: list[str] = []
+        for code, fiche in sorted(self.pays.items()):
+            if referentiel.pays(code) is None:
+                problemes.append(f"pays {code} absent du referentiel geographique")
+                continue
+            regions = {r.name for r in referentiel.regions_du_pays(code)}
+            villes = {
+                v.name
+                for r in referentiel.regions_du_pays(code)
+                for v in referentiel.villes_de_region(r.region_id)
+            }
+            for nom in sorted(fiche.regions):
+                if nom not in regions:
+                    problemes.append(f"{code} : region {nom!r} inexistante — surcharge morte")
+            for nom in sorted(fiche.villes):
+                if nom not in villes:
+                    problemes.append(f"{code} : ville {nom!r} inexistante — surcharge morte")
+        return problemes
 
     # -- Ecarts au CDC — autorises, jamais silencieux -----------------------
 
@@ -211,6 +295,39 @@ class ConfigurationExecution:
             ecarts.append(
                 f"{self.nb_clients} clients demandes au lieu de {NB_CLIENTS} — OBJ-02 / EF-77"
             )
+
+        # La somme des parts imposees peut depasser le total. On ne corrige
+        # JAMAIS en silence : une repartition qui ne tombe pas juste est une
+        # incoherence que le Super-Admin doit voir.
+        imposes = sum(
+            self.repartir_clients()[code]
+            for code in self.pays_actifs
+            if self.pays[code].surcharge.clients is not None
+        )
+        if imposes > self.nb_clients:
+            ecarts.append(
+                f"les parts imposees totalisent {imposes} clients pour un total de "
+                f"{self.nb_clients} — repartition impossible, les pays sans surcharge "
+                "recevront zero"
+            )
+        elif (
+            imposes
+            and imposes < self.nb_clients
+            and not [code for code in self.pays_actifs if self.pays[code].surcharge.clients is None]
+        ):
+            ecarts.append(
+                f"les parts imposees totalisent {imposes} clients pour un total de "
+                f"{self.nb_clients} — {self.nb_clients - imposes} clients ne seront pas generes"
+            )
+
+        # Une surcharge sur un pays desactive ne sera jamais appliquee. Ce n'est
+        # pas une faute, c'est un oubli probable — on le signale.
+        for code in self.pays_inactifs:
+            fiche = self.pays[code]
+            if _serialiser(fiche.surcharge) or fiche.regions or fiche.villes:
+                ecarts.append(
+                    f"pays {code} desactive mais porte des surcharges — elles resteront sans effet"
+                )
 
         for code, fiche in sorted(self.pays.items()):
             portees: list[tuple[str, Surcharge]] = [(code, fiche.surcharge)]
@@ -249,6 +366,7 @@ class ConfigurationExecution:
         """
         return {
             "nb_clients": self.nb_clients,
+            "repartition_clients": self.repartir_clients(),
             "pays": {
                 code: {
                     "actif": fiche.actif,
