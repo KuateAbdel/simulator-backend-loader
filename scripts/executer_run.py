@@ -53,7 +53,7 @@ CLASSEUR = Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")
 LOAN_JSON = Path("docs/reference/loan_json.json")
 
 
-async def executer(mode: RunMode) -> int:
+async def executer(mode: RunMode, etapes: set[Etape] | None = None) -> int:
     run_id = uuid4()
     referentiel = charger_referentiel(CLASSEUR)
     generateur = Generateur(run_id)
@@ -137,17 +137,19 @@ async def executer(mode: RunMode) -> int:
             user_client=users,
         ).executer()
 
-    orchestrateur = Orchestrateur(
-        run_id=run_id,
-        mode=mode,
-        travaux={
-            Etape.ROLES: _roles,  # type: ignore[dict-item]
-            Etape.ORGANISATION: _organisation,  # type: ignore[dict-item]
-            Etape.CATALOGUE: _catalogue,  # type: ignore[dict-item]
-            Etape.DEPOSITAIRES: _depositaires,  # type: ignore[dict-item]
-            Etape.STAFF: _staff,  # type: ignore[dict-item]
-        },
-    )
+    tous = {
+        Etape.ROLES: _roles,  # type: ignore[dict-item]
+        Etape.ORGANISATION: _organisation,  # type: ignore[dict-item]
+        Etape.CATALOGUE: _catalogue,  # type: ignore[dict-item]
+        Etape.DEPOSITAIRES: _depositaires,  # type: ignore[dict-item]
+        Etape.STAFF: _staff,  # type: ignore[dict-item]
+    }
+    # Deploiement PAR ETAPE — la seule facon responsable d'aborder des services
+    # sans `DELETE`. On passe en reel un module a la fois, en commencant par le
+    # seul reversible (`ROLES`), et on verifie avant d'aller plus loin.
+    travaux = {e: t for e, t in tous.items() if etapes is None or e in etapes}
+
+    orchestrateur = Orchestrateur(run_id=run_id, mode=mode, travaux=travaux)
 
     try:
         rapport = await orchestrateur.executer()
@@ -166,9 +168,16 @@ def main() -> int:
         action="store_true",
         help="ECRITURES DEFINITIVES — trois services n'ont aucun DELETE",
     )
+    parser.add_argument(
+        "--etapes",
+        default="",
+        help="Limite aux etapes nommees, separees par des virgules (ex : ROLES). "
+        "Vide = toutes. Sert au deploiement progressif en mode reel.",
+    )
     args = parser.parse_args()
+    choisies = {Etape(n.strip().upper()) for n in args.etapes.split(",") if n.strip()} or None
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s : %(message)s")
-    return asyncio.run(executer(RunMode.REAL if args.reel else RunMode.DRY_RUN))
+    return asyncio.run(executer(RunMode.REAL if args.reel else RunMode.DRY_RUN, choisies))
 
 
 if __name__ == "__main__":
