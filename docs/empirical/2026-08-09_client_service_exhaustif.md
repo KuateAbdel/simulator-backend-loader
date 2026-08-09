@@ -257,7 +257,7 @@ Il ne peut se matérialiser que par une **collecte** — `CollectSchema` porte `
 
 | Code | Constat | Gravité |
 |---|---|---|
-| **`ANO-CLI-SEARCH-01`** | `POST /search` ignore tous ses critères et ne valide pas ses enums | 🔴 **HAUTE** |
+| **`ANO-CLI-SEARCH-01`** | `POST /search` ignore tous ses critères et ne valide pas ses enums | 🔴 **HAUTE** — ✅ **[FRA-229](https://finzuu.atlassian.net/browse/FRA-229)** |
 | `ANO-CLI-CUR-02` | `currency` non validée, propagée au compte — **origine de `FRA-222`** | 🟠 moyenne |
 | `ANO-CLI-SUBMAX-03` | Aucun plafond de souscriptions — 6 produits acceptés | 🟠 moyenne |
 | `ANO-CLI-UNIQMSG-04` | Doublon d'`id_number` rapporté comme « Client already exists » | 🟠 moyenne |

@@ -116,7 +116,7 @@ cohérent chez lui.
 
 | Code | Constat | Gravité |
 |---|---|---|
-| **`ANO-CFG-TELCO-01`** | `MTNcongo1` porte le regex **`6\|333`**, sans ancres — accepte quasiment tout numéro. Validation en apparence, aucune en réalité. | 🔴 **HAUTE** |
+| **`ANO-CFG-TELCO-01`** | `MTNcongo1` porte le regex **`6\|333`**, sans ancres — accepte quasiment tout numéro. Validation en apparence, aucune en réalité. | 🔴 **HAUTE** — ✅ **[FRA-231](https://finzuu.atlassian.net/browse/FRA-231)** |
 | ~~`ANO-CFG-COUNTRY-02`~~ | ~~Aucun pays n'a de devise rattachée~~ — ❌ **RETIRÉE le 09/08 : erreur de lecture de ma part.** Le champ est `currencies` (pluriel), et il est correct sur les 4 pays. | — |
 | `ANO-CFG-TELCO-03` | Opérateur `cm` : doublon exact d'Expresso Senegal | 🟡 basse |
 | `ANO-CFG-COUNTRY-04` | Pays parasites `CV` (`name_fr: "cm"`) et `ca` (`name_fr: "cmer"`) | 🟡 basse |
