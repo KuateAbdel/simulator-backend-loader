@@ -23,6 +23,7 @@ from app.clients.client_service import (
     SOUSCRIPTIONS_MAX,
     OnboardingNonConforme,
     valider_onboarding,
+    valider_produit_client,
 )
 
 
@@ -178,3 +179,40 @@ class TestPlafondSouscriptions:
 
     def test_le_plafond_du_cdc_est_de_trois(self) -> None:
         assert SOUSCRIPTIONS_MAX == 3
+
+
+class TestTypeEtCategorieProduit:
+    """D-CLI-10 — la question qui a revele le trou.
+
+    `UC-13` est explicite : le Client souscrit a des produits **Collecte**. Le
+    pret n'est pas une souscription — il nait d'une decision APPROVED et suit
+    le catalogue LENDING, par un tout autre mecanisme.
+
+    Mesure du 09/08, le serveur n'applique AUCUN des deux controles :
+      onboarder un Client sur un produit LENDING     -> 201
+      lui souscrire un LENDING en 2e produit         -> 200
+      un Client CORPORATE sur un produit INDIVIDUAL  -> 201
+
+    Le premier est le miroir exact de FRA-223 cote Depositaire.
+    """
+
+    def test_un_produit_lending_est_refuse(self) -> None:
+        with pytest.raises(OnboardingNonConforme, match="LENDING"):
+            valider_produit_client({"type": "LENDING", "category": "INDIVIDUAL"}, "INDIVIDUAL")
+
+    def test_le_message_cite_le_ticket_miroir(self) -> None:
+        with pytest.raises(OnboardingNonConforme) as erreur:
+            valider_produit_client({"type": "LENDING", "category": "ANY"}, "INDIVIDUAL")
+        assert "FRA-223" in str(erreur.value)
+
+    def test_un_produit_collect_conforme_passe(self) -> None:
+        valider_produit_client({"type": "COLLECT", "category": "INDIVIDUAL"}, "INDIVIDUAL")
+
+    def test_la_categorie_any_convient_a_tous(self) -> None:
+        valider_produit_client({"type": "COLLECT", "category": "ANY"}, "CORPORATE")
+
+    def test_categorie_croisee_refusee(self) -> None:
+        """Un CORPORATE sur un produit INDIVIDUAL : accepte par le serveur,
+        refuse par nous. Devant un bailleur, l'incoherence se voit."""
+        with pytest.raises(OnboardingNonConforme, match="categorie"):
+            valider_produit_client({"type": "COLLECT", "category": "INDIVIDUAL"}, "CORPORATE")

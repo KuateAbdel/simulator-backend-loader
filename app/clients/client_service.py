@@ -110,6 +110,50 @@ class OnboardingNonConforme(ValueError):
     """
 
 
+def valider_produit_client(produit: dict[str, Any], categorie_client: str) -> None:
+    """`D-CLI-10` — un Client ne souscrit QU'A des produits `COLLECT`.
+
+    `UC-13` est explicite : « 1 a 3 souscriptions a des produits **Collecte** ».
+    Le pret n'est PAS une souscription — il nait d'une decision `APPROVED` et
+    suit le catalogue `LENDING`, par un tout autre mecanisme (`UC-02`, `D-08`).
+
+    **Mesure du 09/08 — le serveur n'applique aucun de ces deux controles :**
+
+      * onboarder un Client directement sur un produit `LENDING` -> **201**
+      * lui souscrire un `LENDING` en 2e produit -> **200**
+      * un Client `CORPORATE` sur un produit `INDIVIDUAL` -> **201**
+
+    Le premier defaut est le **miroir exact de `ANO-DEP-TYPE-02` / `FRA-223`**,
+    ou un Depositaire d'epargne peut souscrire a un produit de pret. Meme
+    absence de controle, deux services differents.
+
+    Le second confirme `OBS-CLI-CROSSCHECK-01` : aucune validation croisee
+    entre la `category` du Client et celle du Produit.
+
+    Consequence en demonstration : un client particulier se retrouverait a
+    « detenir » un produit d'entreprise, ou un produit de credit range parmi
+    ses souscriptions d'epargne. Devant un bailleur qui connait le metier,
+    c'est une incoherence visible a l'oeil nu.
+    """
+    type_produit = str(produit.get("type", "")).upper()
+    if type_produit != "COLLECT":
+        raise OnboardingNonConforme(
+            f"produit de type '{type_produit}' — un Client ne souscrit qu'a des produits "
+            "COLLECT (UC-13). Le pret suit le catalogue LENDING par un tout autre mecanisme. "
+            "Le serveur accepte pourtant les deux sans broncher : miroir exact de FRA-223 "
+            "cote Depositaire."
+        )
+
+    categorie_produit = str(produit.get("category", "")).upper()
+    attendue = str(categorie_client).upper()
+    if categorie_produit not in ("", "ANY", attendue):
+        raise OnboardingNonConforme(
+            f"produit de categorie '{categorie_produit}' propose a un client '{attendue}' — "
+            "aucune validation croisee n'existe cote serveur (OBS-CLI-CROSSCHECK-01, "
+            "reconfirme le 09/08). La coherence est entierement a notre charge."
+        )
+
+
 def valider_onboarding(
     msisdn: str, identity: dict[str, Any], currency: str | None = None
 ) -> dict[str, Any]:
