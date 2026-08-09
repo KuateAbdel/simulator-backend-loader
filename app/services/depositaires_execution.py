@@ -244,9 +244,17 @@ class ExecuteurDepositaires:
         company: CompanyPorteuse,
         agence_id: UUID,
         district_id: str,
+        pays: str,
         rapport: RapportDepositaires,
-    ) -> UUID | None:
+    ) -> tuple[UUID, str] | None:
         """Cree le Depositaire, puis son noeud `org_hierarchy`.
+
+        Renvoie `(depositary_id, nom)` — **le nom voyage avec l'identifiant**.
+
+        `D-12` : le registre d'unicite ne rend un nom qu'UNE fois. L'appelant
+        recomposait le sien pour l'etiquette du rapport ; le registre lui aurait
+        alors donne un nom DIFFERENT de celui reellement ecrit sur le serveur.
+        Un nom se calcule une seule fois, au moment ou il est pose.
 
         Renvoie `None` si le Kiosque a ete saute — ce qui n'est pas un echec.
         L'ordre est impose : le noeud reference le `depositary_id`, il ne peut
@@ -261,7 +269,7 @@ class ExecuteurDepositaires:
             rapport.kiosques_sautes.append((quartier.name, "quartier deja pourvu dans ce run"))
             return None
 
-        nom = self._generateur.nom_kiosque(quartier.name)
+        nom = self._generateur.nom_kiosque(quartier.name, pays)
 
         # D-DEP-3 — aucune unicite serveur, aucun DELETE : le doublon serait
         # definitif. La lecture est faite AUSSI en DRY_RUN, c'est elle qui rend
@@ -271,7 +279,7 @@ class ExecuteurDepositaires:
             self._quartiers_pris.add(district_id)
             rapport.kiosques_sautes.append((nom, "deja present cote serveur"))
             identifiant = self._depositaires.identifiant(existant)
-            return UUID(identifiant) if identifiant else None
+            return (UUID(identifiant), nom) if identifiant else None
 
         if not self.ecriture_reelle:
             self._quartiers_pris.add(district_id)
@@ -326,7 +334,7 @@ class ExecuteurDepositaires:
                 "country_code": company.country_code,
             },
         )
-        return depositary_id
+        return depositary_id, nom
 
     async def souscrire_kiosque(
         self,
@@ -403,7 +411,7 @@ class ExecuteurDepositaires:
                 company = porteuses[rang % len(porteuses)]
                 region = self._referentiel.region(plan_branche.region_id)
                 nom_region = region.name if region else plan_branche.region_id
-                nom_branche = self._generateur.nom_branche(nom_region)
+                nom_branche = self._generateur.nom_branche(nom_region, plan_pays.country_code)
 
                 branche_id: UUID | None = None
                 if self.ecriture_reelle:
@@ -420,7 +428,7 @@ class ExecuteurDepositaires:
                 for plan_agence in plan_branche.agences:
                     ville = self._referentiel.ville(plan_agence.city_id)
                     nom_ville = ville.name if ville else plan_agence.city_id
-                    nom_agence = self._generateur.nom_agence(nom_ville)
+                    nom_agence = self._generateur.nom_agence(nom_ville, plan_pays.country_code)
 
                     agence_id: UUID | None = None
                     if self.ecriture_reelle and branche_id is not None:
@@ -436,24 +444,22 @@ class ExecuteurDepositaires:
                     rapport.agences_creees.append(nom_agence)
 
                     for plan_kiosque in plan_agence.kiosques:
-                        depositary_id = await self.creer_kiosque(
+                        cree = await self.creer_kiosque(
                             company=company,
                             # En DRY_RUN aucun noeud n'existe ; la branche
                             # n'est jamais atteinte puisque creer_kiosque
                             # rend None avant d'ecrire.
                             agence_id=agence_id or self.run_id,
                             district_id=plan_kiosque.district_id,
+                            pays=plan_pays.country_code,
                             rapport=rapport,
                         )
-                        if depositary_id is None or not catalogue:
+                        if cree is None or not catalogue:
                             continue
+                        depositary_id, nom_du_kiosque = cree
                         await self.souscrire_kiosque(
                             depositary_id=depositary_id,
-                            nom_kiosque=self._generateur.nom_kiosque(
-                                q.name
-                                if (q := self._referentiel.quartier(plan_kiosque.district_id))
-                                else plan_kiosque.district_id
-                            ),
+                            nom_kiosque=nom_du_kiosque,
                             produits=catalogue,
                             rapport=rapport,
                         )

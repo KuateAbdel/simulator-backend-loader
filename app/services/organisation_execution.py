@@ -227,7 +227,7 @@ class ExecuteurOrganisation:
         Renvoie None si la creation echoue — l'appelant poursuit avec la
         suivante, conformement a UC-07.
         """
-        raison = self._generateur.raison_sociale(patronyme, forme_juridique, secteur)
+        raison = self._generateur.raison_sociale(patronyme, forme_juridique, secteur, pays)
         court = self._generateur.nom_court(raison)
 
         # INV-CPY-01 — GET-avant-POST. Une Company deja presente n'est jamais

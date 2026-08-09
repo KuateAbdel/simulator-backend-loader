@@ -203,13 +203,73 @@ class Generateur:
         self._run_id = run_id
         self._alea = random.Random(run_id.int)  # noqa: S311 — reproductibilite, pas de crypto
         self._emails_emis: set[str] = set()
+        self._noms_emis: set[str] = set()
+
+    # ----------------------------------------------------------------------
+    # Unicite des noms — D-12
+    # ----------------------------------------------------------------------
+
+    def _nom_unique(self, nom: str, pays: str | None = None) -> str:
+        """Rend `nom` unique pour toute la duree du run.
+
+        POURQUOI CE REGISTRE EXISTE
+        ---------------------------
+        **Aucun service n'impose l'unicite de `name`** — ni company-service, ni
+        depositary-service, ni product-service (`ANO-PRD-UNIQ-01`). Un doublon
+        n'est pas rejete : il est *cree*, en silence. Et trois services
+        n'exposent aucun `DELETE`.
+
+        Mesure du 09/08 sur le referentiel reel :
+
+          - `Plateau`  est un quartier de DEUX pays -> 2 « DEMO_Kiosque Plateau »
+          - `Centre`, `Est`, `Nord`, `Sud-Ouest` sont des regions partagees
+            -> 4 branches en doublon sur 51
+
+        Le Kiosque est le cas grave : **depositary-service n'a aucun champ
+        geographique**, le nom est le seul ancrage visible. Deux
+        « DEMO_Kiosque Plateau » sont strictement indiscernables dans
+        l'interface — exactement le defaut que nous reprochons a config-service.
+
+        LA STRATEGIE DE LEVEE
+        ---------------------
+        1. le nom tel quel, s'il est libre — le cas de 95 % des noms
+        2. sinon le code pays, **discriminant porteur de sens** : c'est ainsi
+           qu'un groupe panafricain reel distingue ses agences homonymes
+        3. en dernier recours seulement, un rang numerique
+
+        On ne prefixe PAS tous les noms du pays : « DEMO_Agence Douala CM »
+        alourdit 50 noms pour en desambiguiser zero. Le discriminant apparait
+        la ou l'ambiguite existe — et nulle part ailleurs.
+        """
+        if nom not in self._noms_emis:
+            self._noms_emis.add(nom)
+            return nom
+
+        if pays:
+            candidat = f"{nom} {pays.upper()}"
+            if candidat not in self._noms_emis:
+                self._noms_emis.add(candidat)
+                return candidat
+
+        # Deux homonymes DANS le meme pays : le referentiel n'en contient pas
+        # aujourd'hui, mais la surcouche `CFG-03` permet d'en ajouter.
+        rang = 2
+        while f"{nom} {rang}" in self._noms_emis:
+            rang += 1
+        final = f"{nom} {rang}"
+        self._noms_emis.add(final)
+        return final
 
     # ----------------------------------------------------------------------
     # Raisons sociales — UC-07, UC-08
     # ----------------------------------------------------------------------
 
     def raison_sociale(
-        self, patronyme: str, forme_juridique: str, secteur: str | None = None
+        self,
+        patronyme: str,
+        forme_juridique: str,
+        secteur: str | None = None,
+        pays: str | None = None,
     ) -> str:
         """Compose une raison sociale credible, prefixee DEMO_ (EF-63).
 
@@ -227,7 +287,24 @@ class Generateur:
         else:
             noyau = f"{forme} {base} {self._alea.choice(SUFFIXES)}"
 
-        return f"{PREFIXE_DONNEES}{noyau}"
+        # `D-12` — 5 patronymes par pays, et le CDC autorise 3 a 5 companies.
+        # La marge est NULLE au plafond, et le parametrage du boss permet d'en
+        # demander davantage : a 8 companies, 3 raisons sociales etaient
+        # rigoureusement identiques (mesure du 09/08).
+        #
+        # Le code pays, bon discriminant pour une BRANCHE, n'en est pas un ici :
+        # « SARL Tamadou Textile » et « SARL Tamadou Textile CM » sont toutes
+        # deux camerounaises. On leve d'abord par le SUFFIXE COMMERCIAL — deux
+        # maisons du meme patronyme se distinguent ainsi dans la vraie vie,
+        # « Tamadou & Fils » et « Tamadou Negoce ».
+        candidat = f"{PREFIXE_DONNEES}{noyau}"
+        if candidat in self._noms_emis and forme not in ("Fondation", "Association"):
+            for suffixe in SUFFIXES:
+                autre = f"{PREFIXE_DONNEES}{noyau} {suffixe}"
+                if autre not in self._noms_emis:
+                    candidat = autre
+                    break
+        return self._nom_unique(candidat, pays)
 
     def nom_court(self, raison_sociale: str) -> str:
         """`short_name` — declare unique par company-service (INV-CPY-01).
@@ -238,20 +315,25 @@ class Generateur:
         lettres = "".join(m[0] for m in raison_sociale.replace(PREFIXE_DONNEES, "").split()[:3])
         return f"{PREFIXE_DONNEES}{lettres.upper()}{self._alea.randrange(100, 999)}"
 
-    def nom_kiosque(self, quartier: str) -> str:
+    def nom_kiosque(self, quartier: str, pays: str | None = None) -> str:
         """Le Kiosque porte son quartier dans son nom.
 
         depositary-service n'a AUCUN champ geographique : le nom est le seul
         endroit ou l'ancrage reste visible dans l'interface. C'est aussi ce
         qu'on lit sur une devanture reelle.
         """
-        return f"{PREFIXE_DONNEES}Kiosque {_sans_accents(quartier).title()}"
+        return self._nom_unique(f"{PREFIXE_DONNEES}Kiosque {_sans_accents(quartier).title()}", pays)
 
-    def nom_branche(self, region: str) -> str:
-        return f"{PREFIXE_DONNEES}Branche {_sans_accents(region).title()}"
+    def nom_branche(self, region: str, pays: str | None = None) -> str:
+        """`Centre`, `Est`, `Nord` et `Sud-Ouest` sont des regions de PLUSIEURS
+        pays — 4 doublons sur 51 branches, mesures le 09/08. `D-12`."""
+        return self._nom_unique(f"{PREFIXE_DONNEES}Branche {_sans_accents(region).title()}", pays)
 
-    def nom_agence(self, ville: str) -> str:
-        return f"{PREFIXE_DONNEES}Agence {_sans_accents(ville).title()}"
+    def nom_agence(self, ville: str, pays: str | None = None) -> str:
+        """Les 50 villes du referentiel ont des noms distincts — aucun doublon
+        aujourd'hui. Le registre passe quand meme : la surcouche `CFG-03`
+        autorise l'ajout de villes, et rien ne garantit leur unicite."""
+        return self._nom_unique(f"{PREFIXE_DONNEES}Agence {_sans_accents(ville).title()}", pays)
 
     # ----------------------------------------------------------------------
     # Identites — ce que Faker ne fournit pas

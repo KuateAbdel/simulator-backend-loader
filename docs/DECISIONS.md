@@ -343,3 +343,57 @@ Consignées pour que personne ne les refasse.
 ---
 
 *Tenu à jour à chaque décision. Une décision non écrite ici n'existe pas.*
+
+---
+
+## D-12 · Aucun nom n'est émis deux fois — registre d'unicité dans le générateur
+
+**Constat, mesuré le 9 août sur le référentiel réel.**
+
+| Niveau | Produit | Distincts | Doublons |
+|---|---:|---:|---|
+| Branches | 51 | **47** | `Centre`, `Est`, `Nord`, `Sud-Ouest` — régions de **plusieurs pays** |
+| Kiosques | 82 | **81** | `Plateau` — quartier de **deux pays** |
+| Agences | 50 | 50 | — |
+| Companies | 8 demandées | **5** | 5 patronymes par pays, **marge nulle** au plafond du CDC |
+
+**Personne ne nous arrête.** Ni company-service, ni depositary-service, ni
+product-service n'imposent l'unicité de `name` (`ANO-PRD-UNIQ-01`). Le doublon
+n'est pas rejeté : il est **créé, en silence**. Et trois services n'ont pas de
+`DELETE` — il serait définitif.
+
+Le cas grave est le Kiosque : **depositary-service n'a aucun champ
+géographique**. Deux `DEMO_Kiosque Plateau` sont strictement indiscernables dans
+l'interface. C'est exactement le défaut que nous reprochons à config-service
+(règle 2 : *« toute relation métier a son inverse interrogeable »*).
+
+**Décision.** `Generateur` tient un registre `_noms_emis`, comme il tenait déjà
+`_emails_emis` et comme `RegistreUnicite` tient les MSISDN. La levée suit le
+sens métier, pas un compteur :
+
+| Entité | Discriminant | Pourquoi celui-là |
+|---|---|---|
+| Branche, Agence, Kiosque | **le code pays** | c'est ainsi qu'un groupe panafricain réel distingue ses agences homonymes |
+| Company | **le suffixe commercial** | `Tamadou & Fils` et `Tamadou Négoce` : deux maisons du même patronyme se distinguent ainsi dans la vraie vie. `CM` ne dirait rien — elles y sont toutes |
+| dernier recours | un rang | le référentiel n'a pas d'homonyme intra-pays, mais `CFG-03` permet d'en ajouter |
+
+On ne préfixe **pas** tous les noms : `DEMO_Agence Douala CM` alourdirait 50 noms
+pour en désambiguïser zéro. Le discriminant paraît là où l'ambiguïté existe.
+
+**Conséquence de conception.** Le registre est **consommable** : il ne rend un
+nom qu'une fois. `creer_kiosque()` renvoie donc désormais `(depositary_id, nom)`
+— l'appelant recomposait le nom pour l'étiquette de son rapport et aurait obtenu
+un nom **différent de celui réellement écrit sur le serveur**. *Un nom se calcule
+une seule fois, au moment où il est posé.*
+
+**Ce que ça illustre.** Le Loader **anticipe, il ne subit pas**. Le serveur ne
+saura jamais nous dire que nous avons créé deux Kiosques identiques ; c'est à
+nous de ne pas le faire. Même logique que `RegistreUnicite`, qui réserve les
+MSISDN **avant le réseau** plutôt que de découvrir le conflit après une cascade
+sur trois services.
+
+**Limite assumée.** 20 patronymes pour 4 pays est un bouchon. Il tient pour les
+Companies (3–5 par pays) ; il ne tiendra **pas** pour 2 000 clients. Le vrai
+tirage arrive avec le client Faker, **Sprint 4** — `D-FAKER-1` s'y appliquera.
+
+**Vérifié** : `TestUniciteDesNoms`, 4 tests · 341 au total.
