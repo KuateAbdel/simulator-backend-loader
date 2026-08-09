@@ -140,11 +140,21 @@ une mesure ou à une norme citée, aucune règle inventée.
 11 rôles (`D-09`), 60 à 100 staff, `identity_service.py`, ticket du jeton
 CUSTOMER rejeté. **Dépend de `A-05`.**
 
-### ⬜ Sprint 3 — Organisation, Catalogue, Dépositaires en réel
+### 🎯 Sprint 3 — Orchestration, puis Organisation / Catalogue / Dépositaires en réel
 
-Les trois exécuteurs déjà écrits passent de `DRY_RUN` à `REAL`. Companies,
-licences, Admin Users, 4 comptes Lender (`EF-13`, jamais exécuté), catalogue,
-40-80 Dépositaires.
+| # | Story | État |
+|---|---|---|
+| `S3-00` | **Doctrine d'orchestration** — ordre, tempo, concurrence, reprise → `docs/ORCHESTRATION.md` | ✅ **livré** |
+| `S3-01` | **`Orchestrateur`** — enchaîne les 8 modules, plafond 20 workers, reprise sur préfixe | ⬜ |
+| `S3-02` | **`/auth/refresh`** — `ÉCART-38`, jeton access de 4 h | ⬜ |
+| `S3-03` | Organisation en `REAL` — Companies, licences, Admin Users | ⬜ |
+| `S3-04` | **`EF-13`** — les 4 comptes Lender, **jamais exécuté** (dernière hypothèse de `D-01`) | ⬜ |
+| `S3-05` | Catalogue en `REAL` | ⬜ |
+| `S3-06` | Dépositaires en `REAL` — 40-80 nœuds, Agents rattachés (`D-11`) | ⬜ |
+
+> **`S3-00` et `S3-01` passent avant `S3-03`.** Cinq exécuteurs existaient sans
+> rien pour les enchaîner. Écrire en `REAL` dans un ordre improvisé, sur trois
+> services sans `DELETE`, n'est pas une option.
 
 ### ⬜ Sprint 4 — Population client
 
