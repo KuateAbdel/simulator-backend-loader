@@ -86,7 +86,7 @@ Rien n'est masqué. Chaque ligne porte sa preuve et son sprint.
 | `FRA-228` | Casse annoncée, non appliquée | majuscules émises, seuls les spéciaux rejetés | ✅ portée |
 | `ANO-CLI-SEARCH-01` | `POST /search` ignore ses critères | **`/search` jamais utilisé** | ✅ portée |
 | `ANO-CLI-LANG-01` | `language` ignoré à l'onboarding | repli sur `PATCH /language` | ✅ portée |
-| — | **Jeton CUSTOMER rejeté comme invalide** | non ticketé, cause inconnue | **S2** |
+| — | ~~Jeton CUSTOMER rejeté comme invalide~~ | ❌ **RETIRÉE le 09/08 — NON REPRODUITE.** Rejouée en fin de journée sur un CUSTOMER et un STAFF créés dans la même minute : **les deux obtiennent `403`**, authentifiés et non autorisés. Le `401 « Token invalide ou expiré »` du matin était **transitoire**. Aucun ticket créé. | — |
 
 ### 3.3 ⬜ Exigences CDC non couvertes
 
