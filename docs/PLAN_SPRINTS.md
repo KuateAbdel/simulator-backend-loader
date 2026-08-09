@@ -168,7 +168,7 @@ Analyse complète dans `docs/EXIGENCE_PARAMETRAGE.md`.
 |---|---|
 | `CFG-01` | ✅ **livré** — `app/core/configuration.py`, arbre pays/région/ville, défauts CDC |
 | `CFG-02` | 🟡 `empreinte()` **livrée** — reste à la brancher sur `loader_runs` |
-| `CFG-03` | Surcouche référentielle : ajout région/ville, invariants `EF-02` appliqués |
+| `CFG-03` | ✅ **livré** — `surcouche_referentiel.py`, classeur jamais modifié, réversible |
 | `CFG-04` | ✅ **livré** — résolution en cascade ville → région → pays → CDC |
 | `CFG-05` | ✅ **livré** — `AdministrationConfigService`, surface séparée de la lecture |
 | `CFG-06` | ✅ **livré** — `ajouter_ville()` relit les 9 champs avant d'écrire |
