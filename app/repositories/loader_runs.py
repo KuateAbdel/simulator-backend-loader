@@ -50,9 +50,21 @@ class LoaderRunRepository(RepositoryBase):
         sim_end_date: date,
         mode: RunMode = RunMode.DRY_RUN,
         run_id: UUID | None = None,
+        configuration: dict[str, Any] | None = None,
     ) -> LoaderRun:
         """Cree un run en PENDING. Mode DRY_RUN par defaut : passer en REEL est
-        toujours une action explicite du Super-Admin, jamais un defaut."""
+        toujours une action explicite du Super-Admin, jamais un defaut.
+
+        `configuration` est l'empreinte produite par
+        `ConfigurationExecution.empreinte()`, jointe a celle de la surcouche
+        referentielle. Elle est **figee au lancement** et ne bouge plus.
+
+        **Sans elle, `ENF-15` est perdue** (`D-10`) : deux executions du meme
+        `run_id` sous des parametres differents produiraient des resultats
+        differents, et `CR-04` deviendrait invérifiable. Un run cree sans
+        configuration reproduit le CDC par defaut — c'est le cas nominal, et
+        l'empreinte vide le dit.
+        """
         run = LoaderRun(
             id=run_id or uuid4(),
             sim_start_date=sim_start_date,
@@ -60,6 +72,7 @@ class LoaderRunRepository(RepositoryBase):
             status=RunStatus.PENDING,
             mode=mode,
             checkpoints=[],
+            configuration=dict(configuration or {}),
         )
         await self._inserer(run)
         return run

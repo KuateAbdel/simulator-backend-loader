@@ -98,6 +98,23 @@ class LoaderRun(LoaderDocument):
     status: RunStatus = RunStatus.PENDING
     mode: RunMode = RunMode.DRY_RUN
     checkpoints: list[dict[str, Any]] = Field(default_factory=list)
+    #: SEPTIEME champ, ajoute le 09/08/2026 -- decision D-10.
+    #:
+    #: Des que la volumetrie devient parametrable (exigence du 09/08), le
+    #: `run_id` NE SUFFIT PLUS a reproduire une execution : deux runs de meme
+    #: identifiant sous des parametres differents donneraient des resultats
+    #: differents. `ENF-15` serait perdue et `CR-04` inverifiable.
+    #:
+    #: Ce champ porte l'empreinte complete -- pays actifs et leurs motifs
+    #: d'exclusion, surcharges par territoire, repartition des clients, ajouts
+    #: de la surcouche referentielle, et les ECARTS AU CDC. Rejouer un run,
+    #: c'est rejouer `run_id` ET ceci.
+    #:
+    #: Il n'est PAS dans `checkpoints` : ceux-ci portent la reprise apres
+    #: interruption, ils changent pendant l'execution. La configuration, elle,
+    #: est figee au lancement. Melanger les deux rendrait impossible de dire ce
+    #: qui avait ete demande.
+    configuration: dict[str, Any] = Field(default_factory=dict)
 
 
 class AuditTrailEntry(LoaderDocument):

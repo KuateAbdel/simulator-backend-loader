@@ -210,6 +210,42 @@ par rôle (`A-05`).
 
 ---
 
+## D-10 · `loader_runs` gagne un 7ᵉ champ — la configuration du run
+
+**Tranché le 9 août 2026 · conséquence directe de l'exigence de paramétrage**
+
+`CONTEXT.md` fige **6 schémas MongoDB à respecter exactement**. Celui de
+`loader_runs` portait 6 champs : `_id`, `sim_start_date`, `sim_end_date`,
+`status`, `mode`, `checkpoints`.
+
+**Le problème** : dès que la volumétrie devient paramétrable (demande de la
+Direction Technique du 9 août), **le `run_id` ne suffit plus à reproduire une
+exécution**. Deux runs de même identifiant, lancés sous des paramètres
+différents, produiraient des résultats différents. `ENF-15` serait perdue et
+`CR-04` — *« deux exécutions identiques donnent le même résultat »* —
+deviendrait invérifiable.
+
+**Décision** : ajout d'un champ **`configuration`**, portant l'empreinte
+complète — pays actifs et motifs d'exclusion, surcharges par territoire,
+répartition des clients, ajouts de la surcouche référentielle, et **les écarts
+au CDC**.
+
+**Pourquoi pas dans `checkpoints`** : les checkpoints portent la **reprise
+après interruption**, ils changent *pendant* l'exécution. La configuration est
+**figée au lancement**. Les mélanger rendrait impossible de dire ce qui avait
+été *demandé* — or c'est précisément ce que le tableau de bord doit montrer,
+à côté de ce qui a été *produit*.
+
+**Coût assumé** : `CONTEXT.md` passe de 6 champs à 7 sur cette collection. Le
+nombre de collections reste 6.
+
+**Appliqué** : `app/models/domain.py` (`LoaderRun.configuration`) ·
+`app/repositories/loader_runs.py` (`creer(configuration=…)`) ·
+`app/core/configuration.py` (`empreinte()`) ·
+`app/services/surcouche_referentiel.py` (`ajouts()`)
+
+---
+
 ## Décisions en attente
 
 | # | Sujet | Pourquoi c'est bloqué |

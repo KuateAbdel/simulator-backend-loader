@@ -10,7 +10,14 @@ Orchestrateur HTTP. Consomme Faker fintech4esg (clients, historique credit, scor
 ## 6 schémas MongoDB à respecter exactement
 - faker_consumption_ledger : {_id: client_id Faker, consumed_at, consumed_for, resulting_entity_id, country_code}
 - lenders_registry : {_id, company_id, lender_type, country_code, capital/interest/penalty/taxe_account_id}
-- loader_runs : {_id: run_id, sim_start_date, sim_end_date, status, mode, checkpoints}
+- loader_runs : {_id: run_id, sim_start_date, sim_end_date, status, mode, checkpoints, **configuration**}
+
+> **7e champ ajoute le 09/08/2026, decision D-10.** Des que la volumetrie devient
+> parametrable, le `run_id` ne suffit plus a reproduire une execution. La
+> configuration complete — pays actifs, surcharges, repartition, surcouche
+> referentielle, ecarts au CDC — est figee au lancement et persistee ici.
+> Sans elle, `ENF-15` est perdue et `CR-04` invérifiable. Elle n'est PAS dans
+> `checkpoints` : ceux-ci changent pendant l'execution, la configuration non.
 - audit_trail : {_id, run_id, entity_type, entity_id, action, before, after, timestamp}
 - super_admin_accounts : {_id, email, password_hash, must_change_password}
 - org_hierarchy : {_id, run_id, niveau (BRANCHE|AGENCE|KIOSQUE), parent_id, company_id, name, country_code, region_id, city_id, district_id, depositary_id}

@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.core.configuration import ConfigurationExecution
 from app.core.security import hacher, verifier
 from app.models.domain import FakerConsumptionLedger, LoaderRun, OrgHierarchyNode
 from app.models.enums import FakerConsumptionType, NiveauOrganisation, RunMode, RunStatus
@@ -169,3 +170,61 @@ class TestJournalIntention:
         bouge."""
         assert ACTION_INTENTION != ACTION_RESULTAT
         assert {ACTION_INTENTION, ACTION_RESULTAT}.isdisjoint({STATUT_SUCCES, STATUT_ECHEC})
+
+
+class TestConfigurationDuRun:
+    """D-10 — le 7e champ de `loader_runs`.
+
+    Des que la volumetrie devient parametrable, le `run_id` NE SUFFIT PLUS a
+    reproduire une execution. Sans ce champ, ENF-15 est perdue et CR-04
+    invérifiable.
+    """
+
+    def test_un_run_nu_porte_une_configuration_vide(self) -> None:
+        """Cas nominal : sans parametre, le CDC s'applique — l'empreinte vide
+        le dit."""
+        run = LoaderRun(
+            _id=uuid4(),
+            sim_start_date=date(2026, 2, 9),
+            sim_end_date=date(2026, 8, 8),
+        )
+        assert run.configuration == {}
+
+    def test_la_configuration_survit_a_la_serialisation(self) -> None:
+        """Elle doit se relire telle quelle apres un aller-retour MongoDB."""
+        config = ConfigurationExecution.defaut_cdc()
+        config.desactiver_pays("SN", "Faker ne sert pas le Senegal")
+
+        run = LoaderRun(
+            _id=uuid4(),
+            sim_start_date=date(2026, 2, 9),
+            sim_end_date=date(2026, 8, 8),
+            configuration=config.empreinte(),
+        )
+        document = en_document(run)
+        relu = LoaderRun.model_validate(document)
+
+        assert relu.configuration["pays"]["SN"]["actif"] is False
+        assert relu.configuration["ecarts_au_cdc"]
+
+    def test_la_configuration_n_est_pas_dans_les_checkpoints(self) -> None:
+        """Les checkpoints portent la reprise apres interruption : ils changent
+        PENDANT l'execution. La configuration est figee au lancement. Les
+        melanger rendrait impossible de dire ce qui avait ete DEMANDE."""
+        run = LoaderRun(
+            _id=uuid4(),
+            sim_start_date=date(2026, 2, 9),
+            sim_end_date=date(2026, 8, 8),
+            configuration=ConfigurationExecution.defaut_cdc().empreinte(),
+        )
+        assert run.checkpoints == []
+        assert "pays" in run.configuration
+
+    def test_l_empreinte_porte_la_repartition_des_clients(self) -> None:
+        """Rejouer un run, c'est rejouer run_id ET la repartition."""
+        config = ConfigurationExecution.defaut_cdc()
+        config.desactiver_pays("SN", "A-01")
+        empreinte = config.empreinte()
+
+        assert empreinte["repartition_clients"]["SN"] == 0
+        assert sum(empreinte["repartition_clients"].values()) == config.nb_clients
