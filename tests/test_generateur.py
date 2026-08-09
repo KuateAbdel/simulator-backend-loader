@@ -155,3 +155,39 @@ def test_mot_de_passe_initial_respecte_une_politique_forte(generateur: Generateu
     assert len(mdp) >= 12
     assert any(c.isupper() for c in mdp) and any(c.isdigit() for c in mdp)
     assert any(not c.isalnum() for c in mdp)
+
+
+class TestAucunRepliSilencieux:
+    """Doctrine — *« rigide a l'execution : le Loader echoue bruyamment sur
+    l'inconnu »*.
+
+    Deux replis silencieux vivaient dans `generateur.py` jusqu'au 09/08 :
+    un pays inconnu devenait senegalais, un genre inconnu devenait feminin.
+    Ni l'un ni l'autre n'aurait laisse la moindre trace dans un rapport.
+    """
+
+    def test_un_pays_hors_perimetre_leve_au_lieu_de_devenir_senegalais(self) -> None:
+        """`patronyme("ZZ", 0)` rendait « Diallo ». `EF-05` borne a 4 pays."""
+        from app.services.generateur import patronyme
+
+        with pytest.raises(ValueError, match="hors des 4 cibles"):
+            patronyme("ZZ", 0)
+
+    def test_les_quatre_pays_du_cdc_passent(self) -> None:
+        from app.core.cdc import PAYS_CIBLES
+        from app.services.generateur import patronyme
+
+        assert all(patronyme(p, 0) for p in PAYS_CIBLES)
+
+    def test_un_genre_inconnu_leve_au_lieu_de_devenir_feminin(self) -> None:
+        """Le serveur ne valide PAS `gender` (`D-IDN-1`). Un repli aurait
+        fausse le quota « deux femmes pour un homme » sans trace."""
+        from app.services.generateur import prenom
+
+        with pytest.raises(ValueError, match="genre 'ANY' inconnu"):
+            prenom("ANY", 0)
+
+    def test_male_et_female_donnent_des_prenoms_distincts(self) -> None:
+        from app.services.generateur import prenom
+
+        assert prenom("MALE", 0) != prenom("FEMALE", 0)

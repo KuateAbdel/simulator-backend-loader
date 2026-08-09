@@ -93,14 +93,38 @@ def patronyme(pays: str, index: int) -> str:
 
     Source unique pour TOUS les executeurs — Organisation, Staff, Clients.
     Deux tables paralleles divergeraient tot ou tard.
+
+    **Leve sur un pays inconnu.** Le repli silencieux vers le Senegal a ete
+    retire le 09/08 : `patronyme("ZZ", 0)` rendait « Diallo » sans rien
+    signaler, et un pays fautif se serait peuple de noms senegalais sans
+    qu'aucun rapport ne le mentionne. La doctrine dit l'inverse — *« rigide a
+    l'execution : le Loader echoue bruyamment sur l'inconnu »* — et `EF-05`
+    borne le perimetre a quatre pays.
     """
-    noms = PATRONYMES_PAR_PAYS.get(pays.upper(), PATRONYMES_PAR_PAYS["SN"])
+    noms = PATRONYMES_PAR_PAYS.get(pays.upper())
+    if noms is None:
+        raise ValueError(
+            f"pays '{pays}' hors des 4 cibles {list(PATRONYMES_PAR_PAYS)} — `EF-05`. "
+            "Aucun repli : un pays inconnu doit arreter le run, pas se peupler "
+            "en silence de patronymes empruntes a un autre."
+        )
     return noms[index % len(noms)]
 
 
 def prenom(genre: str, index: int) -> str:
-    """Prenom coherent avec le genre — `EF-22` se joue sur ce champ."""
-    liste = PRENOMS_PAR_GENRE.get(genre.upper(), PRENOMS_PAR_GENRE["FEMALE"])
+    """Prenom coherent avec le genre — `EF-22` se joue sur ce champ.
+
+    **Leve sur un genre inconnu**, pour la meme raison et une de plus : le
+    serveur ne valide PAS `gender` (`D-IDN-1`). Un repli vers FEMALE aurait
+    fausse le quota « deux femmes pour un homme » sans laisser de trace, et
+    personne en aval ne l'aurait rattrape.
+    """
+    liste = PRENOMS_PAR_GENRE.get(genre.upper())
+    if liste is None:
+        raise ValueError(
+            f"genre '{genre}' inconnu — attendu MALE ou FEMALE, jamais ANY "
+            "(`D-IDN-1` : le serveur ne valide pas ce champ, nous le validons)."
+        )
     return liste[index % len(liste)]
 
 

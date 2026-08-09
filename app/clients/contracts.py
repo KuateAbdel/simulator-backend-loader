@@ -329,14 +329,28 @@ class FakerDecisionStatus(StrEnum):
 #: Ne jamais confondre avec LoaderRun._id, qui appartient au Loader.
 FAKER_RUN_ID: Final = "20260620123721"
 
-#: Les 4 pays cibles du CDC. Carto §5.3 : l'enum OpenAPI de Faker declare
-#: BF/CI/CM, mais SN est accepte au runtime — les 4 sont donc atteignables.
-#: CT-04 / F-11 : Faker ne valide PAS ses filtres (country_code=ZZ retourne un
-#: client au hasard). La validation incombe au Loader, AVANT l'appel.
-PAYS_CIBLES: Final[tuple[str, ...]] = ("CM", "CI", "BF", "SN")
-
-#: H14/H15 : au-dela, degradation silencieuse sans HTTP 429.
-MAX_CONCURRENT_WORKERS: Final = 25
-
-#: H20 : le serveur accepte limit=9999999999 sans broncher. Cappe cote Loader.
-MAX_PAGE_LIMIT: Final = 100
+# TROIS CONSTANTES RETIREES LE 09/08 — elles etaient MORTES et FAUSSES.
+#
+# `PAYS_CIBLES`, `MAX_CONCURRENT_WORKERS` (25) et `MAX_PAGE_LIMIT` (100)
+# vivaient ici en double de `app/core/cdc.py` et `app/clients/base.py`.
+# Aucune n'etait importee nulle part — mais `MAX_CONCURRENT_WORKERS` portait
+# encore 25 apres la correction de `D-USR-1` a 20. Une constante morte ne fait
+# rien ; une constante morte que quelqu'un finit par importer fait pire que
+# rien.
+#
+# Sources uniques : `app.core.cdc.PAYS_CIBLES`,
+# `app.clients.base.MAX_CONCURRENCE`, `app.clients.base.LIMITE_PAGE_MAX`.
+#
+# Leurs commentaires affirmaient par ailleurs DEUX FAITS QUE NOUS AVONS MESURES
+# FAUX le 08/08 (`docs/empirical/2026-08-08_faker_maitrise_complete.md` §6) :
+#
+#   « SN est accepte au runtime, les 4 pays sont atteignables »
+#      -> FAUX. Famille A : HTTP 422. Famille B : HTTP 404. Le Senegal est
+#         ABSENT de Faker — c'est l'arbitrage `A-01`, 500 clients en suspens.
+#   « CT-04/F-11 : Faker ne valide PAS ses filtres, `country_code=ZZ` rend un
+#     client au hasard »
+#      -> FAUX, et c'est une AMELIORATION de leur cote : `ZZ` rend desormais
+#         un 422 (famille A) / 404 (famille B).
+#
+# Un commentaire perime est plus dangereux qu'un commentaire absent : il se
+# lit comme un fait etabli.
