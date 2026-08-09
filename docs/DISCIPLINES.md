@@ -13,6 +13,34 @@
 
 ---
 
+## Une note de méthode — pourquoi ce document, et pas un module Python
+
+Un module `app/core/disciplines.py` a existé jusqu'au 9 août. Il portait le
+texte de **5** disciplines sous forme de constantes, *« pour que chaque
+garde-fou puisse nommer explicitement la discipline qu'il applique »*.
+
+**L'intention était juste. L'exécution n'a jamais eu lieu :** aucun module ne
+l'importait. Pendant ce temps, chaque garde-fou écrivait son propre texte à
+l'endroit où il s'applique — et ces textes-là sont devenus **plus précis** que
+les constantes. `collect_service.py` nomme `FRA-195` et le qualifie d'« écriture
+fantôme » ; la constante disait seulement « mutation réelle silencieuse ».
+
+C'était donc une **table parallèle** — la même faute que
+`_PATRONYMES_PAR_PAYS` dupliqué et que `MAX_CONCURRENT_WORKERS = 25` resté
+derrière la correction de `D-USR-1`. Elle avait d'ailleurs déjà dérivé : elle
+annonçait **5** disciplines quand il y en a **59**.
+
+Le module a été supprimé après vérification que **chacun des cinq textes survit
+là où il s'applique** — 2 occurrences pour `D-FAKER-1`, 5 pour `D-CMP-2`, 18
+pour la famille `D-PRD-*`, 20 pour les montants de collecte.
+
+> **La règle qui en sort :** une discipline vit **une seule fois**, au point
+> d'application. Ce document l'**indexe** ; il ne la duplique pas. Un index qui
+> se prend pour une source devient une seconde source, et deux sources
+> divergent.
+
+---
+
 ## Ce qui distingue une discipline d'une décision
 
 | | Décision (`D-01`…`D-12`) | Discipline (`D-XXX-N`) |
