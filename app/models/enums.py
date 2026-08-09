@@ -32,7 +32,7 @@ class FakerConsumptionType(StrEnum):
 
 
 class NiveauOrganisation(StrEnum):
-    """Niveaux 3 a 5 de l'arbre operationnel (CDC §6.2), cote Loader.
+    """Niveaux 3 a 6 de l'arbre operationnel (CDC §6.2), cote Loader.
 
     Decision d'architecture du 08/08 (option b) : Branche et Agence ne sont
     JAMAIS persistees cote serveur. company-service n'expose aucune route pour
@@ -48,11 +48,33 @@ class NiveauOrganisation(StrEnum):
 
     Seul le niveau KIOSQUE a une contrepartie serveur : le Depositaire, cree
     avec company_id = l'IMF racine.
+
+    AGENT — quatrieme valeur, ajoutee le 09/08/2026 (decision `D-11`)
+    -----------------------------------------------------------------
+    Le CDC §6 decrit **six** niveaux ; nous n'en modelisions que cinq. Le
+    sixieme, l'Agent, est *« une personne physique de terrain, rattachee a un
+    Kiosque »*.
+
+    Contrairement a Branche et Agence, **l'Agent A une contrepartie serveur** :
+    c'est un `User` de user-service, porteur du groupe « Agent ». Il n'avait
+    donc pas vocation a figurer ici — **sauf pour une chose**, et elle est
+    decisive : **son rattachement au Kiosque n'existe nulle part cote
+    serveur**. `User` porte `company_id` (vide sur les 20 users de
+    l'environnement) et `identity`, jamais de reference vers un Depositaire.
+
+    Sans ce niveau, la question *« quels Agents dans ce Kiosque ? »* n'a
+    **aucune reponse** — exactement le defaut que nous reprochons a
+    config-service, dont le `Telco` ne porte pas son pays
+    (`docs/ANALYSE_CONFIG_SERVICE.md`, regle 2).
+
+    Le niveau AGENT ne change pas la regle du modele, il l'applique : un noeud
+    ne peut exister sans son superieur (`EF-18`).
     """
 
     BRANCHE = "BRANCHE"
     AGENCE = "AGENCE"
     KIOSQUE = "KIOSQUE"
+    AGENT = "AGENT"
 
 
 class RunMode(StrEnum):

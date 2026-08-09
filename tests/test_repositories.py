@@ -228,3 +228,69 @@ class TestConfigurationDuRun:
 
         assert empreinte["repartition_clients"]["SN"] == 0
         assert sum(empreinte["repartition_clients"].values()) == config.nb_clients
+
+
+class TestNiveauAgent:
+    """D-11 — le sixieme niveau du CDC, que nous ne modelisions pas.
+
+    Le CDC §6 decrit SIX niveaux ; org_hierarchy s'arretait au cinquieme.
+    L'Agent existe cote serveur — c'est un User — mais SON RATTACHEMENT AU
+    KIOSQUE n'existe nulle part : `User` porte `company_id` et `identity`,
+    jamais de reference vers un Depositaire.
+    """
+
+    def test_l_enum_porte_les_quatre_niveaux(self) -> None:
+        assert [n.value for n in NiveauOrganisation] == [
+            "BRANCHE",
+            "AGENCE",
+            "KIOSQUE",
+            "AGENT",
+        ]
+
+    def test_un_noeud_agent_porte_son_user_et_son_kiosque(self) -> None:
+        kiosque = uuid4()
+        agent = OrgHierarchyNode(
+            _id=uuid4(),
+            run_id=uuid4(),
+            niveau=NiveauOrganisation.AGENT,
+            parent_id=kiosque,
+            company_id=uuid4(),
+            name="DEMO_CM_Agent_001",
+            country_code="CM",
+            user_id=uuid4(),
+        )
+        assert agent.parent_id == kiosque
+        assert agent.user_id is not None
+        assert agent.depositary_id is None, "depositary_id reste au niveau KIOSQUE"
+
+    def test_les_niveaux_superieurs_n_ont_pas_de_user_id(self) -> None:
+        """`user_id` est au niveau AGENT uniquement, comme `depositary_id` est
+        au niveau KIOSQUE uniquement."""
+        kiosque = OrgHierarchyNode(
+            _id=uuid4(),
+            run_id=uuid4(),
+            niveau=NiveauOrganisation.KIOSQUE,
+            parent_id=uuid4(),
+            company_id=uuid4(),
+            name="Kiosque Bastos",
+            country_code="CM",
+            district_id="CM-DT-001",
+            depositary_id=uuid4(),
+        )
+        assert kiosque.user_id is None
+        assert kiosque.depositary_id is not None
+
+    def test_le_noeud_agent_survit_a_la_serialisation(self) -> None:
+        agent = OrgHierarchyNode(
+            _id=uuid4(),
+            run_id=uuid4(),
+            niveau=NiveauOrganisation.AGENT,
+            parent_id=uuid4(),
+            company_id=uuid4(),
+            name="DEMO_SN_Agent_007",
+            country_code="SN",
+            user_id=uuid4(),
+        )
+        relu = OrgHierarchyNode.model_validate(en_document(agent))
+        assert relu.niveau is NiveauOrganisation.AGENT
+        assert relu.user_id == agent.user_id

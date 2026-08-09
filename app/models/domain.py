@@ -151,10 +151,17 @@ class OrgHierarchyNode(LoaderDocument):
     - BRANCHE : parent_id = None, region_id renseigne
     - AGENCE  : parent_id = une BRANCHE, city_id renseigne
     - KIOSQUE : parent_id = une AGENCE, district_id ET depositary_id renseignes
+    - AGENT   : parent_id = un KIOSQUE, user_id renseigne (D-11)
 
-    `depositary_id` est la SEULE reference vers une entite reellement creee
-    cote serveur (depositary-service). Les niveaux BRANCHE et AGENCE n'ont
-    aucune contrepartie distante -- c'est tout l'objet de la decision (b).
+    Deux references pointent vers des entites reellement creees cote serveur :
+    `depositary_id` au niveau KIOSQUE (depositary-service) et `user_id` au
+    niveau AGENT (user-service). Les niveaux BRANCHE et AGENCE n'ont aucune
+    contrepartie distante -- c'est tout l'objet de la decision (b).
+
+    Pourquoi l'AGENT figure ici alors qu'il EXISTE cote serveur : parce que son
+    RATTACHEMENT au Kiosque, lui, n'existe nulle part. `User` porte
+    `company_id` et `identity`, jamais de reference vers un Depositaire. Sans
+    ce noeud, « quels Agents dans ce Kiosque ? » reste sans reponse (`D-11`).
     """
 
     id: UUID = Field(alias="_id")
@@ -171,6 +178,9 @@ class OrgHierarchyNode(LoaderDocument):
     district_id: str | None = None
     depositary_id: UUID | None = Field(
         default=None, description="Renseigne au niveau KIOSQUE uniquement (depositary-service)"
+    )
+    user_id: UUID | None = Field(
+        default=None, description="Renseigne au niveau AGENT uniquement (user-service) — D-11"
     )
 
 

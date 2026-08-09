@@ -109,6 +109,76 @@ class OrgHierarchyRepository(RepositoryBase):
             return None
         return noeud
 
+    async def ajouter_agent(
+        self,
+        run_id: UUID,
+        kiosque_id: UUID,
+        company_id: UUID,
+        name: str,
+        country_code: str,
+        user_id: UUID,
+    ) -> OrgHierarchyNode:
+        """Rattache un Agent a son Kiosque — `UC-09` point 4, `D-11`.
+
+        **Pourquoi ce noeud existe alors que l'Agent existe cote serveur.**
+        L'Agent EST un `User` de user-service, porteur du groupe « Agent ».
+        Mais `User` porte `company_id` et `identity`, **jamais de reference
+        vers un Depositaire** : son rattachement au Kiosque n'existe nulle
+        part. Sans ce noeud, *« quels Agents dans ce Kiosque ? »* reste sans
+        reponse — le defaut meme que nous reprochons a config-service, dont le
+        `Telco` ne porte pas son pays.
+
+        `EF-18` s'applique sans exception : **un Agent ne peut exister sans son
+        Kiosque**. Le controle est fait ici, avant l'insertion, comme aux trois
+        niveaux superieurs.
+
+        Contrairement au Kiosque, aucune unicite n'est imposee : `EF-17` parle
+        d'un *« nombre parametrable d'Agents par Kiosque »*, et `UC-09` exige
+        « **au moins** un ». Plusieurs Agents dans un meme Kiosque sont
+        legitimes.
+        """
+        if await self.collection.find_one({"_id": str(kiosque_id)}) is None:
+            raise ValueError(f"Kiosque {kiosque_id} introuvable — emboitement viole (EF-18)")
+        noeud = OrgHierarchyNode(
+            id=uuid4(),
+            run_id=run_id,
+            niveau=NiveauOrganisation.AGENT,
+            parent_id=kiosque_id,
+            company_id=company_id,
+            name=name,
+            country_code=country_code.upper(),
+            user_id=user_id,
+        )
+        await self.collection.insert_one(en_document(noeud))
+        return noeud
+
+    async def agents_du_kiosque(self, kiosque_id: UUID) -> list[OrgHierarchyNode]:
+        """La relation inverse — *« quels Agents dans ce Kiosque ? »*.
+
+        C'est la question que le modele ne savait pas repondre avant `D-11`.
+        Elle s'appuie sur l'index `idx_parent`, donc sans balayage.
+        """
+        curseur = self.collection.find(
+            {"parent_id": str(kiosque_id), "niveau": NiveauOrganisation.AGENT.value}
+        )
+        return [OrgHierarchyNode.model_validate(d) async for d in curseur]
+
+    async def kiosques_sans_agent(self, run_id: UUID) -> list[str]:
+        """`UC-09` postcondition : *« chaque Kiosque possede au moins un Agent »*.
+
+        Rend les Kiosques qui n'en ont aucun. **Liste vide = postcondition
+        tenue.** C'est un controle de recette, au meme titre que
+        `verifier_cr02()`.
+        """
+        kiosques = await self.par_niveau(run_id, NiveauOrganisation.KIOSQUE)
+        avec_agent = {
+            str(document["parent_id"])
+            async for document in self.collection.find(
+                {"run_id": str(run_id), "niveau": NiveauOrganisation.AGENT.value}, {"parent_id": 1}
+            )
+        }
+        return sorted(k.name for k in kiosques if str(k.id) not in avec_agent)
+
     async def par_niveau(self, run_id: UUID, niveau: NiveauOrganisation) -> list[OrgHierarchyNode]:
         curseur = self.collection.find({"run_id": str(run_id), "niveau": niveau.value})
         return [OrgHierarchyNode.model_validate(d) async for d in curseur]

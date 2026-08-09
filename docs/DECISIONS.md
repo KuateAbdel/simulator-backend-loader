@@ -246,6 +246,56 @@ nombre de collections reste 6.
 
 ---
 
+## D-11 · `org_hierarchy` gagne le niveau `AGENT` — le 6ᵉ du CDC
+
+**Tranché le 9 août 2026 · trou de conception trouvé en clôturant le Sprint 2**
+
+Le CDC §6 décrit **six niveaux**. `org_hierarchy` n'en modélisait que **cinq** —
+elle s'arrêtait au Kiosque.
+
+**Pourquoi ce n'était pas visible** : `D-05` avait tranché que Branche et Agence
+restent logiques *parce qu'elles n'ont aucune contrepartie serveur*. L'Agent, lui,
+**a une contrepartie** : c'est un `User` de user-service portant le groupe
+« Agent ». Il semblait donc n'avoir rien à faire ici.
+
+**Ce qui a été manqué** : `User` porte `company_id` et `identity`, **jamais de
+référence vers un Depositaire**. Le rattachement Agent → Kiosque, exigé par
+`UC-09` point 4 — *« il rattache chaque Agent à un Kiosque et à une Company
+mère »* — **n'existe nulle part**.
+
+Sans lui, la question *« quels Agents dans ce Kiosque ? »* n'a aucune réponse.
+C'est **exactement le défaut que nous reprochons à config-service**, dont le
+`Telco` ne porte pas son pays (`ANALYSE_CONFIG_SERVICE.md`, règle 2 — *« toute
+relation métier a son inverse interrogeable »*).
+
+**Décision** : quatrième valeur `AGENT` dans `NiveauOrganisation`, et champ
+`user_id` sur `OrgHierarchyNode`, renseigné à ce niveau uniquement — symétrique
+de `depositary_id` au niveau KIOSQUE.
+
+**Ce que ça ne change pas** : la règle du modèle est **appliquée, pas modifiée**.
+`EF-18` — *« un nœud ne peut exister sans son supérieur »* — vaut pour l'Agent
+comme pour les trois autres niveaux : `ajouter_agent()` refuse un Kiosque
+inexistant.
+
+**Une différence assumée avec le Kiosque** : aucune unicité n'est imposée.
+`EF-17` parle d'un *« nombre paramétrable d'Agents par Kiosque »* et `UC-09` exige
+« **au moins** un ». Plusieurs Agents dans un même Kiosque sont légitimes — là où
+`(run_id, district_id)` unique interdit deux Kiosques dans un quartier.
+
+**Deux contrôles de recette gagnés** : `agents_du_kiosque()` répond à la relation
+inverse sans balayage, et `kiosques_sans_agent()` vérifie la postcondition
+`UC-09` — liste vide = tenue.
+
+**Appliqué** : `app/models/enums.py` · `app/models/domain.py`
+(`OrgHierarchyNode.user_id`) · `app/repositories/org_hierarchy.py`
+(`ajouter_agent`, `agents_du_kiosque`, `kiosques_sans_agent`) ·
+`docs/CONTEXT.md`
+
+**Rattachement effectif** : Sprint 3, quand les Kiosques existeront. Le modèle,
+lui, le porte dès maintenant.
+
+---
+
 ## Décisions en attente
 
 | # | Sujet | Pourquoi c'est bloqué |

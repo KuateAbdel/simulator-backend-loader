@@ -20,7 +20,14 @@ Orchestrateur HTTP. Consomme Faker fintech4esg (clients, historique credit, scor
 > `checkpoints` : ceux-ci changent pendant l'execution, la configuration non.
 - audit_trail : {_id, run_id, entity_type, entity_id, action, before, after, timestamp}
 - super_admin_accounts : {_id, email, password_hash, must_change_password}
-- org_hierarchy : {_id, run_id, niveau (BRANCHE|AGENCE|KIOSQUE), parent_id, company_id, name, country_code, region_id, city_id, district_id, depositary_id}
+- org_hierarchy : {_id, run_id, niveau (BRANCHE|AGENCE|KIOSQUE|**AGENT**), parent_id, company_id, name, country_code, region_id, city_id, district_id, depositary_id, **user_id**}
+
+> **Niveau AGENT ajoute le 09/08/2026, decision D-11.** Le CDC §6 decrit SIX
+> niveaux ; nous n'en modelisions que cinq. L'Agent existe cote serveur — c'est
+> un User — mais SON RATTACHEMENT AU KIOSQUE n'existe nulle part : `User` porte
+> `company_id` et `identity`, jamais de reference vers un Depositaire. Sans ce
+> niveau, « quels Agents dans ce Kiosque ? » reste sans reponse, et `UC-09`
+> point 4 est invérifiable.
 
 > **Ajoutée le 08/08/2026, décision (b) sur Branche/Agence.** company-service n'expose
 > aucune route pour Branche ni Agence, et son enum CompanyType ne comporte aucune valeur
