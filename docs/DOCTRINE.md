@@ -59,7 +59,7 @@ base de TEST contient déjà :
 * des comptes clients portant `currency: "ANY"`, valeur d'un enum de segment ;
 * un référentiel de devises contenant `cv` et `00` ;
 * un opérateur télécom dont le motif de validation est `6|333`, sans ancres ;
-* quatre pays sans devise rattachée ;
+* un opérateur dont le pays n'existe que dans son expression régulière ;
 * vingt Users dont **aucun** n'a de `company_id`.
 
 ### Motif **Anti-Corruption Layer** (ACL)
@@ -94,7 +94,7 @@ pas dire.** Quatre exemples mesurés :
 | Fait | Le serveur | Nous |
 |---|---|---|
 | Le quartier d'un Kiosque | `CreateDepositaireSchema` n'a **aucun champ géographique** | `org_hierarchy`, avec le `zone_type` |
-| La devise d'un pays | `Country.currency = null` sur les 4 pays | `Pays.devise_iso`, vérifié sur deux feuilles |
+| La **région** et le **quartier** | **aucune notion** — `Country.region` y vaut `"Middle Africa"` | 51 régions, 82 quartiers avec `zone_type` |
 | Le client Faker consommé | aucun champ nulle part | `faker_consumption_ledger` (`D-FAKER-1`) |
 | Une écriture non confirmée | aucune notion | intention orpheline |
 
