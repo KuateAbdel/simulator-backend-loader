@@ -21,6 +21,7 @@ from app.core.invariants import (
     AGE_MAXIMUM,
     AGE_MINIMUM,
     InvariantViole,
+    RegistreUnicite,
     calculer_age,
     exiger_champs_renseignes,
     normaliser_email,
@@ -370,3 +371,59 @@ class TestCompositionMsisdn:
         # Orange Senegal pese 55 % du marche reel.
         assert comptes["Orange SN"] / 2000 > 0.50
         assert comptes["Orange SN"] > comptes["Free SN"] > comptes["Expresso SN"]
+
+
+class TestRegistreUnicite:
+    """S1-04 — EF-25 n'exige que le MSISDN ; le serveur en impose TROIS.
+
+    Et le message du doublon d'`id_number` designe le mauvais champ : il
+    annonce « Client already exists » alors que le msisdn differait. Sans test
+    dedie, on diagnostiquerait a cote — deux mille fois.
+    """
+
+    def test_un_client_conforme_est_reserve(self) -> None:
+        registre = RegistreUnicite()
+        numero, piece, courriel = registre.reserver(
+            msisdn="+237 699 11 22 33", id_number="cm250509274", email="  Demo@X.local "
+        )
+        assert (numero, piece, courriel) == ("+237699112233", "CM250509274", "demo@x.local")
+        assert registre.effectif == 1
+
+    def test_msisdn_en_doublon_refuse(self) -> None:
+        registre = RegistreUnicite()
+        registre.reserver(msisdn="237699112233", id_number="CM111111", email="a@x.local")
+        with pytest.raises(InvariantViole, match="msisdn"):
+            registre.reserver(msisdn="237699112233", id_number="CM222222", email="b@x.local")
+
+    def test_id_number_en_doublon_refuse_et_le_message_denonce_le_piege(self) -> None:
+        registre = RegistreUnicite()
+        registre.reserver(msisdn="237699112233", id_number="CM111111", email="a@x.local")
+        with pytest.raises(InvariantViole) as erreur:
+            registre.reserver(msisdn="237699112244", id_number="CM111111", email="b@x.local")
+        message = str(erreur.value)
+        assert "id_number" in message
+        assert "mauvais champ" in message
+
+    def test_email_en_doublon_refuse_malgre_la_casse(self) -> None:
+        """Le serveur ne normalise pas : `Demo@x` et `demo@x` y produisent deux
+        Identities. Nous, si."""
+        registre = RegistreUnicite()
+        registre.reserver(msisdn="237699112233", id_number="CM111111", email="Demo@X.local")
+        with pytest.raises(InvariantViole, match="email"):
+            registre.reserver(msisdn="237699112244", id_number="CM222222", email="demo@x.local")
+
+    def test_le_formatage_du_msisdn_ne_cree_pas_de_faux_unique(self) -> None:
+        """`699-11-22-33` et `699112233` sont le meme numero."""
+        registre = RegistreUnicite()
+        registre.reserver(msisdn="237-699-11-22-33", id_number="CM111111", email="a@x.local")
+        with pytest.raises(InvariantViole, match="msisdn"):
+            registre.reserver(msisdn="237699112233", id_number="CM222222", email="b@x.local")
+
+    def test_deux_mille_clients_distincts_passent(self) -> None:
+        registre = RegistreUnicite()
+        for i in range(2000):
+            registre.reserver(
+                msisdn=f"2376991{i:05d}", id_number=f"CM{i:06d}", email=f"c{i}@x.local"
+            )
+        assert registre.effectif == 2000
+        assert "2000 msisdn" in registre.resume()

@@ -400,6 +400,76 @@ def valider_identite_complete(
     }
 
 
+class RegistreUnicite:
+    """Garantit les **trois** unicites imposees par le serveur, avant le reseau.
+
+    `EF-25` n'exige que l'unicite du MSISDN. La mesure du 09/08 en a etabli
+    **trois** :
+
+        msisdn      400 « Client already exists »
+        id_number   400 « Client already exists »  <- message TROMPEUR : il
+                    annonce un doublon de Client alors que le msisdn differait
+        email       400 « Identity with this email already exists »
+
+    Le message d'`id_number` est le piege : sans test dedie, on diagnostiquerait
+    le mauvais champ — deux mille fois.
+
+    **Pourquoi une memoire de processus suffit.** Une execution est un seul
+    processus, borne a 30 minutes (`ENF-01`), et le prefixe `DEMO_` isole nos
+    donnees. Le serveur applique de toute facon ses propres unicites : notre
+    registre ne les remplace pas, il evite d'aller les decouvrir en 400. Deux
+    executions concurrentes sont exclues par le verrou d'execution (`EF-58`).
+
+    La normalisation est appliquee **avant** comparaison : le serveur, lui, ne
+    normalise rien — `Demo@x` et `demo@x` y produisent deux Identities.
+    """
+
+    __slots__ = ("_emails", "_id_numbers", "_msisdn")
+
+    def __init__(self) -> None:
+        self._msisdn: set[str] = set()
+        self._id_numbers: set[str] = set()
+        self._emails: set[str] = set()
+
+    def reserver(self, *, msisdn: str, id_number: str, email: str) -> tuple[str, str, str]:
+        """Reserve les trois valeurs d'un client, ou refuse la premiere en conflit.
+
+        Renvoie le triplet **normalise** — c'est lui qu'il faut emettre, pas
+        les valeurs d'origine.
+        """
+        numero = normaliser_msisdn(msisdn)
+        piece = valider_id_number(id_number)
+        courriel = normaliser_email(email)
+
+        for valeur, deja_vus, champ in (
+            (numero, self._msisdn, "msisdn"),
+            (piece, self._id_numbers, "id_number"),
+            (courriel, self._emails, "email"),
+        ):
+            if valeur in deja_vus:
+                raise InvariantViole(
+                    f"{champ} '{valeur}' deja utilise dans cette execution. Le serveur le "
+                    "refuserait en 400 — et pour `id_number` son message annonce « Client "
+                    "already exists », ce qui designe le mauvais champ (mesure 09/08)."
+                )
+
+        self._msisdn.add(numero)
+        self._id_numbers.add(piece)
+        self._emails.add(courriel)
+        return numero, piece, courriel
+
+    @property
+    def effectif(self) -> int:
+        """Nombre de clients reserves — doit valoir 2000 en fin d'execution."""
+        return len(self._msisdn)
+
+    def resume(self) -> str:
+        return (
+            f"unicite : {len(self._msisdn)} msisdn · "
+            f"{len(self._id_numbers)} id_number · {len(self._emails)} email"
+        )
+
+
 def _en_date(valeur: date | str, libelle: str) -> date:
     if isinstance(valeur, datetime):
         return valeur.date()

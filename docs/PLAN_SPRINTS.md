@@ -46,16 +46,16 @@ Rien n'est masqué. Chaque ligne porte sa preuve et son sprint.
 
 | # | Manque | Preuve | Sprint |
 |---|---|---|---|
-| `INV-01` | **Âge non contrôlé** — 2 ans et 120 ans acceptés | mesure 09/08 | **S1** |
-| `INV-02` | **Faker ne fournit aucune date de naissance** — famille A *et* B | mesure 09/08 | **S1** |
-| `INV-03` | **`gender` non validé** — `"peu importe"` → 201 | mesure 09/08 | **S1** |
-| `INV-04` | **`marital_status` non validé** | mesure 09/08 | **S1** |
+| `INV-01` | **Âge non contrôlé** — 2 ans et 120 ans acceptés | mesure 09/08 | ✅ fait |
+| `INV-02` | **Faker ne fournit aucune date de naissance** — famille A *et* B | mesure 09/08 | ✅ constaté |
+| `INV-03` | **`gender` non validé** — `"peu importe"` → 201 | mesure 09/08 | ✅ fait |
+| `INV-04` | **`marital_status` non validé** | mesure 09/08 | ✅ fait |
 | `INV-05` | **`currency` non validée** et propagée au compte — origine de `FRA-222` | mesure 09/08 | ✅ fait |
 | `INV-06` | **Type de produit non contrôlé** — LENDING accepté sur un Client | mesure 09/08 | ✅ fait |
 | `INV-07` | **Catégorie croisée** — CORPORATE sur produit INDIVIDUAL | mesure 09/08 | ✅ fait |
 | `INV-08` | **Plafond de souscriptions** — 6 acceptées, `UC-13` en autorise 3 | mesure 09/08 | ✅ fait |
-| `INV-09` | **Unicité triple** — `msisdn`, `id_number`, `email` ; `EF-25` n'en cite qu'un | mesure 09/08 | **S1** |
-| `INV-10` | **Casse non normalisée** — `id_number` et `nationality` en minuscules acceptés | mesure 09/08 | **S1** |
+| `INV-09` | **Unicité triple** — `msisdn`, `id_number`, `email` ; `EF-25` n'en cite qu'un | mesure 09/08 | ✅ fait |
+| `INV-10` | **Casse non normalisée** — `id_number` et `nationality` en minuscules acceptés | mesure 09/08 | ✅ fait |
 | `INV-11` | **Cohérence `id_expire_on`** — aucune règle : une pièce peut expirer hier | contrat | ✅ fait |
 | `INV-12` | **Atomicité** — cascade à 3 services, aucun rollback, aucun `DELETE` | structurel | ✅ fait |
 | `INV-13` | **`EF-27`** — MSISDN vs regex opérateur : les 12 plans réels n'étaient **pas chargés** | mesure 09/08 | ✅ fait |
@@ -93,8 +93,8 @@ Rien n'est masqué. Chaque ligne porte sa preuve et son sprint.
 | Réf | Exigence | Sprint |
 |---|---|---|
 | `EF-26` | Rattacher chaque client à un Kiosque — **inapplicable à la création**, deux temps via `org_hierarchy` | **S4** |
-| `EF-27` | Valider le MSISDN contre le regex telco du pays | **S1** |
-| `EF-22` | 60 % < 25 ans, 2 femmes / 1 homme | **S1** *(barrières)* + **S4** *(quotas)* |
+| `EF-27` | Valider le MSISDN contre le regex telco du pays | ✅ **fait** |
+| `EF-22` | 60 % < 25 ans, 2 femmes / 1 homme | ✅ barrières · **S4** quotas |
 | `UC-09` | 60 à 100 users staff, 11 rôles | **S2** |
 | `EF-76` → `EF-80` | Vie commune 180 jours, re-scoring | **S5** |
 
@@ -124,11 +124,11 @@ Socle HTTP, 6 repositories, bootstrap Super-Admin, référentiel géographique,
 
 | Story | Contenu |
 |---|---|
-| `S1-01` | Module `app/core/invariants.py` — âge, cohérence des dates, casse |
-| `S1-02` | Âge : **18 à 75 ans**, majorité légale des 4 pays |
-| `S1-03` | Cohérence `date_of_birth` ↔ `id_expire_on` ↔ `occupation` |
-| `S1-04` | Unicité triple garantie **avant** le réseau, index locaux |
-| `S1-05` | `EF-27` — regex telco par pays depuis `telcos.csv` |
+| `S1-01` | ✅ Module `app/core/invariants.py` — âge, dates, état civil, casse |
+| `S1-02` | ✅ Âge **18 à 75 ans** — majorité légale des 4 pays, plafond de crédibilité |
+| `S1-03` | ✅ Cohérence `date_of_birth` ↔ `id_expire_on` ↔ situation familiale |
+| `S1-04` | ✅ `RegistreUnicite` — les 3 unicités garanties avant le réseau |
+| `S1-05` | ✅ `EF-27` — 12 plans de numérotation + composition + parts de marché |
 | `S1-06` | ✅ Journal d'intention (write-ahead) dans `audit_trail` — l'atomicité |
 
 **Définition de terminé** : `ruff` + `mypy` + tests verts, chaque règle adossée à
