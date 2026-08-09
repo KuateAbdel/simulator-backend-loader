@@ -166,10 +166,10 @@ Analyse complète dans `docs/EXIGENCE_PARAMETRAGE.md`.
 
 | # | Story |
 |---|---|
-| `CFG-01` | Modèle de configuration — arbre pays/région/ville, **défauts CDC** |
-| `CFG-02` | Persistance de la config dans `loader_runs` — **prérequis d'`ENF-15`** |
+| `CFG-01` | ✅ **livré** — `app/core/configuration.py`, arbre pays/région/ville, défauts CDC |
+| `CFG-02` | 🟡 `empreinte()` **livrée** — reste à la brancher sur `loader_runs` |
 | `CFG-03` | Surcouche référentielle : ajout région/ville, invariants `EF-02` appliqués |
-| `CFG-04` | Résolution des quotas — le niveau le plus fin gagne |
+| `CFG-04` | ✅ **livré** — résolution en cascade ville → région → pays → CDC |
 | `CFG-05` | Actions Super-Admin sur config-service — intention, `DRY_RUN`, jamais de `DELETE` |
 | `CFG-06` | `PUT /countries/{id}` : relecture complète avant écriture (`TS-CFG-09`) |
 
