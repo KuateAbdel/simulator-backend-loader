@@ -18,3 +18,4 @@ state/
 .coverage
 htmlcov/
 .DS_Store
+RAPPORT_PROJET_LOADER.txt
