@@ -170,8 +170,8 @@ Analyse complète dans `docs/EXIGENCE_PARAMETRAGE.md`.
 | `CFG-02` | 🟡 `empreinte()` **livrée** — reste à la brancher sur `loader_runs` |
 | `CFG-03` | Surcouche référentielle : ajout région/ville, invariants `EF-02` appliqués |
 | `CFG-04` | ✅ **livré** — résolution en cascade ville → région → pays → CDC |
-| `CFG-05` | Actions Super-Admin sur config-service — intention, `DRY_RUN`, jamais de `DELETE` |
-| `CFG-06` | `PUT /countries/{id}` : relecture complète avant écriture (`TS-CFG-09`) |
+| `CFG-05` | ✅ **livré** — `AdministrationConfigService`, surface séparée de la lecture |
+| `CFG-06` | ✅ **livré** — `ajouter_ville()` relit les 9 champs avant d'écrire |
 
 > **Contrainte immédiate, valable dès le Sprint 2** : toute nouvelle constante de
 > volumétrie doit **naître paramétrable**. Ne rien figer davantage.

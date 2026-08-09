@@ -10,6 +10,26 @@ Configuration d'execution — l'exigence de parametrage de la Direction Techniqu
 
 Analyse d'impact complete : `docs/EXIGENCE_PARAMETRAGE.md`.
 
+**LA CONCEPTION EXISTAIT DEJA.** La feuille `Config_Loader` de
+`Loader_Base_FinZuu_v1_1.xlsx` porte 8 sections de parametres, sous-titrees
+« Parametres pilotes par le boss (message WhatsApp 16/07/2026) ». Le boss n'a
+pas formule une exigence nouvelle le 9 aout : **il a rappele une conception
+posee le 16 juillet**, que nous n'avions pas lue.
+
+Ce que cette feuille fixe, et que ce module respecte :
+
+    Distribution par pays        25 % chacun — 4 pays equipoids
+    Pourcentage < 25 ans         60 %                          (EF-22)
+    Ratio femmes / hommes        2 / 1  =  66,7 % / 33,3 %     (EF-22)
+    Societes / individus         20 % / 80 %                   (EF-23)
+    Agriculture                  20 % des professionnels       (EF-24)
+    Lenders locaux par pays      3  ->  12 au total            (EF-12)
+    Societes creees par jour     3 minimum                     (EF-40)
+    Entrees par jour             10                            (EF-41)
+
+Le defaut de `repartir_clients()` — parts egales entre pays actifs — n'est donc
+pas une invention : c'est la ligne « Distribution par pays : 25 % chacun ».
+
 LES TROIS REGLES QUI GOUVERNENT CE MODULE
 ------------------------------------------
 
