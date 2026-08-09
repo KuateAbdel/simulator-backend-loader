@@ -117,3 +117,53 @@ class TestReferencesInversesSurTelco:
             await admin.desactiver_telco("uuid-moov", pays_attendu="ca")
         assert "CI" in str(erreur.value)
         assert "unidirectionnelle" in str(erreur.value)
+
+
+class TestImmuniteAuxParasites:
+    """`D-CFG-1` / `D-CFG-2` — le Loader ne repare pas config-service.
+
+    Il ne se laisse pas atteindre. Six entrees parasites sur 24 dans
+    l'environnement TEST ; la plus dangereuse est `MTNcongo1` et son regex
+    `6|333`, **sans ancres** : il valide tout numero contenant un `6`.
+    """
+
+    def test_un_regex_sans_ancres_est_inexploitable(self) -> None:
+        """Le cas reel — `MTNcongo1`. Validation en apparence, aucune en fait."""
+        from app.clients.config_service import regex_exploitable
+
+        assert not regex_exploitable(r"6|333")
+
+    def test_un_regex_ancre_des_deux_cotes_est_exploitable(self) -> None:
+        from app.clients.config_service import regex_exploitable
+
+        assert regex_exploitable(r"^237(67|68|65|69|62)\d{7}$")
+
+    def test_une_ancre_seule_ne_suffit_pas(self) -> None:
+        """`^6` accepte `612345678901234` : ancre a gauche, libre a droite."""
+        from app.clients.config_service import regex_exploitable
+
+        assert not regex_exploitable(r"^6")
+        assert not regex_exploitable(r"6$")
+
+    def test_un_regex_non_compilable_est_refuse(self) -> None:
+        from app.clients.config_service import regex_exploitable
+
+        assert not regex_exploitable(r"^[6-$")
+
+    def test_un_motif_vide_est_refuse(self) -> None:
+        from app.clients.config_service import regex_exploitable
+
+        assert not regex_exploitable("")
+
+    def test_EF_27_ne_consulte_JAMAIS_le_regex_serveur(self) -> None:
+        """La decision qui protege : `valider_msisdn_operateur` s'appuie sur
+        NOTRE referentiel, jamais sur config-service. Un developpeur qui
+        « ameliorerait » le Loader en lisant le regex serveur reintroduirait
+        `6|333` sans s'en apercevoir."""
+        import inspect
+
+        from app.core import invariants
+
+        source = inspect.getsource(invariants.valider_msisdn_operateur)
+        assert "referentiel" in source
+        assert "config_service" not in source and "ConfigService" not in source

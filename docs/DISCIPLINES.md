@@ -202,6 +202,37 @@ rapport ne protège rien.*
 
 ---
 
+## Référentiel — `D-CFG-*` · 2 disciplines · `app/clients/config_service.py`
+
+**Ajoutées le 9 août**, et elles illustrent la doctrine mieux qu'aucune autre :
+*nous ne réparons pas config-service — nous ne nous laissons pas atteindre.*
+
+L'environnement TEST porte **6 entrées parasites sur 24** : 2 devises (`cv`,
+`00`), 2 pays (`CV` nommé « cm », `ca` nommé « cmer »), 2 opérateurs (`cm`
+doublon d'Expresso Senegal, et `MTNcongo1`).
+
+| # | Discipline | Le fait mesuré |
+|---|---|---|
+| `D-CFG-1` | **`EF-27` ne se joue jamais sur les regex de ce service** | `MTNcongo1` porte **`6\|333`, sans ancres** — il accepte tout numéro contenant un `6`. Validation en apparence, aucune en fait |
+| `D-CFG-2` | **Aucun comptage brut** — total et exploitable sont distingués | annoncer « 14 telcos » serait **exact et trompeur** |
+
+### Pourquoi `D-CFG-1` devait être écrite alors que nous étions déjà immunisés
+
+Le CDC dit *« valider le MSISDN contre le regex de l'opérateur telco du pays »*.
+**Lu naïvement, cela désigne config-service.** Nous ne le faisons pas — notre
+référentiel porte les **12 plans de numérotation réels** depuis le départ, et
+c'est lui qui fait autorité.
+
+Mais cette immunité était **implicite**. Un développeur qui « améliorerait » le
+Loader en lisant le regex serveur — de bonne foi, en suivant le CDC à la lettre
+— **réintroduirait `6|333` sans s'en apercevoir**. La note vit donc désormais à
+l'endroit exact où la tentation se présente, et un test la verrouille.
+
+> **C'est ça, être plus riche : ne pas dépendre de ce qui est cassé chez eux, et
+> écrire pourquoi — pour que personne ne recrée la dépendance par zèle.**
+
+---
+
 ## Company — `D-CMP-*` · 1 discipline
 
 | # | Discipline | Le fait mesuré |

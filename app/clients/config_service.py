@@ -51,6 +51,10 @@ class RapportReferentiel:
     entrees_ignorees: list[str] = field(default_factory=list)
     nb_devises: int = 0
     nb_telcos: int = 0
+    #: `D-CFG-2` — le total inclut les parasites, l'exploitable non. Les deux
+    #: sont dits : cacher l'ecart reviendrait a nier l'etat de l'environnement.
+    nb_telcos_exploitables: int = 0
+    telcos_ecartes: list[str] = field(default_factory=list)
 
     @property
     def complet(self) -> bool:
@@ -59,13 +63,19 @@ class RapportReferentiel:
     def resume(self) -> str:
         lignes = [
             f"Pays cibles trouves : {len(self.pays_trouves)}/{len(PAYS_CIBLES)}",
-            f"Devises : {self.nb_devises} | Telcos : {self.nb_telcos}",
+            f"Devises : {self.nb_devises} | Telcos : {self.nb_telcos} "
+            f"(dont {self.nb_telcos_exploitables} exploitables)",
         ]
         if self.pays_manquants:
             lignes.append(f"MANQUANTS : {', '.join(self.pays_manquants)}")
         if self.pays_incomplets:
             details = ", ".join(f"{iso} ({motif})" for iso, motif in self.pays_incomplets.items())
             lignes.append(f"INCOMPLETS : {details}")
+        if self.telcos_ecartes:
+            lignes.append(
+                f"Telcos ecartes (regex inexploitable, `D-CFG-1`) : "
+                f"{', '.join(self.telcos_ecartes)}"
+            )
         if self.entrees_ignorees:
             lignes.append(
                 f"Entrees hors perimetre ignorees : {len(self.entrees_ignorees)} "
@@ -74,8 +84,50 @@ class RapportReferentiel:
         return "\n".join(lignes)
 
 
+def regex_exploitable(motif: str) -> bool:
+    """`D-CFG-1` — un motif de numerotation sans ancres ne valide RIEN.
+
+    `MTNcongo1` porte `6|333` : sans `^` ni `$`, ce motif accepte tout numero
+    contenant un `6` ou la sequence `333`. C'est une validation en apparence,
+    et le plus grave des six parasites de l'environnement.
+
+    **Le Loader ne le corrige pas — il ne le consomme pas.** Nous ne sommes pas
+    la pour reparer config-service ; nous sommes la pour n'etre pas atteints
+    par ses defauts.
+    """
+    if not motif or "^" not in motif or "$" not in motif:
+        return False
+    try:
+        re.compile(motif)
+    except re.error:
+        return False
+    return True
+
+
 class ConfigServiceClient:
-    """Acces en lecture au referentiel geographique et monetaire."""
+    """Acces en LECTURE au referentiel geographique et monetaire.
+
+    `D-CFG-1` — **`EF-27` ne se joue JAMAIS sur les regex de ce service.**
+
+    Le CDC dit « valider le MSISDN contre le regex de l'operateur telco du
+    pays ». Lu naivement, cela designe config-service. Nous ne le faisons pas,
+    et ce refus est une DECISION, pas un oubli :
+
+      - `MTNcongo1` porte `6|333`, **sans ancres** — il validerait tout ;
+      - `cm` est un doublon exact d'Expresso Senegal ;
+      - `Moov Africa CI` est partage entre `CI` et le pays parasite `ca`.
+
+    `app/services/geographie.py` porte les **12 plans de numerotation reels**
+    depuis le depart, et c'est LUI qui fait autorite (`valider_msisdn_operateur`).
+    Un developpeur qui « ameliorerait » le Loader en lisant le regex serveur
+    reintroduirait `6|333` sans s'en apercevoir — d'ou cette note ici, au point
+    ou la tentation se presente.
+
+    `D-CFG-2` — **aucun comptage brut.** L'environnement porte 6 entrees
+    parasites sur 24 (2 devises, 2 pays, 2 operateurs). Annoncer « 14 telcos »
+    serait exact et trompeur. Chaque lecture distingue donc le TOTAL de
+    l'EXPLOITABLE, et le rapport montre les deux.
+    """
 
     def __init__(self, journal: JournalRequetes | None = None) -> None:
         self._client = ClientFinZuu("config-service", settings.config_service_base, journal=journal)
@@ -110,7 +162,14 @@ class ConfigServiceClient:
         rapport = RapportReferentiel()
         pays = await self.lister_pays()
         rapport.nb_devises = len(await self.lister_devises())
-        rapport.nb_telcos = len(await self.lister_telcos())
+        telcos = await self.lister_telcos()
+        rapport.nb_telcos = len(telcos)
+        for telco in telcos:
+            motif = str(telco.get("regex") or telco.get("pattern") or "")
+            if regex_exploitable(motif):
+                rapport.nb_telcos_exploitables += 1
+            else:
+                rapport.telcos_ecartes.append(str(telco.get("name") or "(sans nom)"))
 
         cibles = set(PAYS_CIBLES)
         for entree in pays:
