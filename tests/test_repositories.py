@@ -15,6 +15,13 @@ import pytest
 from app.core.security import hacher, verifier
 from app.models.domain import FakerConsumptionLedger, LoaderRun, OrgHierarchyNode
 from app.models.enums import FakerConsumptionType, NiveauOrganisation, RunMode, RunStatus
+from app.repositories.audit_trail import (
+    ACTION_INTENTION,
+    ACTION_RESULTAT,
+    STATUT_ECHEC,
+    STATUT_SUCCES,
+    SuiviIntention,
+)
 from app.repositories.base import en_document
 from app.repositories.loader_runs import _TRANSITIONS
 
@@ -121,3 +128,44 @@ class TestMachineDEtat:
 
     def test_tous_les_statuts_sont_couverts(self) -> None:
         assert set(_TRANSITIONS) == set(RunStatus)
+
+
+class TestJournalIntention:
+    """Sprint 1 — la seule atomicite disponible.
+
+    `POST /clients/onboard` ecrit dans TROIS services, sans transaction, sans
+    rollback, et sans `DELETE` nulle part. Une cascade interrompue laisse une
+    Identity et un compte orphelins, definitifs.
+
+    Ces tests verifient la machine d'etat du journal **hors ligne** : le cycle
+    INTENTION -> RESULTAT, et le fait qu'une issue soit toujours declaree.
+    """
+
+    def test_une_intention_neuve_n_a_pas_d_issue(self) -> None:
+        suivi = SuiviIntention(intention_id=uuid4(), entity_id=uuid4())
+        assert suivi.statut is None
+
+    def test_reussi_porte_le_rendu_du_serveur(self) -> None:
+        suivi = SuiviIntention(intention_id=uuid4(), entity_id=uuid4())
+        suivi.reussi({"client_id": "abc", "account_id": "def"})
+        assert suivi.statut == STATUT_SUCCES
+        assert suivi.detail["account_id"] == "def"
+
+    def test_echoue_porte_le_motif(self) -> None:
+        suivi = SuiviIntention(intention_id=uuid4(), entity_id=uuid4())
+        suivi.echoue("HTTP 400 Client already exists")
+        assert suivi.statut == STATUT_ECHEC
+        assert "Client already exists" in suivi.detail["motif"]
+
+    def test_le_motif_est_tronque(self) -> None:
+        """ANO-CPY-LEAK-07 : les erreurs serveur fuient des traces Python. On
+        les tronque avant de les journaliser, jamais on ne les parse."""
+        suivi = SuiviIntention(intention_id=uuid4(), entity_id=uuid4())
+        suivi.echoue("x" * 2000)
+        assert len(suivi.detail["motif"]) == 500
+
+    def test_les_deux_actions_sont_distinctes(self) -> None:
+        """Le cycle vit dans `action` : le schema des 6 collections n'a pas
+        bouge."""
+        assert ACTION_INTENTION != ACTION_RESULTAT
+        assert {ACTION_INTENTION, ACTION_RESULTAT}.isdisjoint({STATUT_SUCCES, STATUT_ECHEC})

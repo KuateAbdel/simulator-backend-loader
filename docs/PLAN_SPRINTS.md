@@ -57,7 +57,7 @@ Rien n'est masqué. Chaque ligne porte sa preuve et son sprint.
 | `INV-09` | **Unicité triple** — `msisdn`, `id_number`, `email` ; `EF-25` n'en cite qu'un | mesure 09/08 | **S1** |
 | `INV-10` | **Casse non normalisée** — `id_number` et `nationality` en minuscules acceptés | mesure 09/08 | **S1** |
 | `INV-11` | **Cohérence `id_expire_on`** — aucune règle : une pièce peut expirer hier | contrat | ✅ fait |
-| `INV-12` | **Atomicité** — cascade à 3 services, aucun rollback, aucun `DELETE` | structurel | **S1** |
+| `INV-12` | **Atomicité** — cascade à 3 services, aucun rollback, aucun `DELETE` | structurel | ✅ fait |
 | `INV-13` | **`EF-27`** — MSISDN vs regex opérateur : les 12 plans réels n'étaient **pas chargés** | mesure 09/08 | ✅ fait |
 | `INV-14` | **Les MSISDN de Faker ne respectent aucun plan réel** — 18/18 non attribuables sur 3 pays | mesure 09/08 | ✅ constaté |
 | `INV-15` | **Devise ↔ zone monétaire** — `XAF` = CEMAC (CM), `XOF` = UEMOA (CI, BF, SN). Ma liste close `{XAF, XOF}` était **trop permissive** | référentiel | ✅ fait |
@@ -118,7 +118,7 @@ Socle HTTP, 6 repositories, bootstrap Super-Admin, référentiel géographique,
 **9 services sur 9 sondés**, 8 clients de services, 11 anomalies ticketées,
 2 documents de modèle, `A-06` levé.
 
-### 🎯 Sprint 1 — **Invariants et cohérence humaine** *(en cours)*
+### ✅ Sprint 1 — **Invariants et cohérence humaine** *(clos — v0.2.0)*
 
 **But** : le Loader n'émet plus jamais une donnée qu'un banquier jugerait absurde.
 
@@ -129,12 +129,12 @@ Socle HTTP, 6 repositories, bootstrap Super-Admin, référentiel géographique,
 | `S1-03` | Cohérence `date_of_birth` ↔ `id_expire_on` ↔ `occupation` |
 | `S1-04` | Unicité triple garantie **avant** le réseau, index locaux |
 | `S1-05` | `EF-27` — regex telco par pays depuis `telcos.csv` |
-| `S1-06` | Journal d'intention (write-ahead) dans `audit_trail` — l'atomicité |
+| `S1-06` | ✅ Journal d'intention (write-ahead) dans `audit_trail` — l'atomicité |
 
 **Définition de terminé** : `ruff` + `mypy` + tests verts, chaque règle adossée à
 une mesure ou à une norme citée, aucune règle inventée.
 
-### ⬜ Sprint 2 — Module Utilisateurs
+### 🎯 Sprint 2 — Module Utilisateurs *(en cours)*
 
 11 rôles (`D-09`), 60 à 100 staff, `identity_service.py`, ticket du jeton
 CUSTOMER rejeté. **Dépend de `A-05`.**
@@ -171,8 +171,8 @@ incrément dont la définition de terminé est atteinte — jamais sur une inten
 | Version | Contenu | État |
 |---|---|---|
 | `0.1.0` | Socle et connaissance | ✅ |
-| `0.2.0` | Invariants et cohérence humaine | 🎯 |
-| `0.3.0` | Module Utilisateurs | ⬜ |
+| `0.2.0` | Invariants et cohérence humaine | ✅ **clos** |
+| `0.3.0` | Module Utilisateurs | 🎯 |
 | `0.4.0` | Organisation, Catalogue, Dépositaires | ⬜ |
 | `0.5.0` | Population client | ⬜ |
 | `0.6.0` | Vie 180 jours | ⬜ |
