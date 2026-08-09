@@ -346,6 +346,11 @@ Consignées pour que personne ne les refasse.
 
 ---
 
+> **Les disciplines de service (`D-XXX-N`) ne figurent pas ici.** Elles sont
+> imposées par le comportement des services, pas décidées par nous, et vivent
+> dans le module qui les applique. Registre complet : `docs/DISCIPLINES.md` —
+> **59 disciplines**, chacune adossée à une mesure des 8 ou 9 août.
+
 ## D-12 · Aucun nom n'est émis deux fois — registre d'unicité dans le générateur
 
 **Constat, mesuré le 9 août sur le référentiel réel.**

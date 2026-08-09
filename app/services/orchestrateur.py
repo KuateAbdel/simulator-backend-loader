@@ -64,22 +64,24 @@ from enum import StrEnum
 from typing import Any, Final, Protocol
 from uuid import UUID
 
+from app.clients.base import MAX_CONCURRENCE
 from app.models.enums import RunMode, RunStatus
 from app.repositories import LoaderRunRepository
 
 logger = logging.getLogger(__name__)
 
-#: Plafond de concurrence, MESURE le 08/08 (`H14`/`H15`).
+#: Plafond de concurrence — **une seule source**, celle du transport.
 #:
-#: Au-dela de 20 a 30 workers asyncio, les services FinZuu **degradent
-#: silencieusement — sans `429`**. C'est le fait le plus dangereux du dossier :
-#: un service qui repond `429` se laisse piloter, on ralentit et on reessaie.
-#: Un service qui degrade sans le dire transforme la surcharge en corruption —
-#: des ecritures partielles qu'on croit reussies, sur des services sans `DELETE`.
+#: Il vivait ici en double de `MAX_CONCURRENCE` (`app/clients/base.py`), et les
+#: deux valeurs DIVERGEAIENT : 20 ici, 25 la-bas. Un plafond declare deux fois
+#: n'est pas un plafond, c'est une opinion. Le garde-fou reel est le semaphore
+#: partage du client HTTP ; l'orchestrateur ne fait que le refleter.
 #:
-#: On prend la BORNE BASSE. Quand la panne est muette, on ne s'approche pas du
-#: bord pour voir ou il est : rien ne signalerait qu'on l'a franchi.
-PLAFOND_WORKERS: Final = 20
+#: Rappel du fait mesure (`H14`/`H15`, 08/08) : au-dela de 20 a 30 requetes
+#: simultanees, la degradation est SILENCIEUSE, sans `429`. Un service qui
+#: repond `429` se laisse piloter ; un service qui degrade sans le dire
+#: transforme la surcharge en corruption — sur des services sans `DELETE`.
+PLAFOND_WORKERS: Final = MAX_CONCURRENCE
 
 #: Budget de temps, `ENF-01` : 30 minutes pour la campagne complete.
 #: ~25 000 requetes -> ~14 req/s -> ~1,4 s par requete a 20 workers.

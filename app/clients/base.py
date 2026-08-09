@@ -7,8 +7,10 @@ Ce module ne connait aucun metier. Il porte uniquement ce que les 9 services
 FinZuu ont en commun — et surtout ce qu'ils ont en commun de DEFAILLANT, chaque
 garde-fou ci-dessous neutralisant un ecart empirique documente :
 
-  D-USR-1  concurrence plafonnee  — au-dela de 25 requetes simultanees, la
-           degradation est SILENCIEUSE : aucun HTTP 429 n'avertit (H14/H15).
+  D-USR-1  concurrence plafonnee a 20, PARTAGEE par les neuf clients — au-dela
+           de 20 a 30 requetes simultanees, la degradation est SILENCIEUSE :
+           aucun HTTP 429 n'avertit (H14/H15). Le semaphore etait par client
+           jusqu'au 09/08 : neuf plafonds de 25 ne plafonnaient rien.
   D-USR-2  retry sur erreur transitoire seulement — l'idempotence serveur est
            confirmee excellente (pattern no-op detection), donc rejouer est sur.
   D-USR-5  pagination cappee a 100 — le serveur accepte limit=9999999999 (H20).
@@ -31,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+import weakref
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,8 +45,51 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 
-#: D-USR-1 — plafond de concurrence. Au-dela, degradation silencieuse.
-MAX_CONCURRENCE: Final = 25
+#: `D-USR-1` — plafond de concurrence. Au-dela, degradation SILENCIEUSE, sans
+#: `429` (`H14`/`H15`, mesure du 08/08 : le domaine sûr est 20 a 30 workers).
+#:
+#: **Valeur corrigee le 09/08 : 25 -> 20.** Deux raisons, et la seconde est la
+#: vraie.
+#:
+#: 1. On prend la BORNE BASSE du domaine mesure. Un service qui repond `429` se
+#:    laisse piloter ; un service qui degrade sans le dire transforme la
+#:    surcharge en corruption — sur des services sans `DELETE`. Quand la panne
+#:    est muette, on ne s'approche pas du bord pour voir ou il est.
+#:
+#: 2. **Le plafond n'etait pas global.** Chaque client construisait SON propre
+#:    semaphore : neuf clients x 25 = jusqu'a **225 requetes simultanees**,
+#:    quand la mesure en donne 30 pour maximum. Le plafond existait dans le code
+#:    et n'existait pas dans les faits. D'ou `semaphore_partage()` ci-dessous.
+MAX_CONCURRENCE: Final = 20
+
+#: Le semaphore est partage par TOUS les clients d'une meme boucle, et cree
+#: paresseusement : un semaphore construit hors boucle, ou sur une boucle morte,
+#: leve `RuntimeError` a l'acquisition.
+#:
+#: **`WeakKeyDictionary`, pas `dict[int, ...]` indexe par `id(boucle)`.** CPython
+#: reutilise les adresses : une boucle fermee puis une nouvelle creee peuvent
+#: partager le meme `id`, et la seconde heriterait alors du semaphore de la
+#: premiere — a moitie epuise, sans que rien ne le signale. La reference faible
+#: fait disparaitre l'entree avec la boucle.
+_SEMAPHORES: Final[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def semaphore_partage() -> asyncio.Semaphore:
+    """Le plafond de concurrence COMMUN aux neuf clients.
+
+    Un plafond par client ne plafonne rien : ce sont les services FinZuu qui
+    degradent, pas chaque route prise isolement. La contrainte est globale,
+    le garde-fou doit l'etre aussi.
+    """
+    boucle = asyncio.get_running_loop()
+    semaphore = _SEMAPHORES.get(boucle)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(MAX_CONCURRENCE)
+        _SEMAPHORES[boucle] = semaphore
+    return semaphore
+
 
 #: D-USR-5 — le serveur ne borne pas `limit`, le client s'en charge.
 LIMITE_PAGE_MAX: Final = 100
@@ -178,12 +224,18 @@ class ClientFinZuu:
         base_url: str,
         *,
         journal: JournalRequetes | None = None,
+        #: Injectable pour les tests. En production il reste `None` et le
+        #: semaphore PARTAGE s'applique — c'est le seul plafond qui plafonne.
         semaphore: asyncio.Semaphore | None = None,
     ) -> None:
         self.nom_service = nom_service
         self.base_url = base_url.rstrip("/")
         self._journal = journal or JournalRequetes()
-        self._semaphore = semaphore or asyncio.Semaphore(MAX_CONCURRENCE)
+        # `D-USR-1` — semaphore PARTAGE, jamais un par client. Un plafond de 20
+        # applique neuf fois n'est pas un plafond de 20 : c'est 180. Il est
+        # resolu a l'usage, pas ici : `__init__` n'est pas toujours appele
+        # depuis une boucle en cours d'execution.
+        self._semaphore = semaphore
         self._client = httpx.AsyncClient(
             timeout=settings.http_timeout_seconds,
             http2=True,
@@ -309,7 +361,7 @@ class ClientFinZuu:
             request_id = str(uuid.uuid4())
             entetes = {"Authorization": f"Bearer {token}", "X-Request-Id": request_id}
             try:
-                async with self._semaphore:
+                async with self._semaphore or semaphore_partage():
                     reponse = await self._client.request(
                         methode, url, params=params_bornes, json=json_body, headers=entetes
                     )

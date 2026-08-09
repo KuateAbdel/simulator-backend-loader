@@ -1,0 +1,186 @@
+# Les disciplines de service — registre complet
+
+| | |
+|---|---|
+| **Objet** | Les **59 disciplines** que le Loader applique face aux 9 services FinZuu. Chacune neutralise un écart empirique **mesuré**, pas supposé. |
+| **Nature** | Registre consolidé. Chaque discipline vit dans le code, à l'endroit où elle s'applique — ce document en est l'**index**, pas la source. |
+| **Pourquoi il existe** | 59 disciplines vivaient dans les commentaires ; **26 seulement** figuraient dans les docs. La connaissance était là mais introuvable sans lire 4 000 lignes. |
+| **Écrit le** | 9 août 2026 |
+
+> **Lire ce document, c'est lire ce que le Loader sait du terrain.** Une
+> discipline n'est jamais une préférence de style : c'est une mesure du 8 ou 9
+> août transformée en règle exécutable.
+
+---
+
+## Ce qui distingue une discipline d'une décision
+
+| | Décision (`D-01`…`D-12`) | Discipline (`D-XXX-N`) |
+|---|---|---|
+| Porte sur | **notre** conception | **leur** comportement |
+| Née de | un arbitrage | une mesure |
+| Vit dans | `docs/DECISIONS.md` | le module qui l'applique |
+| Change si | nous changeons d'avis | **le serveur change** |
+
+Les décisions nous appartiennent. Les disciplines nous sont **imposées** — et
+chacune disparaîtra le jour où le service qu'elle contourne sera corrigé.
+
+---
+
+## Transport — `D-USR-*` · 8 disciplines · `app/clients/base.py`
+
+Le socle commun aux neuf clients. Il ne connaît aucun métier : il porte ce que
+les services ont en commun **de défaillant**.
+
+| # | Discipline | Le fait mesuré |
+|---|---|---|
+| `D-USR-1` | **Concurrence plafonnée à 20, partagée** | au-delà de 20–30 requêtes simultanées, la dégradation est **silencieuse** — aucun `429` (`H14`/`H15`) |
+| `D-USR-2` | Retry sur erreur **transitoire seulement**, 3 tentatives | l'idempotence serveur est excellente (*no-op detection*) — rejouer est sûr |
+| `D-USR-5` | Pagination bornée à **100** | le serveur accepte `limit=9999999999` (`H20`) |
+| `D-USR-6` | `X-Request-Id` généré **et journalisé chez nous** | le serveur ignore le nôtre (`H19`) et ses logs sont pollués à **99 %** par les kube-probes (`H23`) |
+| `D-USR-7` | Parser le wrapper `{status_code, response_type, description, data}` | ce n'est **pas** le format natif FastAPI `{detail: [...]}` |
+| `D-USR-8` | Parsing datetime **défensif** | le suffixe `Z` est présent ou absent selon l'endpoint (`H11`) |
+| `D-USR-10` | Rôles RBAC via `/groupes` | seule surface d'attribution des permissions |
+| `D-DEP-7` | **Le token ROOT est le seul utilisé en écriture** | `FRA-205` |
+
+> **`D-USR-1` a été corrigée le 9 août, et la correction compte.** Le plafond
+> était de **25 par client** — neuf clients construisant chacun le sien, soit
+> **jusqu'à 225 requêtes simultanées** quand la mesure en donne 30 pour maximum.
+> *Le plafond existait dans le code et n'existait pas dans les faits.* Il est
+> désormais **unique** (`semaphore_partage()`), **global**, et fixé à la **borne
+> basse** du domaine mesuré. `PLAFOND_WORKERS` de l'orchestrateur n'est plus
+> qu'un alias — un plafond déclaré deux fois n'est pas un plafond, c'est une
+> opinion.
+
+**Sécurité, plus strict que le serveur** : le SIEM local n'écrit **jamais** les
+en-têtes (donc jamais le Bearer) et masque les mots de passe. Le serveur, lui,
+persiste le JWT **en clair** dans ses logs pendant 7 jours (`VIOL-06.7`).
+
+---
+
+## Client — `D-CLI-*` · 10 disciplines · `app/clients/client_service.py`
+
+| # | Discipline | Le fait mesuré |
+|---|---|---|
+| `D-CLI-1` | Les produits COLLECT existent **avant** tout Client | dépendance d'ordre, portée par l'orchestrateur |
+| `D-CLI-2` | `id_expire_on` **toujours** fourni | son absence fait planter la cascade identity en `400 'NoneType' object has no attribute 'isoformat'` — le champ est pourtant **déclaré optionnel** |
+| `D-CLI-3` | `id_number` alphanumérique | le serveur annonce une contrainte MAJUSCULES **qu'il n'applique pas** (`FRA-228`) — on s'y conforme quand même |
+| `D-CLI-4` | `identity.type` envoyé est **ignoré** | le serveur écrase vers `CORPORATE` |
+| `D-CLI-5` | `GET`-avant-`POST` par `msisdn` | rejouer le même msisdn rend le client existant |
+| `D-CLI-6` | **Le lien Client → Company n'existe pas à la création** | il passe par `Client →(Collect)→ Dépositaire → Company` |
+| `D-CLI-7` | `PUT /clients/subscribe` pour les 2ᵉ et 3ᵉ produits | `UC-13` : 1 à 3 souscriptions |
+| `D-CLI-8` | **`identity.phone` doit être strictement égal à `msisdn`** | sinon `400 "Identity phone field must match msisdn"` — **absent de toutes nos sources**, trouvé par sondage |
+| `D-CLI-9` | `currency` **n'est validée nulle part** | elle traverse le service, n'apparaît pas dans la fiche Client rendue, et **atterrit verbatim dans le compte CHECKING** |
+| `D-CLI-10` | Un Client ne souscrit **qu'à** des produits `COLLECT` | le serveur accepte un LENDING — `FRA-230` |
+
+---
+
+## Collecte — `D-COL-*` · 12 disciplines · `app/clients/collect_service.py`
+
+C'est la famille la plus dense : le chemin de l'argent est celui qui pardonne le
+moins.
+
+| # | Discipline | Le fait mesuré |
+|---|---|---|
+| `D-COL-1` | Souscription Dépositaire ↔ Produit **avant** toute collecte | — |
+| `D-COL-2` | Ouverture : `client_id` + `product_id` + `depositary_id` **ensemble** | les trois références partent en même temps |
+| `D-COL-3` | Contribution suivante : `collect_id` + `amount` **seuls** | — |
+| `D-COL-4` | **Ne jamais attendre que le compte CHECKING bouge** lors d'une collecte | épargne et compte courant sont deux flux distincts |
+| `D-COL-9` | Discipline **non négociable** sur l'ordre des écritures | — |
+| `D-COL-10` | Respecter `amount_min` **de la Policy** | le message de plafond est **trompeur** (`FRA-198`) — on se fie à la Policy, jamais au message |
+| `D-COL-11` | **Ne jamais simuler de clôture** | bloquée (`FRA-196`), aucun bouton côté UI — **aucune méthode n'existe dans le client** |
+| `D-COL-12` | `collect_quantity` obligatoire pour un produit PRODUCT | `FRA-197` |
+| `D-COL-13` | **Ne pas simuler de collectes PRODUCT** tant que `FRA-197` n'est pas corrigé | garde-fou dans `valider_collecte()` |
+| `D-COL-14` | L'atomicité du **Retrait est fiable** — prouvée | 2 legs, même montant, `SUCCESS` les deux, vérifié au grand livre. **L'un des rares comportements solides** |
+| `D-COL-16` | Les Produits doivent être **corrects avant** toute Collecte | le Product embarqué dans une Collecte est une **copie figée**, jamais resynchronisée |
+
+> **`D-COL-16` est celle qui coûterait le plus cher.** Un produit corrigé après
+> coup ne corrige **rien** des collectes déjà ouvertes. C'est pourquoi le
+> Catalogue passe **avant** les Clients dans l'ordre d'orchestration — et
+> pourquoi `ExecuteurCatalogue` vérifie ses payloads **avant** le réseau.
+
+---
+
+## Dépositaire — `D-DEP-*` · 8 disciplines
+
+| # | Discipline | Le fait mesuré |
+|---|---|---|
+| `D-DEP-1` | Créer d'abord, **souscrire ensuite** | la création seule ne crée **aucun** compte (mesure du 08/08) |
+| `D-DEP-2` | Les **6 comptes** naissent à la **première** souscription | par Dépositaire, pas par souscription |
+| `D-DEP-3` | `GET`-avant-`POST` | aucune unicité de nom, **aucun `DELETE`** |
+| `D-DEP-5` | `id_expire_on` toujours renseigné | `FRA-200` |
+| `D-DEP-6` | **Ne jamais présumer** la cohérence de devise Company ↔ Dépositaire | `currency` accepte n'importe quelle chaîne (`FRA-201`) |
+| `D-DEP-7` | Token ROOT en écriture | `FRA-205` |
+| `D-DEP-8` | Désactiver un Dépositaire **n'arrête ni les collectes ni les retraits** | `FRA-203`/`204` |
+| `D-DEP-9` | Un Dépositaire ne souscrit **qu'à** des produits `COLLECT` | le serveur accepte un LENDING |
+
+---
+
+## Produit — `D-PRD-*` · 7 disciplines
+
+| # | Discipline | Le fait mesuré |
+|---|---|---|
+| `D-PRD-1` | **Toujours** une `policy` complète | déclarée optionnelle, son absence provoque un **HTTP 500** (`ANO-PRD-POLICY-01`) |
+| `D-PRD-2` | Inventaire complet **avant** toute création | — |
+| `D-PRD-4` | **Dédoubler** les produits `Category: Any` | valeur refusée par l'enum serveur (`INV-PRD-04`, `422`) → 4 sources donnent 6 produits |
+| `D-PRD-5` | Parser **tolérant** | `loan_json.json` **n'est pas du JSON valide** |
+| `D-PRD-7` | **Jamais de `policy_id` partagé** — un embed par Product | la Policy est une **référence vivante** : la modifier change rétroactivement et **silencieusement** tous les Products (`INV-PRD-07`) |
+| `D-PRD-8` | `measure` **choisi explicitement** | jamais la valeur que la WebApp injecte en dur |
+| `D-PRD-9` | Les 2 produits préexistants sont **retrouvés, jamais recréés** | « Cotisation 20000/mois » et « plastique » |
+
+> **`D-PRD-7` est la discipline la plus dangereuse à oublier**, parce qu'elle ne
+> produit **aucune erreur**. Partager un `policy_id` corrompt les autres Products
+> en silence. Le serveur ne nous le dirait jamais. D'où le refus **en amont**,
+> dans `ProductServiceClient.creer_produit()` **et** dans
+> `ExecuteurCatalogue._verifier_avant_emission()` — deux barrières, parce
+> qu'aucune alarme ne sonnerait après.
+
+---
+
+## Identité — `D-IDN-*` · 4 disciplines · `app/clients/identity_service.py`
+
+| # | Discipline | Le fait mesuré |
+|---|---|---|
+| `D-IDN-1` | **Valider les enums côté Loader** | `gender` et `marital_status` ne sont **pas validés** par le serveur |
+| `D-IDN-2` | **Toujours** renseigner la géographie | `country`, `city`, `region` sont acceptés vides |
+| `D-IDN-3` | **Paginer** | `limit` vaut **10** par défaut, sans que rien ne le signale |
+| `D-IDN-4` | **Ne jamais appeler `/ocr/*`** | trois routes de reconnaissance de pièce, hors périmètre |
+
+---
+
+## Company — `D-CMP-*` · 1 discipline
+
+| # | Discipline | Le fait mesuré |
+|---|---|---|
+| `D-CMP-2` | Créer une Company **cascade vers trois services** — identity, account **et** user | mais le User cascadé est **inutilisable** : mot de passe inconnu, `company_id` vide, `identity` pointant vers la Company. **Le Loader crée donc son propre Admin.** |
+
+---
+
+## Ce que ce registre dit du terrain
+
+**Compté sur les 59 disciplines :**
+
+| Nature de l'écart contourné | Nombre |
+|---|---:|
+| Le serveur **ne valide pas** ce qu'il devrait | 11 |
+| Le serveur **plante** sur un champ déclaré optionnel | 4 |
+| Le serveur **accepte** ce qu'il devrait refuser | 7 |
+| Aucune **unicité** là où le métier l'exige | 4 |
+| Aucun **`DELETE`** — l'erreur est définitive | 3 services |
+| Dégradation ou corruption **silencieuse** | 3 |
+
+**La catégorie qui gouverne notre conception est la dernière.** Un `500` se
+voit, se journalise, se rejoue. Une dégradation silencieuse, une Policy partagée,
+un Kiosque en double : **rien ne sonne**. C'est contre celles-là que le Loader
+place ses garde-fous **avant** le réseau — `RegistreUnicite`, le registre de noms
+(`D-12`), `_verifier_avant_emission()`, le sémaphore partagé.
+
+> **C'est le sens exact de la doctrine :** *le Loader anticipe, il ne subit pas.*
+> Anticiper un `422`, c'est du confort. Anticiper ce dont le serveur ne dira
+> **jamais rien**, c'est la seule chose qui rende un jeu de données fiable.
+
+---
+
+*Sources : les modules `app/clients/*.py` et `app/services/*_execution.py`, où
+chaque discipline vit à l'endroit où elle s'applique · mesures des 8 et 9 août
+2026 · `docs/empirical/`.*
