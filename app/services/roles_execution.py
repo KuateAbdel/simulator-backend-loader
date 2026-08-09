@@ -192,9 +192,19 @@ class RapportRoles:
 
     @property
     def statut(self) -> RunStatus:
+        """`PARTIAL` est un etat terminal LEGITIME (UC-07, cas alternatif).
+
+        Nuance qui compte : **reutiliser un groupe existant n'est pas un
+        accomplissement de CE run**. Si tous les roles ont echoue et qu'aucun
+        n'a ete cree, le probleme est systemique — `FAILED`, meme si
+        `CUSTOMER` a bien ete reconnu au passage.
+
+        En revanche, un second run ou **tout** est reutilise et **rien** n'est
+        en echec est `COMPLETED` : c'est l'idempotence qui fonctionne.
+        """
         if not self.echoues:
             return RunStatus.COMPLETED
-        if not self.crees and not self.reutilises:
+        if not self.crees:
             return RunStatus.FAILED
         return RunStatus.PARTIAL
 
