@@ -33,6 +33,7 @@ from app.clients.user_service import UserServiceClient
 from app.core.cdc import FENETRE_JOURS
 from app.core.config import settings
 from app.core.configuration import ConfigurationExecution
+from app.core.database import close, connect, ensure_indexes
 from app.models.enums import RunMode
 from app.repositories import (
     AuditTrailRepository,
@@ -54,6 +55,17 @@ LOAN_JSON = Path("docs/reference/loan_json.json")
 
 
 async def executer(mode: RunMode, etapes: set[Etape] | None = None) -> int:
+    # DEFAUT TROUVE LE 09/08 PAR LA PREMIERE ECRITURE REELLE : ce cablage
+    # n'ouvrait jamais MongoDB. Le `DRY_RUN` passait — il n'ecrit rien chez
+    # nous — et le `REAL` mourait a la premiere ecriture locale, APRES avoir
+    # deja pousse les entites vers le serveur. Quatre comptes Lender avaient
+    # ete crees sans que le registre les enregistre : exactement l'ecart que le
+    # journal d'intention existe pour rendre visible.
+    #
+    # Un essai a blanc qui n'exerce pas les memes dependances que le reel n'est
+    # pas un essai a blanc.
+    connect()
+    await ensure_indexes()
     run_id = uuid4()
     referentiel = charger_referentiel(CLASSEUR)
     generateur = Generateur(run_id)
@@ -156,6 +168,7 @@ async def executer(mode: RunMode, etapes: set[Etape] | None = None) -> int:
     finally:
         for client in (users, companies, comptes, produits_client, depositaires, identites):
             await client.fermer()
+        close()
 
     print(rapport.resume())
     return 0 if rapport.statut.value != "FAILED" else 1
