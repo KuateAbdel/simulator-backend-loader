@@ -30,10 +30,51 @@ import openpyxl
 
 
 @dataclass(frozen=True, slots=True)
+class Pays:
+    """Racine du referentiel — le niveau que nous ne chargions pas.
+
+    Le domaine s'enracine sur `Country`, jamais sur Client : c'est la
+    hierarchie du CDC §6. Un pays porte sa devise, son indicatif, sa TVA et son
+    fuseau ; tout ce qui pend dessous doit s'y accorder.
+
+    **config-service ne connait rien de tout cela** — il expose `Country` avec
+    un simple tableau `cities[]` en texte libre. Ce referentiel est donc le
+    notre, et il est le seul endroit ou la coherence territoriale existe.
+
+    Champs que nous ignorions et qui servent :
+
+      `dial_code`         l'indicatif. Je le codais en dur dans mes sondes
+                          (`+237` pour les 4 pays) — il est ici depuis le debut.
+      `devise_iso`        le lien direct pays -> devise, sans passer par
+                          `countries_using`.
+      `tva_percent`       19,25 % au Cameroun, 18 % en zone UEMOA. La Policy
+                          d'un produit Collecte porte un champ `vat` : c'est
+                          **ici** qu'il doit venir le chercher, pas d'une
+                          constante inventee.
+      `regulateur_finance` COBAC en zone CEMAC, BCEAO en UEMOA — c'est le
+                          regulateur qui fixe le plafond d'usure d'`EF-35`.
+    """
+
+    iso2: str
+    nom_fr: str
+    nom_en: str
+    capitale: str
+    dial_code: str
+    devise_iso: str
+    tva_percent: float
+    timezone: str
+    region_africa: str
+    regulateur_telco: str
+    regulateur_finance: str
+
+
+@dataclass(frozen=True, slots=True)
 class Region:
     region_id: str
     country_iso2: str
     name: str
+    capitale: str
+    population: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,13 +91,24 @@ class City:
     latitude: float | None
     longitude: float | None
     population: int | None
+    est_capitale_pays: bool
+    est_capitale_region: bool
 
 
 @dataclass(frozen=True, slots=True)
 class District:
+    """`zone_type` distingue residentiel, commercial, industriel...
+
+    Un Kiosque de quartier residentiel et un Kiosque de quartier commercial
+    n'ont pas le meme profil d'activite. Le referentiel le sait ; nous
+    l'ignorions.
+    """
+
     district_id: str
     city_id: str
     name: str
+    zone_type: str
+    population: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +281,7 @@ class RapportGeographique:
             f"Quartiers : {self.nb_quartiers}",
             f"Telcos    : {self.nb_telcos}",
             f"Devises   : {self.nb_devises}",
+            "Chaine    : pays -> devise -> telco -> region -> ville -> quartier",
         ]
         if self.orphelins:
             lignes.append(f"Exclus pour rattachement invalide : {len(self.orphelins)}")
@@ -247,6 +300,7 @@ class ReferentielGeo:
         rapport: RapportGeographique,
         telcos: dict[str, Telco] | None = None,
         devises: dict[str, Devise] | None = None,
+        pays_index: dict[str, Pays] | None = None,
     ) -> None:
         self.regions = regions
         self.villes = villes
@@ -254,6 +308,7 @@ class ReferentielGeo:
         self.rapport = rapport
         self.telcos = telcos or {}
         self.devises = devises or {}
+        self.pays_index = pays_index or {}
 
     # -- Telecoms et monnaie — la coherence que le systeme ne verifie pas ----
 
@@ -321,14 +376,40 @@ class ReferentielGeo:
             raise ValueError(f"aucun operateur telecom pour le pays {pays!r} — EF-27 inapplicable")
         return operateur.composer_msisdn(chiffres, alea), operateur
 
-    def devise_du_pays(self, pays: str) -> Devise | None:
-        """La devise n'est pas un choix : elle est determinee par la zone
-        monetaire du pays. CM -> XAF (CEMAC) · CI, BF, SN -> XOF (UEMOA)."""
-        code = str(pays).strip().upper()
-        for devise in self.devises.values():
-            if code in devise.pays:
-                return devise
-        return None
+    def pays(self, code: str) -> Pays | None:
+        """Fiche pays complete — indicatif, devise, TVA, fuseau, regulateurs."""
+        return self.pays_index.get(str(code).strip().upper())
+
+    def indicatif(self, code: str) -> str:
+        """L'indicatif telephonique, depuis le referentiel et non code en dur."""
+        fiche = self.pays(code)
+        if fiche is None or not fiche.dial_code:
+            raise ValueError(f"aucun indicatif pour le pays {code!r}")
+        return fiche.dial_code
+
+    def tva_du_pays(self, code: str) -> float:
+        """Taux de TVA — 19,25 % au Cameroun, 18 % en zone UEMOA.
+
+        La Policy d'un produit Collecte porte un champ `vat`. Il doit venir
+        d'ici, pas d'une constante inventee.
+        """
+        fiche = self.pays(code)
+        if fiche is None:
+            raise ValueError(f"pays inconnu : {code!r}")
+        return fiche.tva_percent
+
+    def devise_du_pays(self, code: str) -> Devise | None:
+        """La devise n'est pas un choix : elle est **declaree par le pays**.
+
+        Deux chemins existent dans le referentiel — `Countries.currency_iso` et
+        `Currencies.countries_using`. On suit le premier, qui est direct, et le
+        chargement verifie que les deux concordent. Une divergence est
+        journalisee comme orpheline plutot que silencieusement arbitree.
+        """
+        fiche = self.pays(code)
+        if fiche is None:
+            return None
+        return self.devises.get(fiche.devise_iso)
 
     # -- Acces indexes ------------------------------------------------------
 
@@ -403,11 +484,27 @@ def charger_referentiel(chemin: Path) -> ReferentielGeo:
     classeur = openpyxl.load_workbook(chemin, read_only=True, data_only=True)
     rapport = RapportGeographique()
 
-    pays_connus = {
-        str(ligne["country_iso2"]).strip().upper()
-        for ligne in _lignes(classeur, "Countries")
-        if ligne.get("country_iso2")
-    }
+    # Pays — la racine. Douze colonnes, dont dial_code, currency_iso et
+    # tva_percent, que nous ignorions entierement.
+    pays_index: dict[str, Pays] = {}
+    for ligne in _lignes(classeur, "Countries"):
+        code = str(ligne.get("country_iso2") or "").strip().upper()
+        if not code:
+            continue
+        pays_index[code] = Pays(
+            iso2=code,
+            nom_fr=str(ligne.get("country_name_fr") or ""),
+            nom_en=str(ligne.get("country_name_en") or ""),
+            capitale=str(ligne.get("capital") or ""),
+            dial_code=str(ligne.get("dial_code") or "").strip(),
+            devise_iso=str(ligne.get("currency_iso") or "").strip().upper(),
+            tva_percent=_flottant(ligne.get("tva_percent")),
+            timezone=str(ligne.get("timezone") or ""),
+            region_africa=str(ligne.get("region_africa") or ""),
+            regulateur_telco=str(ligne.get("regulator_telco") or ""),
+            regulateur_finance=str(ligne.get("regulator_finance") or ""),
+        )
+    pays_connus = set(pays_index)
     rapport.pays = sorted(pays_connus)
 
     regions: dict[str, Region] = {}
@@ -419,7 +516,13 @@ def charger_referentiel(chemin: Path) -> ReferentielGeo:
         if pays not in pays_connus:
             rapport.orphelins.append(f"Region {region_id} : pays {pays!r} inconnu")
             continue
-        regions[region_id] = Region(region_id, pays, str(ligne.get("region_name") or ""))
+        regions[region_id] = Region(
+            region_id=region_id,
+            country_iso2=pays,
+            name=str(ligne.get("region_name") or ""),
+            capitale=str(ligne.get("region_capital") or ""),
+            population=_entier_ou_none(ligne.get("population_est")),
+        )
 
     villes: dict[str, City] = {}
     for ligne in _lignes(classeur, "Cities"):
@@ -439,6 +542,8 @@ def charger_referentiel(chemin: Path) -> ReferentielGeo:
             latitude=_flottant_ou_none(ligne.get("latitude")),
             longitude=_flottant_ou_none(ligne.get("longitude")),
             population=_entier_ou_none(ligne.get("population_est")),
+            est_capitale_pays=bool(ligne.get("is_capital_country")),
+            est_capitale_region=bool(ligne.get("is_capital_region")),
         )
 
     quartiers: dict[str, District] = {}
@@ -451,7 +556,11 @@ def charger_referentiel(chemin: Path) -> ReferentielGeo:
             rapport.orphelins.append(f"Quartier {district_id} : ville {city_id!r} inconnue")
             continue
         quartiers[district_id] = District(
-            district_id, city_id, str(ligne.get("district_name") or "")
+            district_id=district_id,
+            city_id=city_id,
+            name=str(ligne.get("district_name") or ""),
+            zone_type=str(ligne.get("zone_type") or "").strip().lower(),
+            population=_entier_ou_none(ligne.get("population_est")),
         )
 
     # Telcos — 12 operateurs avec leur regex de numerotation (EF-27) et leur
@@ -510,18 +619,31 @@ def charger_referentiel(chemin: Path) -> ReferentielGeo:
     # EF-02 etendu : un pays sans operateur ou sans devise rend impossible la
     # generation d'un client credible. On le signale plutot que de le decouvrir
     # au 500e onboarding.
-    for pays in sorted(pays_connus):
-        if not any(t.country_iso2 == pays for t in telcos.values()):
-            rapport.orphelins.append(f"Pays {pays} : aucun operateur telecom — EF-27 inapplicable")
-        if not any(pays in d.pays for d in devises.values()):
-            rapport.orphelins.append(f"Pays {pays} : aucune devise rattachee")
+    for code in sorted(pays_connus):
+        fiche = pays_index[code]
+        if not any(t.country_iso2 == code for t in telcos.values()):
+            rapport.orphelins.append(f"Pays {code} : aucun operateur telecom — EF-27 inapplicable")
+        if not fiche.dial_code:
+            rapport.orphelins.append(f"Pays {code} : aucun indicatif telephonique")
+        if fiche.devise_iso not in devises:
+            rapport.orphelins.append(
+                f"Pays {code} : devise declaree {fiche.devise_iso!r} absente de la feuille "
+                "Currencies — la chaine pays -> devise est rompue"
+            )
+        elif code not in devises[fiche.devise_iso].pays:
+            rapport.orphelins.append(
+                f"Pays {code} : declare {fiche.devise_iso}, mais cette devise ne le liste pas "
+                "dans countries_using — les deux feuilles se contredisent"
+            )
+        if not any(r.country_iso2 == code for r in regions.values()):
+            rapport.orphelins.append(f"Pays {code} : aucune region")
 
     rapport.nb_regions = len(regions)
     rapport.nb_villes = len(villes)
     rapport.nb_quartiers = len(quartiers)
     rapport.nb_telcos = len(telcos)
     rapport.nb_devises = len(devises)
-    return ReferentielGeo(regions, villes, quartiers, rapport, telcos, devises)
+    return ReferentielGeo(regions, villes, quartiers, rapport, telcos, devises, pays_index)
 
 
 def _lignes(classeur: Any, feuille: str) -> list[dict[str, Any]]:

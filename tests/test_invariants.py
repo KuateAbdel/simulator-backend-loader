@@ -427,3 +427,59 @@ class TestRegistreUnicite:
             )
         assert registre.effectif == 2000
         assert "2000 msisdn" in registre.resume()
+
+
+class TestChaineReferentielle:
+    """La chaine complete : pays -> devise -> telco -> region -> ville -> quartier.
+
+    config-service ne connait rien de tout cela — il expose `Country` avec un
+    simple tableau `cities[]` en texte libre. Ce referentiel est le NOTRE, et
+    il est le seul endroit ou la coherence territoriale existe.
+    """
+
+    def test_aucun_orphelin_dans_le_referentiel(self, referentiel: object) -> None:
+        """EF-02 etendu : chaque pays a un indicatif, une devise coherente sur
+        les DEUX feuilles, au moins un operateur et au moins une region."""
+        assert referentiel.rapport.orphelins == []  # type: ignore[attr-defined]
+
+    @pytest.mark.parametrize(
+        "code,indicatif,devise,tva",
+        [("CM", "237", "XAF", 19.25), ("CI", "225", "XOF", 18.0), ("SN", "221", "XOF", 18.0)],
+    )
+    def test_la_fiche_pays_porte_tout(
+        self, referentiel: object, code: str, indicatif: str, devise: str, tva: float
+    ) -> None:
+        """L'indicatif que je codais en dur dans mes sondes est ici depuis le
+        debut. La TVA aussi — et la Policy d'un produit Collecte en a besoin."""
+        assert referentiel.indicatif(code) == indicatif  # type: ignore[attr-defined]
+        assert referentiel.devise_du_pays(code).code == devise  # type: ignore[attr-defined]
+        assert referentiel.tva_du_pays(code) == tva  # type: ignore[attr-defined]
+
+    def test_les_deux_feuilles_de_devise_concordent(self, referentiel: object) -> None:
+        """`Countries.currency_iso` et `Currencies.countries_using` disent la
+        meme chose. Une divergence serait journalisee en orpheline."""
+        for code in ("CM", "CI", "BF", "SN"):
+            fiche = referentiel.pays(code)  # type: ignore[attr-defined]
+            devise = referentiel.devises[fiche.devise_iso]  # type: ignore[attr-defined]
+            assert code in devise.pays
+
+    def test_chaque_niveau_est_rattache_au_precedent(self, referentiel: object) -> None:
+        for region in referentiel.regions.values():  # type: ignore[attr-defined]
+            assert referentiel.pays(region.country_iso2) is not None  # type: ignore[attr-defined]
+        for ville in referentiel.villes.values():  # type: ignore[attr-defined]
+            assert ville.region_id in referentiel.regions  # type: ignore[attr-defined]
+        for quartier in referentiel.quartiers.values():  # type: ignore[attr-defined]
+            assert quartier.city_id in referentiel.villes  # type: ignore[attr-defined]
+
+    def test_les_capitales_sont_marquees(self, referentiel: object) -> None:
+        """`is_capital_country` etait charge nulle part. Quatre pays, quatre
+        capitales."""
+        capitales = {v.name for v in referentiel.villes.values() if v.est_capitale_pays}  # type: ignore[attr-defined]
+        assert capitales == {"Yaounde", "Yamoussoukro", "Ouagadougou", "Dakar"}
+
+    def test_les_quartiers_portent_leur_type_de_zone(self, referentiel: object) -> None:
+        """Un Kiosque de quartier residentiel et un Kiosque de quartier
+        commercial n'ont pas le meme profil d'activite."""
+        types = {q.zone_type for q in referentiel.quartiers.values()}  # type: ignore[attr-defined]
+        assert types == {"residential", "commercial", "populaire", "mixte", "peripherique"}
+        assert all(q.zone_type for q in referentiel.quartiers.values())  # type: ignore[attr-defined]
