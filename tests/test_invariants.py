@@ -11,6 +11,7 @@ depositary-service n'exposent aucun `DELETE`.
 
 from __future__ import annotations
 
+import random
 from datetime import date
 from pathlib import Path
 
@@ -237,6 +238,11 @@ class TestCoherenceMatrimoniale:
         assert "credibilite" in str(erreur.value)
 
 
+def graine(valeur: int) -> random.Random:
+    """Generateur seme — reproductibilite ENF-15, jamais de cryptographie."""
+    return random.Random(valeur)  # noqa: S311
+
+
 @pytest.fixture(scope="module")
 def referentiel() -> object:
     """Le referentiel reel — 51 regions, 50 villes, 82 quartiers, 12 telcos,
@@ -298,3 +304,69 @@ class TestAucunChampVide:
             {"city": "Douala", "region": "Littoral", "country": "CM", "latitude": 4.05},
             ("city", "region", "country", "latitude"),
         )
+
+
+class TestCompositionMsisdn:
+    """La doctrine du Loader appliquee a un cinquieme champ.
+
+    Faker donne huit chiffres — le corps du numero — mais jamais le prefixe
+    operateur, implicite pour un habitant du pays : au Cameroun tout mobile
+    commence par `6`, en Cote d'Ivoire par `01`/`05`/`07`, au Burkina par `0`.
+    Sans lui, AUCUN numero de Faker n'est attribuable a un reseau reel
+    (mesure du 09/08, 18 tirages sur 3 pays).
+
+    Le Loader ajoute le prefixe. La matiere reste celle de Faker.
+    """
+
+    def test_les_douze_plans_sont_exploitables(self, referentiel: object) -> None:
+        """Cameroun en plages `[0-4]`, Burkina en enumerations `[56]` : les
+        deux formes doivent etre couvertes."""
+        alea = graine(1)
+        for pays in ("CM", "CI", "BF", "SN"):
+            for telco in referentiel.telcos_du_pays(pays):  # type: ignore[attr-defined]
+                numero = telco.composer_msisdn("12345678", alea)
+                assert telco.accepte(numero), f"{telco.telco_id} : '{numero}' non conforme"
+
+    @pytest.mark.parametrize(
+        "pays,chiffres",
+        [("CM", "45126951"), ("CM", "08770918"), ("CI", "17839505"), ("BF", "03828183")],
+    )
+    def test_les_vrais_chiffres_faker_donnent_un_numero_valide(
+        self, referentiel: object, pays: str, chiffres: str
+    ) -> None:
+        """Ces quatre valeurs viennent de tirages Faker reels du 09/08. Aucune
+        n'etait attribuable telle quelle."""
+        numero, operateur = referentiel.composer_msisdn(pays, chiffres, graine(20260809))  # type: ignore[attr-defined]
+        assert referentiel.operateur_du_msisdn(numero, pays) is not None  # type: ignore[attr-defined]
+        assert operateur.country_iso2 == pays
+
+    def test_le_corps_du_numero_reste_celui_de_faker(self, referentiel: object) -> None:
+        """Seul le prefixe est ajoute : la tracabilite vers le client Faker est
+        preservee.
+
+        Le corps est consomme dans l'ordre et **tronque a la place disponible**
+        dans le plan. Le Senegal n'offre que sept chiffres apres le prefixe
+        `77`, la ou Faker en fournit huit : le huitieme est perdu, et c'est
+        normal — le plan de numerotation prime sur la matiere.
+        """
+        numero, _ = referentiel.composer_msisdn("SN", "12345678", graine(3))  # type: ignore[attr-defined]
+        assert numero.endswith("1234567")
+        assert len(numero) == len("221") + 2 + 7
+
+    def test_determinisme_enf15(self, referentiel: object) -> None:
+        """Deux executions de meme graine produisent le meme numero."""
+        premier = [referentiel.composer_msisdn("CM", "53263354", graine(7))[0] for _ in range(3)]  # type: ignore[attr-defined]
+        second = [referentiel.composer_msisdn("CM", "53263354", graine(7))[0] for _ in range(3)]  # type: ignore[attr-defined]
+        assert premier == second
+
+    def test_la_repartition_suit_les_parts_de_marche_reelles(self, referentiel: object) -> None:
+        """Repartir 2000 clients uniformement entre trois operateurs ne
+        ressemblerait a aucun marche africain."""
+        alea = graine(42)
+        comptes: dict[str, int] = {}
+        for i in range(2000):
+            _, operateur = referentiel.composer_msisdn("SN", f"{i:08d}", alea)  # type: ignore[attr-defined]
+            comptes[operateur.short_name] = comptes.get(operateur.short_name, 0) + 1
+        # Orange Senegal pese 55 % du marche reel.
+        assert comptes["Orange SN"] / 2000 > 0.50
+        assert comptes["Orange SN"] > comptes["Free SN"] > comptes["Expresso SN"]

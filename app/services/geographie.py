@@ -20,6 +20,7 @@ lignes dans le fichier source.
 
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -82,6 +83,111 @@ class Telco:
 
     def accepte(self, msisdn: str) -> bool:
         return re.match(self.regex_msisdn, str(msisdn).strip()) is not None
+
+    def composer_msisdn(self, chiffres: str, alea: random.Random) -> str:
+        """Compose un MSISDN **conforme au plan de numerotation reel**, en
+        utilisant `chiffres` comme matiere.
+
+        **Pourquoi cette fonction existe.** Faker fournit huit chiffres — le
+        corps du numero — mais **jamais le prefixe operateur**, qui est
+        implicite pour un habitant du pays. Au Cameroun, tout mobile commence
+        par `6` ; en Cote d'Ivoire par `01`, `05` ou `07` ; au Burkina par `0`.
+        Personne ne le dit, parce que personne ne l'ignore sur place.
+
+        Mesure du 09/08 : sans ce prefixe, **aucun** numero de Faker n'est
+        attribuable a un reseau reel. Avec lui, la conformite est totale.
+
+        Le corps vient de Faker, donc **deux executions sur le meme client
+        produisent le meme numero** — la tracabilite est preservee (`ENF-15`).
+        Seul le choix de la variante, quand le plan en offre plusieurs, est
+        tire par `alea`, lui-meme derive du `run_id`.
+        """
+        corps = re.sub(r"\D", "", str(chiffres))
+        variantes = _variantes_du_motif(self.regex_msisdn)
+        if not variantes:
+            raise ValueError(f"{self.telco_id} : motif de numerotation inexploitable")
+
+        prefixe_pays, segments = alea.choice(variantes)
+        numero = prefixe_pays
+        curseur = 0
+        for segment in segments:
+            if isinstance(segment, str):
+                numero += segment
+                continue
+            autorises, taille = segment
+            for _ in range(taille):
+                source = int(corps[curseur % len(corps)]) if corps else alea.randint(0, 9)
+                if autorises is None:
+                    numero += str(source)
+                else:
+                    # Classe restreinte : on ramene le chiffre de Faker dans
+                    # l'ensemble autorise plutot que de le remplacer. La
+                    # matiere reste la sienne, seule la contrainte est notre.
+                    numero += str(autorises[source % len(autorises)])
+                curseur += 1
+
+        if not self.accepte(numero):  # pragma: no cover — garde-fou
+            raise ValueError(f"{self.telco_id} : numero compose '{numero}' non conforme")
+        return numero
+
+
+#: Un segment de motif : soit des chiffres litteraux, soit un couple
+#: (chiffres autorises, repetitions) — `None` autorisant les dix chiffres.
+_Segment = str | tuple[tuple[int, ...] | None, int]
+
+
+def _chiffres_de_la_classe(contenu: str) -> tuple[int, ...]:
+    """Developpe le contenu d'une classe `[...]` en chiffres autorises.
+
+    Les 12 motifs du referentiel utilisent **les deux formes** :
+    des plages au Cameroun (`[0-4]`, `[5-9]`) et des enumerations au Burkina
+    (`[56]`, `[12]`, `[678]`). Les deux doivent etre couvertes.
+    """
+    autorises: list[int] = []
+    position = 0
+    while position < len(contenu):
+        if position + 2 < len(contenu) and contenu[position + 1] == "-":
+            autorises.extend(range(int(contenu[position]), int(contenu[position + 2]) + 1))
+            position += 3
+        else:
+            autorises.append(int(contenu[position]))
+            position += 1
+    return tuple(dict.fromkeys(autorises))
+
+
+def _variantes_du_motif(motif: str) -> list[tuple[str, list[_Segment]]]:
+    """Decompose un motif `^<indicatif>(<alt>|<alt>)$` en variantes exploitables.
+
+    La grammaire des 12 motifs du referentiel est volontairement etroite :
+    chiffres litteraux, classes `[...]` (plages **et** enumerations), et
+    `\\d{n}`. On ne cherche pas a couvrir les expressions regulieres en
+    general — seulement celles-ci, et la conformite du resultat est
+    **revalidee contre le motif d'origine** avant d'etre rendue.
+    """
+    entete = re.match(r"^\^(\d+)\((.+)\)\$$", motif)
+    if not entete:
+        return []
+    indicatif, alternatives = entete.group(1), entete.group(2)
+
+    variantes: list[tuple[str, list[_Segment]]] = []
+    for alternative in alternatives.split("|"):
+        segments: list[_Segment] = []
+        position = 0
+        while position < len(alternative):
+            reste = alternative[position:]
+            if classe := re.match(r"^\[([\d\-]+)\]", reste):
+                segments.append((_chiffres_de_la_classe(classe.group(1)), 1))
+                position += classe.end()
+            elif repetition := re.match(r"^\\d\{(\d+)\}", reste):
+                segments.append((None, int(repetition.group(1))))
+                position += repetition.end()
+            elif litteral := re.match(r"^\d+", reste):
+                segments.append(litteral.group(0))
+                position += litteral.end()
+            else:  # pragma: no cover — motif hors grammaire connue
+                return []
+        variantes.append((indicatif, segments))
+    return variantes
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +277,49 @@ class ReferentielGeo:
             if telco.accepte(msisdn):
                 return telco
         return None
+
+    def tirer_telco(self, pays: str, alea: random.Random) -> Telco | None:
+        """Tire un operateur **selon sa part de marche reelle**.
+
+        MTN CM 46 %, Orange CM 43 %, Camtel 3 % — au Senegal, Orange pese
+        55 %. Repartir les 2000 clients uniformement entre trois operateurs
+        produirait un echantillon qui ne ressemble a aucun marche africain, et
+        un bailleur qui connait la zone le verrait au premier graphique.
+
+        Le referentiel porte ces parts depuis le depart ; nous ne les
+        utilisions pas.
+        """
+        operateurs = self.telcos_du_pays(pays)
+        if not operateurs:
+            return None
+        total = sum(t.part_marche for t in operateurs)
+        if total <= 0:
+            return alea.choice(operateurs)
+        tirage = alea.uniform(0, total)
+        cumul = 0.0
+        for operateur in operateurs:
+            cumul += operateur.part_marche
+            if tirage <= cumul:
+                return operateur
+        return operateurs[-1]
+
+    def composer_msisdn(self, pays: str, chiffres: str, alea: random.Random) -> tuple[str, Telco]:
+        """Compose un MSISDN conforme au plan reel du pays, et rend l'operateur.
+
+        **La doctrine du Loader, appliquee a un cinquieme champ.** Faker donne
+        huit chiffres sans le prefixe operateur, qui est implicite pour un
+        habitant du pays — au Cameroun tout mobile commence par `6`, en Cote
+        d'Ivoire par `01`, `05` ou `07`, au Burkina par `0`. Sans lui, aucun
+        numero de Faker n'est attribuable a un reseau reel (mesure du 09/08).
+
+        La matiere reste celle de Faker ; c'est le prefixe, et lui seul, que
+        nous ajoutons. Exactement comme pour les raisons sociales, les dates de
+        naissance, les adresses et les occupations.
+        """
+        operateur = self.tirer_telco(pays, alea)
+        if operateur is None:
+            raise ValueError(f"aucun operateur telecom pour le pays {pays!r} — EF-27 inapplicable")
+        return operateur.composer_msisdn(chiffres, alea), operateur
 
     def devise_du_pays(self, pays: str) -> Devise | None:
         """La devise n'est pas un choix : elle est determinee par la zone
