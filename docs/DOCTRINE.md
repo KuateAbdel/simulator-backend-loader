@@ -249,6 +249,34 @@ Une doctrine se définit autant par ses refus.
 
 ---
 
+## 8 bis. Cinq règles issues de l'analyse config-service (9 août)
+
+Comprendre un service amont défaillant sert à ne pas répéter ses choix. Ces cinq
+règles viennent de `docs/ANALYSE_CONFIG_SERVICE.md`.
+
+1. **Aucune donnée métier dans une chaîne technique.** config-service encode le
+   pays d'un opérateur dans son `phone_regex` — dès qu'un motif est mal formé
+   (`6|333`), l'information **disparaît**. Chez nous, `Telco.country_iso2` est un
+   champ.
+2. **Toute relation métier a son inverse interrogeable.** *« Quels opérateurs au
+   Cameroun ? »* n'a pas de réponse directe côté serveur. **Si une question du
+   métier exige un balayage, le modèle est incomplet.**
+3. **Références, jamais copies.** Leur `embed-at-creation` sans invalidation crée
+   deux sources de vérité qui divergent silencieusement. Seule exception chez
+   nous : `audit_trail`, où figer l'état **est** le but.
+4. **Soft-delete plutôt que suppression** dans tout ce qui tient lieu de
+   référentiel. C'est leur meilleure idée, et nous la prenons.
+5. **Une entité promise doit exister.** Le Document Fonctionnel annonce quatre
+   entités ; `City` n'a jamais été implémentée. Chez nous, `Region`, `City` et
+   `District` sont des entités réelles.
+
+> **Le gain concret de cette analyse** : la règle 2 nous a fait voir un trou dans
+> **notre propre** conception — le rattachement **Client → Kiosque** (`EF-26`)
+> n'est persisté nulle part. Sans index, la question *« quels clients dans ce
+> Kiosque ? »* imposerait un balayage de 2 000 clients. À poser dès l'onboarding.
+
+---
+
 ## 9. Ce que la doctrine produit
 
 À la fin, deux livrables — et le second n'existe que grâce à la doctrine.
