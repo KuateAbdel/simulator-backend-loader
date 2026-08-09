@@ -77,7 +77,7 @@ DELETE.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 from app.clients.base import ClientFinZuu, JournalRequetes, normaliser_id
@@ -89,22 +89,35 @@ from app.clients.contracts import (
 )
 from app.core.config import settings
 
+#: Les seules devises legitimes des 4 pays cibles. Le referentiel config-service
+#: ne peut PAS servir de source de validation : il contient deux entrees
+#: parasites, `cv` et `00` (ANO-CFG-CUR-10 / FRA-222). On valide donc contre
+#: cette liste close, pas contre le serveur.
+DEVISES_AUTORISEES: Final[frozenset[str]] = frozenset({"XAF", "XOF"})
+
+#: UC-13 : « 1 a 3 souscriptions a des produits Collecte ». Le serveur ne borne
+#: RIEN — mesure du 09/08 : 6 produits attaches a un meme client sans broncher.
+#: Le plafond est entierement a notre charge.
+SOUSCRIPTIONS_MAX = 3
+
 
 class OnboardingNonConforme(ValueError):
-    """Le payload violerait un invariant serveur — refuse AVANT le reseau.
+    """Le payload violerait un invariant — refuse AVANT le reseau.
 
-    Les trois cas couverts sont irrattrapables apres coup : client-service
+    Tous les cas couverts sont irrattrapables apres coup : client-service
     n'expose ni DELETE, ni desactivation, et sa cascade cree une Identity et un
     compte que rien ne supprime non plus.
     """
 
 
-def valider_onboarding(msisdn: str, identity: dict[str, Any]) -> dict[str, Any]:
-    """Normalise l'Identity embarquee et refuse ce que le serveur rejetterait.
+def valider_onboarding(
+    msisdn: str, identity: dict[str, Any], currency: str | None = None
+) -> dict[str, Any]:
+    """Normalise l'Identity embarquee et refuse ce qui corromprait la base.
 
     Renvoie une **copie** corrigee — l'appelant garde son dictionnaire intact.
 
-    Les trois barrieres, mesurees le 09/08/2026 :
+    Les quatre barrieres, toutes mesurees le 09/08/2026 :
 
       D-CLI-8  `identity.phone` doit etre STRICTEMENT egal a `msisdn`, sinon
                400 « Identity phone field must match msisdn ». On l'aligne au
@@ -118,6 +131,16 @@ def valider_onboarding(msisdn: str, identity: dict[str, Any]) -> dict[str, Any]:
                une contrainte de MAJUSCULES qu'il n'applique pas (FRA-228) —
                on s'y conforme quand meme, pour rester valide si elle l'est un
                jour.
+      D-CLI-9  **`currency` n'est validee NULLE PART sur ce chemin.** Elle
+               n'apparait meme pas dans la fiche Client rendue : elle traverse
+               le service et atterrit telle quelle dans le compte CHECKING cree
+               en cascade. Mesure du 09/08 : `ZZZ`, `ANY` et la chaine VIDE
+               produisent chacun un compte porteur de cette valeur.
+
+               **C'est l'origine de `ANO-ACC-CUR-08` / `FRA-222`** — le compte
+               client reel portant `currency="ANY"`. La recommandation n°4 de ce
+               ticket demandait d'identifier le chemin d'ecriture fautif : c'est
+               celui-ci. Aucun filet n'existe hors du notre.
     """
     normalisee = dict(identity)
     numero = str(msisdn).strip()
@@ -141,6 +164,18 @@ def valider_onboarding(msisdn: str, identity: dict[str, Any]) -> dict[str, Any]:
             "Loader emet des majuscules par prudence, pas par zele."
         )
     normalisee["id_number"] = piece
+
+    if currency is not None:
+        devise = str(currency).strip().upper()
+        if devise not in DEVISES_AUTORISEES:
+            raise OnboardingNonConforme(
+                f"currency '{devise}' hors des devises des 4 pays cibles "
+                f"({', '.join(sorted(DEVISES_AUTORISEES))}). D-CLI-9 : ce champ n'est valide "
+                "NULLE PART sur ce chemin — il traverse client-service et atterrit tel quel "
+                "dans le compte CHECKING. C'est ainsi qu'un compte reel a fini avec "
+                "currency='ANY' (FRA-222). Le referentiel config-service ne peut pas servir "
+                "de garde-fou : il contient lui-meme les entrees parasites 'cv' et '00'."
+            )
 
     return normalisee
 
@@ -216,7 +251,7 @@ class ClientServiceClient:
         identity-service, ni account-service n'exposent de DELETE.
         """
         msisdn = msisdn.strip()
-        payload_identity = valider_onboarding(msisdn, identity)
+        payload_identity = valider_onboarding(msisdn, identity, currency)
 
         corps = {
             "msisdn": msisdn,
@@ -251,6 +286,15 @@ class ClientServiceClient:
         le 09/08). La coherence est donc **entierement a notre charge**, en
         amont, dans la selection du produit.
         """
+        fiche_avant = await self.chercher_par_msisdn(msisdn)
+        deja = len((fiche_avant or {}).get("product") or [])
+        if deja >= SOUSCRIPTIONS_MAX:
+            raise OnboardingNonConforme(
+                f"{deja} souscriptions deja attachees — UC-13 en autorise {SOUSCRIPTIONS_MAX} au "
+                "maximum. Le serveur ne borne RIEN : mesure du 09/08, 6 produits ont ete "
+                "attaches a un meme client sans le moindre rejet. Le plafond du CDC est "
+                "entierement a notre charge."
+            )
         reponse = await self._client.requete(
             "PUT",
             "/api/v1/clients/subscribe",

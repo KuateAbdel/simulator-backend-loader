@@ -18,7 +18,12 @@ from typing import Any
 
 import pytest
 
-from app.clients.client_service import OnboardingNonConforme, valider_onboarding
+from app.clients.client_service import (
+    DEVISES_AUTORISEES,
+    SOUSCRIPTIONS_MAX,
+    OnboardingNonConforme,
+    valider_onboarding,
+)
 
 
 def identite(**over: Any) -> dict[str, Any]:
@@ -121,3 +126,55 @@ class TestPayloadNominal:
         assert resultat["id_number"] == "CM12345678"
         assert resultat["id_expire_on"] == "2030-01-01T00:00:00"
         assert resultat["address"] == {"address_line_1": "Rue 12", "street_name": "Akwa"}
+
+
+class TestDevise:
+    """D-CLI-9 — le trou le plus grave du chemin d'onboarding.
+
+    `currency` est requise au contrat, n'apparait PAS dans la fiche Client
+    rendue, et atterrit telle quelle dans le compte CHECKING cree en cascade.
+    Mesure du 09/08 : `ZZZ`, `ANY` et la chaine vide produisent chacun un compte
+    porteur de cette valeur.
+
+    **C'est l'origine de FRA-222** — le compte client reel portant
+    `currency="ANY"`. La recommandation n°4 de ce ticket demandait d'identifier
+    le chemin d'ecriture fautif : c'est celui-ci.
+    """
+
+    @pytest.mark.parametrize("devise", ["ZZZ", "ANY", "", "cv", "00", "EUR", "USD"])
+    def test_devise_hors_zone_refusee_avant_envoi(self, devise: str) -> None:
+        with pytest.raises(OnboardingNonConforme, match="currency"):
+            valider_onboarding("699111222", identite(), devise)
+
+    @pytest.mark.parametrize("devise", ["XAF", "XOF", "xaf", " xof "])
+    def test_les_deux_devises_des_4_pays_passent(self, devise: str) -> None:
+        assert valider_onboarding("699111222", identite(), devise)["phone"] == "699111222"
+
+    def test_sans_devise_fournie_la_barriere_ne_se_declenche_pas(self) -> None:
+        """`currency=None` laisse la validation aux appelants qui ne la portent
+        pas — la souscription, par exemple."""
+        assert valider_onboarding("699111222", identite(), None)["id_number"] == "CM12345678"
+
+    def test_le_message_nomme_le_ticket_et_explique_le_chemin(self) -> None:
+        with pytest.raises(OnboardingNonConforme) as erreur:
+            valider_onboarding("699111222", identite(), "ANY")
+        message = str(erreur.value)
+        assert "FRA-222" in message
+        assert "compte CHECKING" in message
+
+    def test_le_referentiel_serveur_n_est_pas_la_source_de_verite(self) -> None:
+        """config-service contient lui-meme `cv` et `00` (FRA-222). La liste
+        close du Loader est la seule reference fiable."""
+        assert DEVISES_AUTORISEES == {"XAF", "XOF"}
+
+
+class TestPlafondSouscriptions:
+    """UC-13 — « 1 a 3 souscriptions a des produits Collecte ».
+
+    Le serveur ne borne RIEN : mesure du 09/08, **6 produits** ont ete attaches
+    a un meme client sans le moindre rejet. Le plafond du CDC est entierement a
+    notre charge.
+    """
+
+    def test_le_plafond_du_cdc_est_de_trois(self) -> None:
+        assert SOUSCRIPTIONS_MAX == 3
