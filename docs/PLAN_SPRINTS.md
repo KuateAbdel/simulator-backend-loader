@@ -149,7 +149,7 @@ CUSTOMER rejeté. **Dépend de `A-05`.**
 | `S3-02` | **`/auth/refresh`** — `ÉCART-38`, jeton access de 4 h | ⬜ |
 | `S3-03` | Organisation en `REAL` — Companies, licences, Admin Users | ⬜ |
 | `S3-04` | **`EF-13`** — les 4 comptes Lender, **jamais exécuté** (dernière hypothèse de `D-01`) | ⬜ |
-| `S3-05` | **`ExecuteurCatalogue`** — il n'existe pas : `catalogue.py` compose les payloads, **rien ne les poste** | ⬜ |
+| `S3-05` | **`ExecuteurCatalogue`** — 10 créations, 2 réutilisés, 3 refus avant réseau | ✅ **livré** |
 | `S3-06` | Dépositaires en `REAL` — 40-80 nœuds, Agents rattachés (`D-11`) | ⬜ |
 
 > **`S3-00` et `S3-01` passent avant `S3-03`.** Cinq exécuteurs existaient sans

@@ -1,0 +1,298 @@
+"""
+app/services/catalogue_execution.py
+===================================
+Execution du module Catalogue — `UC-11`, `EF-69`, story `S3-05`.
+
+CE QUI MANQUAIT
+---------------
+`catalogue.py` composait les payloads — `payloads_lending()`, `payloads_collect()`
+— et **rien ne les postait**. Le plan de sprint annonçait « les trois executeurs
+deja ecrits » ; il y en avait quatre au total, et le Catalogue n'en faisait pas
+partie. Le module etait un generateur sans bras.
+
+LE COMPTE EXACT — 12 PRODUITS, 10 CREATIONS
+-------------------------------------------
+  LENDING   4 produits au fichier -> **6 creations** : `BNPL` et `ReadyToGo`
+            portent `Category: Any`, valeur que l'enum serveur refuse
+            (`INV-PRD-04`, HTTP 422). Chacun est dedouble INDIVIDUAL +
+            CORPORATE (`D-PRD-4`).
+  COLLECT   6 produits cibles -> **4 creations** : « Cotisation 20000/mois » et
+            « plastique » existent DEJA en base. Ils sont RETROUVES, jamais
+            recrees (`D-PRD-9`).
+
+`10 + 2 = 12`. Un rapport qui annoncerait 12 creations mentirait sur deux
+produits qu'il n'a pas faits.
+
+LES QUATRE PIEGES NEUTRALISES
+-----------------------------
+  ANO-PRD-POLICY-01  `policy` est declaree OPTIONNELLE au contrat, et son
+                     absence provoque un HTTP 500. Le client la refuse en amont ;
+                     ici on n'en omet jamais.
+  INV-PRD-07         La Policy est une REFERENCE VIVANTE : la modifier change
+                     retroactivement et silencieusement TOUS les Products qui la
+                     referencent. D'ou `D-PRD-7` — un embed par Product, jamais
+                     un `policy_id` partage. **Aucun** `policy_id` n'est emis.
+  ANO-PRD-UNIQ-01    Aucune unicite serveur sur `name`, et la base contient deja
+                     un doublon. Le `GET`-avant-`POST` retient **le plus
+                     ancien** et signale la multiplicite plutot que de la taire.
+  EF-35 / CR-01      Le fichier source annonce un taux jusqu'a 25 %, le plafond
+                     d'usure BEAC/COBAC est de 24 %. Borne appliquee dans
+                     `catalogue.py`, verifiee ici avant emission.
+
+CE QUE CET EXECUTEUR PRODUIT POUR LA SUITE
+------------------------------------------
+La liste des `ProduitSouscriptible` — **l'artefact que le module Depositaires
+consomme**. Il porte le `type_produit` EXPLICITE : c'est lui qui declenche
+`D-DEP-9`, et un produit dont on ignore le type ne doit pas pouvoir entrer dans
+la boucle de souscription.
+
+Cette liste inclut les 2 produits **preexistants** : ils sont souscriptibles
+comme les autres. Les exclure priverait les Kiosques de deux produits reels.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+from uuid import UUID, uuid4
+
+from app.clients.base import ErreurService
+from app.clients.contracts import ProductType
+from app.clients.product_service import ProductServiceClient
+from app.core.cdc import TAUX_USURE_MAX_ANNUEL_PCT
+from app.models.enums import RunMode, RunStatus
+from app.repositories import AuditTrailRepository
+from app.services.catalogue import (
+    CATALOGUE_COLLECT,
+    charger_loan_json,
+    payloads_collect,
+    payloads_lending,
+)
+from app.services.depositaires_execution import ProduitSouscriptible
+
+logger = logging.getLogger(__name__)
+
+#: Ce que `UC-11` attend au total, une fois le catalogue en place.
+PRODUITS_ATTENDUS = 12
+#: Ce que le Loader CREE. La difference (2) est deja en base — `D-PRD-9`.
+CREATIONS_ATTENDUES = 10
+
+
+@dataclass(slots=True)
+class RapportCatalogue:
+    """Ce que l'execution a produit, et ce qu'elle a deliberement saute."""
+
+    mode: RunMode
+    crees: list[str] = field(default_factory=list)
+    reutilises: list[str] = field(default_factory=list)
+    echoues: list[tuple[str, str]] = field(default_factory=list)
+    #: L'artefact consomme par le module Depositaires.
+    souscriptibles: list[ProduitSouscriptible] = field(default_factory=list)
+    #: Ecart entre le compte du CDC et ce qui existe reellement.
+    ecart_au_cdc: str = ""
+
+    @property
+    def statut(self) -> RunStatus:
+        """`FAILED` seulement si **rien** n'a abouti.
+
+        Retrouver un produit preexistant n'est pas un accomplissement de CE
+        run : si tout a echoue et que seuls les 2 produits deja en base sont
+        la, le probleme est systemique — meme raisonnement que `RapportRoles`.
+        """
+        if not self.echoues:
+            return RunStatus.COMPLETED
+        if not self.crees:
+            return RunStatus.FAILED
+        return RunStatus.PARTIAL
+
+    def resume(self) -> str:
+        lignes = [
+            f"Mode        : {self.mode.value}",
+            f"Produits crees   : {len(self.crees)} / {CREATIONS_ATTENDUES} attendus",
+            f"Reutilises       : {len(self.reutilises)} ({', '.join(self.reutilises) or '-'})",
+            f"Echecs           : {len(self.echoues)}",
+            f"Souscriptibles   : {len(self.souscriptibles)} (dont COLLECT pour les Kiosques)",
+            f"STATUT : {self.statut.value}",
+        ]
+        for nom, motif in self.echoues:
+            lignes.append(f"  ECHEC {nom} : {motif}")
+        if self.ecart_au_cdc:
+            lignes.append(f"  ⚠ {self.ecart_au_cdc}")
+        return "\n".join(lignes)
+
+
+class ExecuteurCatalogue:
+    """Cree les 10 produits manquants, retrouve les 2 preexistants.
+
+    `DRY_RUN` conserve les LECTURES et supprime les ECRITURES — sans
+    l'inventaire, le rapport annoncerait 10 creations alors que deux produits
+    sont deja la, et le compte final serait faux.
+    """
+
+    def __init__(
+        self,
+        *,
+        run_id: UUID,
+        mode: RunMode,
+        product_client: ProductServiceClient,
+        audit: AuditTrailRepository,
+        chemin_loan_json: Path,
+    ) -> None:
+        self.run_id = run_id
+        self.mode = mode
+        self._produits = product_client
+        self._audit = audit
+        self._chemin = chemin_loan_json
+
+    @property
+    def ecriture_reelle(self) -> bool:
+        return self.mode is RunMode.REAL
+
+    async def executer(self) -> RapportCatalogue:
+        rapport = RapportCatalogue(mode=self.mode)
+
+        payloads = payloads_lending(charger_loan_json(self._chemin)) + payloads_collect()
+        self._verifier_avant_emission(payloads)
+
+        for payload in payloads:
+            await self._poser_un_produit(payload, rapport)
+
+        # Les 2 preexistants : retrouves, jamais recrees (`D-PRD-9`). Ils sont
+        # souscriptibles au meme titre que les autres — les ecarter priverait
+        # les Kiosques de deux produits reels.
+        for produit in CATALOGUE_COLLECT:
+            if produit.preexistant:
+                await self._retrouver_preexistant(produit.nom_recherche, rapport)
+
+        self._verifier_le_compte(rapport)
+        return rapport
+
+    # ------------------------------------------------------------------
+    # Verifications AVANT le reseau — le Loader anticipe, il ne subit pas
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _verifier_avant_emission(payloads: list[dict[str, Any]]) -> None:
+        """Trois controles que le serveur ne ferait pas — ou ferait mal.
+
+        Ils tiennent en memoire, avant tout appel. Un `policy_id` partage ne
+        provoque aucune erreur : il corrompt SILENCIEUSEMENT les autres
+        Products (`INV-PRD-07`). Le serveur ne nous le dirait jamais.
+        """
+        for payload in payloads:
+            nom = str(payload.get("name", "?"))
+            if not payload.get("policy"):
+                raise ValueError(f"{nom} : policy absente — HTTP 500 garanti (ANO-PRD-POLICY-01)")
+            if payload.get("policy_id"):
+                raise ValueError(f"{nom} : policy_id interdit — reference vivante (D-PRD-7)")
+            taux = float(payload.get("policy", {}).get("interest_rate", 0) or 0)
+            if taux > TAUX_USURE_MAX_ANNUEL_PCT:
+                raise ValueError(
+                    f"{nom} : taux {taux} % au-dessus du plafond d'usure BEAC/COBAC "
+                    f"({TAUX_USURE_MAX_ANNUEL_PCT} %) — EF-35, CR-01"
+                )
+
+    # ------------------------------------------------------------------
+    # Ecriture
+    # ------------------------------------------------------------------
+
+    async def _poser_un_produit(self, payload: dict[str, Any], rapport: RapportCatalogue) -> None:
+        nom = str(payload["name"])
+        type_produit = ProductType(str(payload["type"]))
+
+        # `D-PRD-2` — inventaire AVANT creation. Aucune unicite serveur, et
+        # aucun `DELETE` : le doublon serait definitif.
+        existant = await self._produits.chercher_par_nom(nom)
+        if existant is not None:
+            identifiant = existant.get("_id") or existant.get("id")
+            rapport.reutilises.append(nom)
+            if identifiant:
+                rapport.souscriptibles.append(
+                    ProduitSouscriptible(UUID(str(identifiant)), nom, type_produit)
+                )
+            return
+
+        if not self.ecriture_reelle:
+            rapport.crees.append(f"{nom} [prevu]")
+            return
+
+        # Journal d'intention : `POST /products` cree Product ET Policy. Sans
+        # trace prealable, un timeout laisserait une Policy orpheline dont rien
+        # ne garderait le souvenir — et product-service n'a pas de `DELETE`.
+        entite = uuid4()
+        async with self._audit.intention(
+            self.run_id,
+            entity_type="Product",
+            entity_id=entite,
+            operation="CREATE",
+            cible="product-service",
+            payload={"name": nom, "type": type_produit.value},
+        ) as suivi:
+            try:
+                reponse = await self._produits.creer_produit(payload)
+            except ErreurService as exc:
+                # On ne rejoue pas : un 4xx designe notre payload, le repeter le
+                # repeterait. Le detail est tronque — les messages fuient des
+                # traces Python (`ANO-CPY-LEAK-07`), on ne les parse jamais.
+                motif = f"HTTP {exc.status} : {exc.detail[:160]}"
+                suivi.echoue(motif)
+                rapport.echoues.append((nom, motif))
+                logger.warning("produit %s en echec, poursuite : %s", nom, motif)
+                return
+
+            identifiant = reponse.get("_id") or reponse.get("id")
+            if not identifiant:
+                suivi.echoue("identifiant absent de la reponse")
+                rapport.echoues.append((nom, "identifiant absent de la reponse"))
+                return
+
+            suivi.reussi({"product_id": str(identifiant)})
+
+        rapport.crees.append(nom)
+        rapport.souscriptibles.append(
+            ProduitSouscriptible(UUID(str(identifiant)), nom, type_produit)
+        )
+
+    async def _retrouver_preexistant(self, nom: str, rapport: RapportCatalogue) -> None:
+        """`D-PRD-9` — retrouve, jamais recree.
+
+        Son absence n'est PAS un echec du Loader : c'est un fait sur l'etat de
+        l'environnement, qui merite d'etre dit et non corrige en silence.
+        """
+        if any(p.nom == nom for p in rapport.souscriptibles):
+            return
+        existant = await self._produits.chercher_par_nom(nom)
+        if existant is None:
+            rapport.ecart_au_cdc = (
+                f"« {nom} » etait attendu en base (D-PRD-9) et n'y est pas — "
+                "l'environnement a change, le catalogue ne compte que 11 produits"
+            )
+            logger.warning("produit preexistant %r introuvable", nom)
+            return
+        identifiant = existant.get("_id") or existant.get("id")
+        if identifiant:
+            rapport.reutilises.append(nom)
+            rapport.souscriptibles.append(
+                ProduitSouscriptible(UUID(str(identifiant)), nom, ProductType.COLLECT)
+            )
+
+    # ------------------------------------------------------------------
+    # Verification APRES — le compte doit tomber juste
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _verifier_le_compte(rapport: RapportCatalogue) -> None:
+        """`UC-11` attend 12 produits. On le VERIFIE au lieu de le supposer.
+
+        L'ecart n'est pas une erreur a corriger : c'est un fait a remonter.
+        Le Loader constate l'etat de l'environnement, il ne le repare pas.
+        """
+        total = len(rapport.crees) + len(rapport.reutilises)
+        if total != PRODUITS_ATTENDUS and not rapport.ecart_au_cdc:
+            rapport.ecart_au_cdc = (
+                f"{total} produits au catalogue, {PRODUITS_ATTENDUS} attendus (UC-11) — "
+                f"{len(rapport.crees)} crees, {len(rapport.reutilises)} reutilises, "
+                f"{len(rapport.echoues)} en echec"
+            )
