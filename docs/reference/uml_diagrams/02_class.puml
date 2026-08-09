@@ -142,13 +142,35 @@ package "Organisation FinZuu <<FinZuu API — company/user-service>>" {
     ⚠ En embed, _id est REQUIS et fourni par\nl'appelant — le Loader génère cet UUID\nlui-même avant le POST.
   }
 
-  class Branche <<FinZuu API>> {
-    +branche_id: UUID
-    +name: string
-  }
-  class Agence <<FinZuu API>> {
-    +agence_id: UUID
-    +name: string
+  class OrgHierarchyNode <<Loader MongoDB>> {
+    +_id: UUID
+    +run_id: UUID
+    +niveau: string {BRANCHE|AGENCE|KIOSQUE|AGENT}
+    +parent_id: UUID {0..1}
+    +company_id: UUID
+    +country_code: string
+    +region_id: string {0..1}
+    +city_id: string {0..1}
+    +district_id: string {0..1}
+    +depositary_id: UUID {0..1, niveau KIOSQUE}
+    +user_id: UUID {0..1, niveau AGENT}
+    ..
+    ⚠ CORRECTIF 09/08 (D-05, D-11) : Branche et
+    Agence etaient marquees <<FinZuu API>>. Elles
+    n'ont AUCUNE contrepartie serveur — aucun
+    endpoint, aucun schema. Elles vivent ICI.
+    ..
+    Le niveau AGENT est ajoute le 09/08 (D-11) :
+    l'Agent EXISTE cote serveur (un User du groupe
+    Agent) mais son RATTACHEMENT au Kiosque
+    n'existe nulle part — User porte company_id et
+    identity, jamais de reference vers un
+    Depositaire. UC-09 l'exige pourtant.
+    ..
+    contrainte : unique(run_id, district_id)
+    -> un quartier n'heberge qu'UN Kiosque (D-03)
+    AUCUNE contrainte au niveau AGENT : EF-17
+    prevoit un nombre parametrable par Kiosque.
   }
   class Kiosque_Depositaire <<FinZuu API>> {
     +_id: UUID
@@ -159,11 +181,6 @@ package "Organisation FinZuu <<FinZuu API — company/user-service>>" {
     ..
     ⚠ is_active INEFFICACE sur\ncollecte/retrait existants (FRA-203)
   }
-  class Agent <<FinZuu API>> {
-    +agent_id: UUID
-    +name: string
-  }
-
   class User <<FinZuu API>> {
     +_id: UUID
     +user_name: string
@@ -180,10 +197,10 @@ package "Organisation FinZuu <<FinZuu API — company/user-service>>" {
 
   Company "1" *-- "1" Identity : owner (embed)
   Company "0..1" o-- "0..*" Company : parent/filiale
-  Company "1" o-- "0..*" Branche : rattache
-  Branche "1" *-- "0..*" Agence : décline
-  Agence "1" *-- "0..*" Kiosque_Depositaire : rattache
-  Kiosque_Depositaire "1" o-- "0..*" Agent : opère
+  Company "1" o-- "0..*" OrgHierarchyNode : porte (niveau BRANCHE)
+  OrgHierarchyNode "1" *-- "0..*" OrgHierarchyNode : parent_id\n(BRANCHE>AGENCE>KIOSQUE>AGENT)
+  OrgHierarchyNode "0..1" ..> "1" Kiosque_Depositaire : depositary_id\n(niveau KIOSQUE)
+  OrgHierarchyNode "0..1" ..> "1" User : user_id\n(niveau AGENT, D-11)
 
   User "0..*" o-- "0..1" Company : rattaché à
   User "*" o-- "*" Groupe : porte
@@ -233,6 +250,16 @@ package "Domaine Loader <<propriétaire — MongoDB via motor>>" {
     +status: string
     +checkpoints: list
     +mode: string {DRY_RUN | REAL}
+    +configuration: object
+    ..
+    ⚠ AJOUT 09/08 (D-10) : 7e champ. Des que la
+    volumetrie devient parametrable, le run_id NE
+    SUFFIT PLUS a reproduire une execution — deux
+    runs de meme identifiant sous des parametres
+    differents donnent des resultats differents.
+    ENF-15 serait perdue et CR-04 inverifiable.
+    Porte les pays actifs, les surcharges par
+    territoire, la repartition et les ECARTS AU CDC.
   }
 
   class AuditTrailEntry <<Loader MongoDB>> {
