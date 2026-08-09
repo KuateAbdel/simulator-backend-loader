@@ -35,6 +35,7 @@ import json
 import uuid
 import weakref
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
@@ -100,6 +101,95 @@ MAX_TENTATIVES: Final = 3
 #: Marge de renouvellement du token : l'access_token vit 4 h (INV-USR-07), on
 #: le renouvelle avant, jamais au moment ou il expire en pleine campagne.
 MARGE_RENOUVELLEMENT: Final = timedelta(minutes=10)
+
+#: Duree de vie mesuree le 08/08 — `access` 4 h, `refresh` 7 j, `auth` 10 min.
+DUREE_ACCESS: Final = timedelta(hours=4)
+DUREE_REFRESH: Final = timedelta(days=7)
+
+
+@dataclass
+class SessionAuth:
+    """L'authentification du Loader — **une seule pour les neuf clients**.
+
+    POURQUOI ELLE EST PARTAGEE
+    --------------------------
+    Chaque client tenait SON token et faisait DONC son propre `/auth/login` :
+    neuf logins pour une campagne. Or `INV-USR-19` impose un anti-brute-force
+    **a 3 tentatives** sur le compte. Neuf ouvertures de session pour un seul
+    utilisateur ROOT, c'est deja une anomalie de securite ; au moindre echec
+    reseau, c'est un verrouillage de compte en pleine campagne.
+
+    POURQUOI LE VERROU
+    ------------------
+    **C'est le point le plus dangereux.** Sans lui, 20 workers qui rencontrent
+    un token expire au meme instant lancent **20 `/auth/login` simultanes**. Le
+    seuil anti-brute-force est a 3. Le verrou fait qu'un seul renouvelle et que
+    les dix-neuf autres attendent son resultat.
+
+    POURQUOI `/auth/refresh` — `ECART-38`
+    -------------------------------------
+    Le Loader se reloguait a chaque expiration, alors qu'un `refresh_token`
+    valide 7 jours est rendu des le premier login. La WebApp ignore cette route ;
+    le CDC nous impose de l'implementer. Un `refresh` n'est pas une tentative
+    d'authentification : il ne compte pas dans les 3 essais.
+    """
+
+    access: str | None = None
+    refresh: str | None = None
+    access_expire_le: datetime | None = None
+    refresh_expire_le: datetime | None = None
+    verrou: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def access_utilisable(self) -> bool:
+        return (
+            self.access is not None
+            and self.access_expire_le is not None
+            and datetime.now(UTC) + MARGE_RENOUVELLEMENT < self.access_expire_le
+        )
+
+    def refresh_utilisable(self) -> bool:
+        return (
+            self.refresh is not None
+            and self.refresh_expire_le is not None
+            and datetime.now(UTC) + MARGE_RENOUVELLEMENT < self.refresh_expire_le
+        )
+
+    def enregistrer(self, donnees: Mapping[str, Any]) -> str:
+        """Retient ce que le serveur vient de rendre.
+
+        Le JWT porte son `exp`, mais on ne le decode pas pour en deduire un
+        droit (`ECART-39`) — seulement pour cadencer le renouvellement, et
+        encore : on prefere les durees MESUREES, un JWT pouvant etre modifie
+        sans que sa duree annoncee le soit.
+        """
+        access = donnees.get("access_token")
+        if not access:
+            raise ValueError("access_token absent de la reponse")
+        maintenant = datetime.now(UTC)
+        self.access = str(access)
+        self.access_expire_le = maintenant + DUREE_ACCESS
+        if refresh := donnees.get("refresh_token"):
+            self.refresh = str(refresh)
+            self.refresh_expire_le = maintenant + DUREE_REFRESH
+        return self.access
+
+
+#: Une session par boucle, pour la meme raison que le semaphore : les tests en
+#: ouvrent plusieurs, et `asyncio.Lock` se lie a la boucle qui l'utilise.
+_SESSIONS: Final[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, SessionAuth]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def session_partagee() -> SessionAuth:
+    """La session d'authentification COMMUNE aux neuf clients."""
+    boucle = asyncio.get_running_loop()
+    session = _SESSIONS.get(boucle)
+    if session is None:
+        session = SessionAuth()
+        _SESSIONS[boucle] = session
+    return session
+
 
 #: Champs masques avant journalisation. INV-USR-19 impose par ailleurs qu'un
 #: login echoue ne soit JAMAIS rejoue automatiquement (anti-brute-force a
@@ -227,6 +317,9 @@ class ClientFinZuu:
         #: Injectable pour les tests. En production il reste `None` et le
         #: semaphore PARTAGE s'applique — c'est le seul plafond qui plafonne.
         semaphore: asyncio.Semaphore | None = None,
+        #: Injectable pour les tests. `None` en production : la session
+        #: PARTAGEE s'applique, et c'est elle qui evite les neuf logins.
+        session: SessionAuth | None = None,
     ) -> None:
         self.nom_service = nom_service
         self.base_url = base_url.rstrip("/")
@@ -241,8 +334,12 @@ class ClientFinZuu:
             http2=True,
             follow_redirects=True,
         )
-        self._token: str | None = None
-        self._token_expire_le: datetime | None = None
+        # `ECART-38` — la session est PARTAGEE par les neuf clients. Un token
+        # par client, c'etait neuf `/auth/login` pour une campagne, quand
+        # `INV-USR-19` verrouille le compte a la 3e tentative echouee.
+        # Resolue a l'usage : `__init__` n'est pas toujours appele depuis une
+        # boucle en cours d'execution.
+        self._session: SessionAuth | None = session
 
     async def __aenter__(self) -> Self:
         return self
@@ -263,18 +360,78 @@ class ClientFinZuu:
     # ----------------------------------------------------------------------
 
     async def _token_valide(self) -> str:
-        """Renvoie un access_token frais, en le renouvelant avant expiration.
+        """Renvoie un access_token frais, partage par les neuf clients.
 
         Jamais de token colle en dur ni recycle d'une session precedente.
-        """
-        maintenant = datetime.now(UTC)
-        if (
-            self._token is not None
-            and self._token_expire_le is not None
-            and maintenant + MARGE_RENOUVELLEMENT < self._token_expire_le
-        ):
-            return self._token
 
+        Le VERROU est le coeur de cette methode. Sans lui, 20 workers qui
+        rencontrent un token expire au meme instant lancent 20 `/auth/login`
+        simultanes, et `INV-USR-19` verrouille le compte a la 3e tentative.
+        Un seul renouvelle, les autres attendent son resultat — et la double
+        verification apres acquisition evite qu'ils renouvellent a leur tour.
+        """
+        session = self._session or session_partagee()
+        if session.access_utilisable() and session.access is not None:
+            return session.access
+
+        async with session.verrou:
+            # Deuxieme lecture : un autre worker a peut-etre renouvele pendant
+            # qu'on attendait le verrou. Sans elle, le verrou serialiserait les
+            # renouvellements au lieu de les eviter.
+            if session.access_utilisable() and session.access is not None:
+                return session.access
+
+            if session.refresh_utilisable():
+                # `ECART-38` — la route que la WebApp ignore. Un refresh n'est
+                # PAS une tentative d'authentification : il ne compte pas dans
+                # les 3 essais d'`INV-USR-19`.
+                try:
+                    return await self._rafraichir(session)
+                except ErreurService as erreur:
+                    # Le refresh a ete refuse : on retombe sur le login, qui
+                    # est legitime ici. On le DIT, parce qu'un refresh refuse
+                    # avant terme est un fait a remonter.
+                    self._journal.ecrire(
+                        service="user-service",
+                        action="refresh",
+                        statut="refuse",
+                        detail={"motif": erreur.detail[:200]},
+                    )
+                    session.refresh = None
+                    session.refresh_expire_le = None
+
+            return await self._ouvrir_session(session)
+
+    async def _rafraichir(self, session: SessionAuth) -> str:
+        """`POST /auth/refresh` — `ECART-38`, absent de la WebApp."""
+        request_id = str(uuid.uuid4())
+        reponse = await self._client.post(
+            f"{settings.user_service_base}/api/v1/auth/refresh",
+            json={"refresh_token": session.refresh},
+            headers={"X-Request-Id": request_id},
+        )
+        if reponse.status_code != 200:
+            raise ErreurService(
+                "user-service",
+                "POST",
+                "/auth/refresh",
+                reponse.status_code,
+                reponse.text[:300],
+                request_id,
+            )
+        try:
+            token = session.enregistrer(reponse.json().get("data", {}))
+        except ValueError as erreur:
+            raise ErreurService(
+                "user-service", "POST", "/auth/refresh", 200, str(erreur), request_id
+            ) from erreur
+        self._journal.ecrire(
+            service="user-service", action="refresh", statut="succes", request_id=request_id
+        )
+        return token
+
+    async def _ouvrir_session(self, session: SessionAuth) -> str:
+        """`POST /auth/login` — la seule voie qui compte dans les 3 tentatives."""
         if not settings.root_username or not settings.root_password:
             raise ErreurService(
                 self.nom_service,
@@ -291,7 +448,7 @@ class ClientFinZuu:
             json={"username": settings.root_username, "password": settings.root_password},
             headers={"X-Request-Id": request_id},
         )
-        # INV-USR-19 : un login echoue n'est jamais rejoue automatiquement.
+        # INV-USR-19 : un login echoue n'est JAMAIS rejoue automatiquement.
         if reponse.status_code != 200:
             raise ErreurService(
                 "user-service",
@@ -302,26 +459,16 @@ class ClientFinZuu:
                 request_id,
             )
 
-        donnees = reponse.json().get("data", {})
-        token = donnees.get("access_token")
-        if not token:
+        try:
+            token = session.enregistrer(reponse.json().get("data", {}))
+        except ValueError as erreur:
             raise ErreurService(
-                "user-service",
-                "POST",
-                "/auth/login",
-                200,
-                "access_token absent de la reponse",
-                request_id,
-            )
-
-        self._token = str(token)
-        # Le JWT porte son exp, mais on ne le decode pas pour en deduire un
-        # droit (ECART-39) — uniquement pour cadencer le renouvellement.
-        self._token_expire_le = datetime.now(UTC) + timedelta(hours=4)
+                "user-service", "POST", "/auth/login", 200, str(erreur), request_id
+            ) from erreur
         self._journal.ecrire(
             service="user-service", action="login", statut="succes", request_id=request_id
         )
-        return self._token
+        return token
 
     # ----------------------------------------------------------------------
     # Appel HTTP

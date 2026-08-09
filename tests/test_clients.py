@@ -65,3 +65,91 @@ async def _semaphore() -> object:
     from app.clients.base import semaphore_partage
 
     return semaphore_partage()
+
+
+class TestSessionPartagee:
+    """`ECART-38` — une seule session pour les neuf clients.
+
+    Chaque client tenait SON token et faisait donc son propre
+    `/auth/login` : neuf ouvertures de session pour un seul compte ROOT,
+    quand `INV-USR-19` verrouille a la 3e tentative echouee.
+    """
+
+    @pytest.mark.asyncio
+    async def test_les_neuf_clients_partagent_une_seule_session(self) -> None:
+        from app.clients.base import session_partagee
+
+        assert session_partagee() is session_partagee()
+
+    @pytest.mark.asyncio
+    async def test_un_access_frais_est_reutilise_sans_appel_reseau(self) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from app.clients.base import SessionAuth
+
+        s = SessionAuth()
+        s.enregistrer({"access_token": "abc", "refresh_token": "def"})
+        assert s.access_utilisable()
+        assert s.refresh_utilisable()
+        assert s.access == "abc"
+        assert s.access_expire_le is not None
+        assert s.access_expire_le > datetime.now(UTC) + timedelta(hours=3)
+
+    @pytest.mark.asyncio
+    async def test_un_access_expirant_dans_la_marge_est_considere_mort(self) -> None:
+        """On renouvelle AVANT l'expiration, jamais au moment ou elle tombe
+        en pleine campagne."""
+        from datetime import UTC, datetime
+
+        from app.clients.base import MARGE_RENOUVELLEMENT, SessionAuth
+
+        s = SessionAuth(access="abc", access_expire_le=datetime.now(UTC) + MARGE_RENOUVELLEMENT / 2)
+        assert not s.access_utilisable()
+
+    @pytest.mark.asyncio
+    async def test_le_refresh_survit_a_l_access(self) -> None:
+        """access 4 h, refresh 7 j (mesure du 08/08). C'est ce decalage qui
+        rend `/auth/refresh` utile — sans lui on se reloguerait 42 fois."""
+        from datetime import UTC, datetime
+
+        from app.clients.base import SessionAuth
+
+        s = SessionAuth()
+        s.enregistrer({"access_token": "a", "refresh_token": "r"})
+        s.access_expire_le = datetime.now(UTC)
+        assert not s.access_utilisable()
+        assert s.refresh_utilisable()
+
+    @pytest.mark.asyncio
+    async def test_une_reponse_sans_access_token_leve(self) -> None:
+        from app.clients.base import SessionAuth
+
+        with pytest.raises(ValueError, match="access_token absent"):
+            SessionAuth().enregistrer({"refresh_token": "seul"})
+
+    @pytest.mark.asyncio
+    async def test_le_verrou_empeche_vingt_logins_simultanes(self) -> None:
+        """LE point dangereux. Sans verrou, 20 workers qui rencontrent un
+        token expire lancent 20 `/auth/login` — et le seuil anti-brute-force
+        d'`INV-USR-19` est a 3."""
+        import asyncio
+
+        from app.clients.base import SessionAuth
+
+        session = SessionAuth()
+        appels = 0
+
+        async def _renouveler() -> str:
+            nonlocal appels
+            if session.access_utilisable() and session.access is not None:
+                return session.access
+            async with session.verrou:
+                if session.access_utilisable() and session.access is not None:
+                    return session.access
+                appels += 1
+                await asyncio.sleep(0)
+                return session.enregistrer({"access_token": "unique"})
+
+        resultats = await asyncio.gather(*(_renouveler() for _ in range(20)))
+        assert appels == 1, "un seul renouvellement pour vingt workers"
+        assert set(resultats) == {"unique"}
