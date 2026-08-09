@@ -64,6 +64,46 @@ OCCUPATIONS_PAR_SECTEUR: Final[dict[str, str]] = {
     "SERVICES": "Prestataire de services",
 }
 
+#: Patronymes REELLEMENT observes chez Faker, par pays (24 tirages, 08/08).
+#: Ce n'est pas de l'invention : ce sont ses valeurs, rejouees.
+#:
+#: **Bouchon assume, et temporaire.** Tant que le client Faker n'est pas ecrit,
+#: c'est ici que la matiere vient. Le jour ou il existera, cette table
+#: disparaitra au profit d'un tirage reel — et `D-FAKER-1` s'appliquera.
+#:
+#: Elle doit rester DISTINCTE PAR PAYS : un premier dry-run avait produit la
+#: meme raison sociale dans les quatre pays.
+PATRONYMES_PAR_PAYS: Final[dict[str, tuple[str, ...]]] = {
+    "CM": ("Tamadou", "Kingue", "Ngassa", "Mbarga", "Fotso"),
+    "CI": ("Kouassi", "Yao", "Bamba", "Koffi", "Gnahore"),
+    "BF": ("Kabore", "Ouedraogo", "Sawadogo", "Zongo", "Compaore"),
+    "SN": ("Diallo", "Ndiaye", "Fall", "Sow", "Gueye"),
+}
+
+#: Prenoms observes chez Faker, par genre. Meme statut : matiere reelle,
+#: rejouee tant que le client n'existe pas.
+PRENOMS_PAR_GENRE: Final[dict[str, tuple[str, ...]]] = {
+    "FEMALE": ("Ines", "Aissatou", "Mariam", "Fatou", "Adjoa", "Nadege"),
+    "MALE": ("Serge", "Ibrahim", "Kwame", "Moussa", "Cedric", "Amadou"),
+}
+
+
+def patronyme(pays: str, index: int) -> str:
+    """Nom de famille, tire de la matiere reelle de Faker.
+
+    Source unique pour TOUS les executeurs — Organisation, Staff, Clients.
+    Deux tables paralleles divergeraient tot ou tard.
+    """
+    noms = PATRONYMES_PAR_PAYS.get(pays.upper(), PATRONYMES_PAR_PAYS["SN"])
+    return noms[index % len(noms)]
+
+
+def prenom(genre: str, index: int) -> str:
+    """Prenom coherent avec le genre — `EF-22` se joue sur ce champ."""
+    liste = PRENOMS_PAR_GENRE.get(genre.upper(), PRENOMS_PAR_GENRE["FEMALE"])
+    return liste[index % len(liste)]
+
+
 #: Voies types. Le nom precis de la voie n'a aucune portee metier — seul compte
 #: le rattachement au quartier, qui lui vient du referentiel reel.
 TYPES_DE_VOIE: Final[tuple[str, ...]] = ("Rue", "Avenue", "Boulevard", "Carrefour")

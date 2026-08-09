@@ -58,6 +58,7 @@ from app.clients.contracts import IdentityType, UserType
 from app.core.configuration import ConfigurationExecution
 from app.core.invariants import InvariantViole, RegistreUnicite
 from app.models.enums import RunMode, RunStatus
+from app.services.generateur import patronyme, prenom
 from app.services.geographie import ReferentielGeo
 
 logger = logging.getLogger(__name__)
@@ -331,8 +332,13 @@ class ExecuteurStaff:
             "mot_de_passe_initial": "Init#2026Aa",
             "nouveau_mot_de_passe": f"Stf#{pays}{rang:04d}Aa",
             "identity": {
-                "first_name": f"DEMO_{role.replace('/', '')}",
-                "last_name": f"{ville.name}{rang:03d}",
+                # DOCTRINE — « rien n'est invente a partir de rien ». Les
+                # prenoms et patronymes viennent de la matiere REELLE de Faker,
+                # source unique dans `generateur.py`. Une premiere version
+                # composait `DEMO_Agent` + nom de ville : c'etait de
+                # l'invention, et la doctrine l'interdit.
+                "first_name": prenom(genre, rang),
+                "last_name": patronyme(pays, rang),
                 "date_of_birth": self._naissance(rang),
                 "gender": genre,
                 "nationality": pays,

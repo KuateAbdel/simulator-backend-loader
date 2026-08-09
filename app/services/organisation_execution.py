@@ -62,31 +62,18 @@ from app.core.cdc import (
 from app.models.enums import LenderType, RunMode, RunStatus
 from app.repositories import AuditTrailRepository, LendersRegistryRepository
 from app.services.generateur import Generateur
+from app.services.generateur import patronyme as _patronyme_bouchon
 from app.services.geographie import ReferentielGeo
 from app.services.organisation import PlanOrganisation
 
 logger = logging.getLogger(__name__)
 
-#: Patronymes reellement observes chez Faker, par pays. Bouchon utilise tant
-#: que le client Faker n'est pas ecrit — il doit rester DISTINCT par pays,
-#: sinon la meme raison sociale apparait dans les 4 pays (defaut trouve par
-#: le premier dry-run).
-_PATRONYMES_PAR_PAYS: dict[str, tuple[str, ...]] = {
-    "CM": ("Tamadou", "Kingue", "Ngassa", "Mbarga", "Fotso"),
-    "CI": ("Kouassi", "Yao", "Bamba", "Koffi", "Gnahore"),
-    "BF": ("Kabore", "Ouedraogo", "Sawadogo", "Zongo", "Compaore"),
-    "SN": ("Diallo", "Ndiaye", "Fall", "Sow", "Gueye"),
-}
-
-
-def _patronyme_bouchon(pays: str, index: int) -> str:
-    """Patronyme de remplacement, distinct par pays.
-
-    Ces noms sont ceux que Faker renvoie reellement pour chaque pays — on ne
-    les invente pas, on les rejoue en attendant son client.
-    """
-    noms = _PATRONYMES_PAR_PAYS.get(pays.upper(), ("Sarr",))
-    return noms[index % len(noms)]
+# SOURCE UNIQUE DES PATRONYMES — `app/services/generateur.py`.
+#
+# Cette table vivait ici en double de celle de l'executeur Staff. Deux tables
+# paralleles divergent toujours : celle-ci se serait enrichie sans l'autre.
+# L'alias conserve le nom local (« bouchon ») qui dit ce que c'est vraiment —
+# de la matiere Faker REJOUEE, en attendant son client.
 
 
 @dataclass(slots=True)
