@@ -64,7 +64,7 @@ from app.repositories import AuditTrailRepository, LendersRegistryRepository
 from app.services.generateur import Generateur
 from app.services.generateur import patronyme as _patronyme_bouchon
 from app.services.geographie import ReferentielGeo
-from app.services.organisation import PlanOrganisation
+from app.services.organisation import CompanyPorteuse, PlanOrganisation
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,12 @@ class RapportOrganisation:
     comptes_echoues: list[tuple[str, str]] = field(default_factory=list)
     cascades_identity_verifiees: int = 0
     cascades_identity_manquantes: list[str] = field(default_factory=list)
+    #: **L'artefact consomme par les Depositaires et le Staff.** Le rapport ne
+    #: portait que des NOMS : la suite de la chaine avait besoin des
+    #: `company_id`, et personne ne les lui transmettait. Meme defaut que le nom
+    #: de Kiosque recompose apres coup — un identifiant se transporte, il ne se
+    #: redecouvre pas.
+    porteuses: list[CompanyPorteuse] = field(default_factory=list)
 
     @property
     def statut(self) -> RunStatus:
@@ -221,6 +227,7 @@ class ExecuteurOrganisation:
         quartier: str,
         telephone: str,
         rapport: RapportOrganisation,
+        est_imf: bool = False,
     ) -> dict[str, Any] | None:
         """Cree une Company, sa licence et son Admin User.
 
@@ -267,6 +274,11 @@ class ExecuteurOrganisation:
             # L'Admin User serait cree juste apres, en 3 requetes — on l'annonce
             # pour que le rapport de dry-run soit complet.
             rapport.admins_crees.append(owner.email)
+            if est_imf:
+                # Identifiant fictif : en DRY_RUN les Depositaires ne doivent
+                # RIEN ecrire, mais ils doivent pouvoir derouler leur plan pour
+                # que le rapport a blanc soit complet.
+                rapport.porteuses.append(CompanyPorteuse(uuid4(), raison, pays, devise))
             logger.info("[DRY_RUN] Company %s (%s, %s) — payload valide", raison, pays, devise)
             return {"_id": str(uuid4()), "name": raison, "short_name": court, "_dry_run": True}
 
@@ -296,6 +308,11 @@ class ExecuteurOrganisation:
             return None
 
         rapport.companies_creees.append(raison)
+        if est_imf:
+            # Seules les IMF portent une hierarchie (`UC-09`) — un bailleur de
+            # fonds n'a pas de guichet de quartier. L'identifiant voyage avec
+            # le rapport : la suite de la chaine ne doit pas le redecouvrir.
+            rapport.porteuses.append(CompanyPorteuse(UUID(company_id), raison, pays, devise))
 
         # D-CMP-2 verifie APRES coup, jamais presume.
         if self._companies.identifiant_owner(company):
@@ -511,6 +528,7 @@ class ExecuteurOrganisation:
                     quartier=quartier,
                     telephone=self._telephone_du_pays(pays, index),
                     rapport=rapport,
+                    est_imf=est_imf,
                 )
                 if company is None:
                     continue

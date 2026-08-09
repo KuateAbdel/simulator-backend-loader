@@ -36,6 +36,22 @@ from app.services.geographie import ReferentielGeo
 
 
 @dataclass(frozen=True, slots=True)
+class CompanyPorteuse:
+    """Une IMF deja creee, prete a porter une hierarchie.
+
+    Seules les IMF en portent une : UC-09 le precise, et un bailleur de fonds
+    n'a pas de guichet de quartier. Le `country_code` n'est pas deduit du nom —
+    il est transmis, parce qu'une raison sociale ne dit pas dans quel pays elle
+    opere.
+    """
+
+    company_id: UUID
+    nom: str
+    country_code: str
+    devise: str
+
+
+@dataclass(frozen=True, slots=True)
 class PlanKiosque:
     district_id: str
     city_id: str
@@ -76,6 +92,10 @@ class PlanOrganisation:
     run_id: UUID
     pays: list[PlanPays] = field(default_factory=list)
     blocages: list[str] = field(default_factory=list)
+    #: Ecarts au CDC ASSUMES — le plan reste executable, mais il ne rend pas
+    #: exactement ce que le CDC demande, et il le DIT. Un plan qui rabote une
+    #: exigence en silence fait croire a une conformite qu'il n'a pas.
+    ecarts: list[str] = field(default_factory=list)
 
     @property
     def realisable(self) -> bool:
@@ -104,6 +124,9 @@ class PlanOrganisation:
         lignes.append(
             "  TOTAL : " + " | ".join(f"{cle} {valeur}" for cle, valeur in totaux.items())
         )
+        if self.ecarts:
+            lignes.append("ECARTS AU CDC (assumes, plan executable) :")
+            lignes.extend(f"  - {motif}" for motif in self.ecarts)
         if self.blocages:
             lignes.append("BLOCAGES :")
             lignes.extend(f"  - {motif}" for motif in self.blocages)
@@ -141,15 +164,38 @@ def planifier(
             )
             continue
 
-        nb_kiosques = alea.randint(kiosques_min, kiosques_max)
-        if nb_kiosques > quartiers_dispo:
-            # Un quartier n'heberge qu'un Kiosque : au-dela, on empilerait
-            # plusieurs guichets au meme endroit, ce qu'un bailleur reperait.
+        # `D-03` — un quartier n'heberge qu'UN Kiosque. La geographie plafonne
+        # donc la demande, elle ne la subit pas.
+        #
+        # DEFAUT TROUVE PAR LE PREMIER DRY_RUN REEL, le 09/08 : le tirage se
+        # faisait dans `[10, 20]` puis BLOQUAIT le pays si le referentiel ne
+        # suivait pas. La Cote d'Ivoire n'a que 17 quartiers ; un tirage a 19
+        # supprimait le pays entier du run — 25 % de l'ecosysteme perdu par un
+        # coup de des.
+        #
+        #   CM 25 quartiers · CI 17 · BF 18 · SN 22   (mesure du 09/08)
+        #
+        # Le plancher du CDC est 10 : les quatre pays le tiennent largement. Ce
+        # n'etait donc jamais une impossibilite, seulement une demande mal
+        # bornee. On borne AVANT de tirer.
+        plafond = min(kiosques_max, quartiers_dispo)
+        if plafond < kiosques_min:
+            # La, c'est un vrai blocage : le referentiel ne peut pas honorer le
+            # PLANCHER du CDC. On le dit, on ne rabote pas l'exigence en silence.
             plan.blocages.append(
-                f"{pays} : {nb_kiosques} Kiosques demandes pour {quartiers_dispo} quartiers "
-                f"disponibles — repartition impossible sans doublon geographique"
+                f"{pays} : {quartiers_dispo} quartiers disponibles pour un plancher CDC de "
+                f"{kiosques_min} Kiosques (UC-09) — le referentiel ne peut pas l'honorer"
             )
             continue
+
+        nb_kiosques = alea.randint(kiosques_min, plafond)
+        if plafond < kiosques_max:
+            # Ecart au CDC : signale, jamais tu. `EF-04` prevoit d'enrichir le
+            # referentiel — c'est la reponse, pas un Kiosque en double.
+            plan.ecarts.append(
+                f"{pays} : plafonne a {plafond} Kiosques ({quartiers_dispo} quartiers) "
+                f"au lieu des {kiosques_max} du CDC — `D-03`, un quartier = un Kiosque"
+            )
 
         nb_companies = alea.randint(companies_min, companies_max)
         nb_imf = min(nb_imf_par_pays, nb_companies)

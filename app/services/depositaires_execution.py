@@ -56,25 +56,9 @@ from app.models.enums import RunMode, RunStatus
 from app.repositories import AuditTrailRepository, OrgHierarchyRepository
 from app.services.generateur import Generateur
 from app.services.geographie import ReferentielGeo
-from app.services.organisation import PlanOrganisation
+from app.services.organisation import CompanyPorteuse, PlanOrganisation
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class CompanyPorteuse:
-    """Une IMF deja creee, prete a porter une hierarchie.
-
-    Seules les IMF en portent une : UC-09 le precise, et un bailleur de fonds
-    n'a pas de guichet de quartier. Le `country_code` n'est pas deduit du nom —
-    il est transmis, parce qu'une raison sociale ne dit pas dans quel pays elle
-    opere.
-    """
-
-    company_id: UUID
-    nom: str
-    country_code: str
-    devise: str
 
 
 @dataclass(frozen=True, slots=True)

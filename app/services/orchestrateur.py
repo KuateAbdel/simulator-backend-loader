@@ -314,8 +314,11 @@ class Orchestrateur:
             RunStatus.COMPLETED: Issue.COMPLETED,
             RunStatus.PARTIAL: Issue.PARTIAL,
         }.get(rapport_module.statut, Issue.FAILED)
-        premiere_ligne = rapport_module.resume().splitlines()[0] if rapport_module.resume() else ""
-        return ResultatEtape(etape, issue, premiere_ligne, duree)
+        return ResultatEtape(etape, issue, _essentiel(rapport_module.resume()), duree)
+
+    @staticmethod
+    def _resume_utile(texte: str) -> str:
+        return _essentiel(texte)
 
     async def _journaliser(self, resultat: ResultatEtape) -> None:
         """Un checkpoint par etape — c'est le support de la reprise.
@@ -336,3 +339,23 @@ class Orchestrateur:
                 "mode": self.mode.value,
             },
         )
+
+
+def _essentiel(resume: str) -> str:
+    """La ligne qui explique, pas la premiere venue.
+
+    Le premier jet prenait `splitlines()[0]` — soit « Mode : DRY_RUN » pour
+    tous les executeurs. Un run interrompu affichait donc son mode a la place
+    de sa cause. Un rapport d'echec qui ne dit pas pourquoi ne sert a rien.
+
+    On prend en priorite la premiere ligne d'ECHEC ou de BLOCAGE, sinon le
+    comptage le plus informatif — jamais l'en-tete.
+    """
+    lignes = [ligne.strip() for ligne in resume.splitlines() if ligne.strip()]
+    for ligne in lignes:
+        if ligne.startswith(("ECHEC", "BLOCAGE", "⚠")):
+            return ligne[:160]
+    utiles = [
+        ligne for ligne in lignes if not ligne.startswith(("Mode", "STATUT")) and ":" in ligne
+    ]
+    return (utiles[0] if utiles else lignes[0] if lignes else "")[:160]
