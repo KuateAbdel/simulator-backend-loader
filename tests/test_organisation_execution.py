@@ -24,7 +24,6 @@ from app.services.generateur import Generateur
 from app.services.geographie import ReferentielGeo, charger_referentiel
 from app.services.organisation import planifier
 from app.services.organisation_execution import (
-    DEVISE_PAR_PAYS,
     ExecuteurOrganisation,
     RapportOrganisation,
 )
@@ -236,8 +235,39 @@ class TestAnticipationDesAnomalies:
             assert len(motif) <= 200
 
 
-def test_fra199_la_devise_est_connue_du_loader() -> None:
-    """`Company.currency` est write-only et perdue a la persistance — le Loader
-    doit savoir laquelle il a envoyee."""
-    assert DEVISE_PAR_PAYS["CM"] == "XAF"
-    assert DEVISE_PAR_PAYS["CI"] == DEVISE_PAR_PAYS["BF"] == DEVISE_PAR_PAYS["SN"] == "XOF"
+def test_fra199_la_devise_vient_du_referentiel_pas_d_une_table_codee() -> None:
+    """`Company.currency` est write-only et perdue a la persistance (FRA-199) —
+    raison de plus pour que NOTRE trace soit juste.
+
+    La table `DEVISE_PAR_PAYS` codee en dur a ete retiree : la devise est
+    determinee par la **zone monetaire** portee par le referentiel. XAF est la
+    zone CEMAC, XOF la zone UEMOA. Croisement Sprint 1.
+    """
+    from pathlib import Path
+
+    from app.services.geographie import charger_referentiel
+
+    referentiel = charger_referentiel(Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx"))
+    assert referentiel.devise_du_pays("CM").code == "XAF"
+    for pays in ("CI", "BF", "SN"):
+        assert referentiel.devise_du_pays(pays).code == "XOF"
+
+
+def test_le_telephone_suit_le_plan_de_numerotation_du_pays() -> None:
+    """Defaut reel corrige : `f"+237{600000000 + index}"` codait l'indicatif
+    camerounais en dur POUR LES QUATRE PAYS — une Company senegalaise recevait
+    un numero camerounais. Et `600000001` n'etait meme pas valide au Cameroun,
+    aucun operateur n'y utilisant le prefixe `60`.
+    """
+    import random
+    from pathlib import Path
+
+    from app.services.geographie import charger_referentiel
+
+    referentiel = charger_referentiel(Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx"))
+    for pays, indicatif in (("CM", "237"), ("CI", "225"), ("BF", "226"), ("SN", "221")):
+        alea = random.Random(f"test-{pays}")  # noqa: S311
+        numero, operateur = referentiel.composer_msisdn(pays, "00000001", alea)
+        assert numero.startswith(indicatif), f"{pays} : indicatif errone"
+        assert operateur.country_iso2 == pays
+        assert referentiel.operateur_du_msisdn(numero, pays) is not None

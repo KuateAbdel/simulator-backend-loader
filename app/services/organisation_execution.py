@@ -41,6 +41,7 @@ comptes. Ni produits, ni depositaires, ni clients — ils ont leurs propres etap
 from __future__ import annotations
 
 import logging
+import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -65,10 +66,6 @@ from app.services.geographie import ReferentielGeo
 from app.services.organisation import PlanOrganisation
 
 logger = logging.getLogger(__name__)
-
-#: Devise par pays. FRA-199 : `Company.currency` est write-only et perdue a la
-#: persistance — c'est donc au Loader de savoir laquelle il a envoyee.
-DEVISE_PAR_PAYS: dict[str, str] = {"CM": "XAF", "CI": "XOF", "BF": "XOF", "SN": "XOF"}
 
 #: Patronymes reellement observes chez Faker, par pays. Bouchon utilise tant
 #: que le client Faker n'est pas ecrit — il doit rester DISTINCT par pays,
@@ -188,6 +185,39 @@ class ExecuteurOrganisation:
         return self.mode is RunMode.REAL
 
     # ----------------------------------------------------------------------
+    # Coherence territoriale — croisement avec le Sprint 1
+    # ----------------------------------------------------------------------
+
+    def _telephone_du_pays(self, pays: str, index: int) -> str:
+        """Numero du dirigeant, **conforme au plan de numerotation du pays**.
+
+        Corrige un defaut reel de la premiere version : `f"+237{600000000 +
+        index}"` codait l'indicatif camerounais en dur **pour les quatre
+        pays** — une Company senegalaise recevait un numero camerounais. Et
+        `600000001` n'etait meme pas valide au Cameroun : aucun operateur n'y
+        utilise le prefixe `60` (ils emploient 62, 65, 67, 68, 69).
+
+        Le referentiel porte les 12 plans reels et les parts de marche
+        (`EF-27`, Sprint 1). On les utilise, avec un tirage derive du `run_id`
+        pour rester reproductible (`ENF-15`).
+        """
+        alea = random.Random(f"{self.run_id}-telephone-{pays}-{index}")  # noqa: S311
+        numero, _ = self._referentiel.composer_msisdn(pays, f"{index:08d}", alea)
+        return f"+{numero}"
+
+    def _devise_du_pays(self, pays: str) -> str:
+        """La devise vient du referentiel, jamais d'une table codee en dur.
+
+        `XAF` est la zone CEMAC (Cameroun), `XOF` la zone UEMOA (Cote
+        d'Ivoire, Burkina Faso, Senegal). `FRA-199` fait perdre `currency` a la
+        persistance — raison de plus pour que **notre** trace soit juste.
+        """
+        devise = self._referentiel.devise_du_pays(pays)
+        if devise is None:
+            raise ValueError(f"aucune devise rattachee au pays {pays!r} dans le referentiel")
+        return devise.code
+
+    # ----------------------------------------------------------------------
     # UC-07 — Companies et licences
     # ----------------------------------------------------------------------
 
@@ -243,7 +273,7 @@ class ExecuteurOrganisation:
             latitude=adresse.latitude,
             longitude=adresse.longitude,
         )
-        devise = DEVISE_PAR_PAYS.get(pays.upper(), "XAF")
+        devise = self._devise_du_pays(pays)
 
         if not self.ecriture_reelle:
             rapport.companies_creees.append(raison)
@@ -393,7 +423,7 @@ class ExecuteurOrganisation:
         Un Lender partiellement initialise est un etat LEGITIME (UC-10, cas
         d'exception) : on inscrit ce qui existe, on signale ce qui manque.
         """
-        devise = DEVISE_PAR_PAYS.get(pays.upper(), "XAF")
+        devise = self._devise_du_pays(pays)
         payloads = self._comptes.payloads_des_4_comptes_lender(company_id, nom, devise)
         comptes: dict[str, UUID] = {}
 
@@ -492,7 +522,7 @@ class ExecuteurOrganisation:
                     region=region.name,
                     ville=ville.name,
                     quartier=quartier,
-                    telephone=f"+237{600000000 + index}",
+                    telephone=self._telephone_du_pays(pays, index),
                     rapport=rapport,
                 )
                 if company is None:
