@@ -38,6 +38,7 @@ from typing import Final
 from uuid import UUID, uuid4
 
 from app.core.cdc import AGE_SEUIL_JEUNE, PREFIXE_DONNEES
+from app.core.invariants import valider_coherence_territoriale
 
 #: Formes juridiques reellement observees chez Faker (24 tirages, 08/08).
 #: On les reutilise telles quelles — c'est de la matiere reelle.
@@ -378,6 +379,7 @@ class Generateur:
         occupation: str | None = None,
         latitude: float | None = None,
         longitude: float | None = None,
+        referentiel: object | None = None,
     ) -> IdentiteGeneree:
         """Complete une identite Faker avec ce qui lui manque.
 
@@ -397,12 +399,15 @@ class Generateur:
             # Defaut trouve par la campagne d'ecriture, invisible hors ligne.
             nationality=pays,
             id_number=self.numero_piece(pays),
+            # `id_place` = la ville de residence. Elle est desormais GARANTIE
+            # dans le pays par `valider_coherence_territoriale` ci-dessus : une
+            # piece senegalaise ne peut plus etre delivree a Douala.
             id_place=_sans_accents(ville).title(),
             id_expire_on=self._expiration_piece(),
             phone=telephone,
             email=self.email(first_name, last_name),
             occupation=occupation or "Commercant",
-            adresse=self.adresse(quartier, ville, region, pays, latitude, longitude),
+            adresse=self.adresse(quartier, ville, region, pays, latitude, longitude, referentiel),
         )
 
     def numero_piece(self, country_code: str) -> str:
@@ -438,8 +443,25 @@ class Generateur:
         country_code: str,
         latitude: float | None = None,
         longitude: float | None = None,
+        referentiel: object | None = None,
     ) -> Adresse:
-        """L'adresse est ancree sur un quartier REEL du referentiel."""
+        """L'adresse est ancree sur un quartier REEL du referentiel.
+
+        **Et sur un quartier DU PAYS** — controle ajoute le 10/08 (`D-13`).
+        Sans lui, une Senegalaise domiciliee a Douala franchissait tous les
+        invariants : chaque champ etait correct, leur combinaison n'avait aucun
+        sens. `referentiel` reste optionnel pour ne pas casser les appelants qui
+        composent une adresse hors contexte geographique, mais tout chemin de
+        generation reelle doit le fournir.
+        """
+        if referentiel is not None:
+            valider_coherence_territoriale(
+                pays=country_code,
+                region=region,
+                ville=ville,
+                quartier=quartier,
+                referentiel=referentiel,
+            )
         voie = f"{self._alea.choice(TYPES_DE_VOIE)} {_sans_accents(quartier).title()}"
         return Adresse(
             address_line_1=f"{self._alea.randrange(1, 300)} {voie}",

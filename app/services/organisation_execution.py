@@ -266,6 +266,7 @@ class ExecuteurOrganisation:
             occupation="Dirigeant",
             latitude=adresse.latitude,
             longitude=adresse.longitude,
+            referentiel=self._referentiel,
         )
         devise = self._devise_du_pays(pays)
 
@@ -505,9 +506,32 @@ class ExecuteurOrganisation:
         for plan_pays in plan.pays:
             pays = plan_pays.country_code
             for index in range(plan_pays.nb_companies):
-                region = self._referentiel.regions_du_pays(pays)[index % 10]
+                # DEFAUT TROUVE LE 10/08 PAR `D-13`, invisible pendant deux
+                # jours : la region etait tiree INDEPENDAMMENT de la ville.
+                #
+                #     region = regions_du_pays(pays)[index % 10]   <- au hasard
+                #     ville  = villes_porteuses[index % len(...)]  <- au hasard
+                #
+                # Resultat mesure : region « Adamaoua » avec ville « Yaounde »,
+                # qui est dans « Centre ». L'adresse d'une Company etait donc
+                # geographiquement fausse — deux champs corrects, une
+                # combinaison qui n'existe pas.
+                #
+                # Le `% 10` etait en outre arbitraire : il ignorait le nombre
+                # reel de regions du pays.
+                #
+                # La ville commande desormais sa region, comme dans la realite.
                 villes = self._referentiel.villes_porteuses_de_quartiers(pays)
                 ville = villes[index % len(villes)]
+                region = self._referentiel.region(ville.region_id)
+                if region is None:
+                    rapport.companies_echouees.append(
+                        (
+                            f"{pays}-{index}",
+                            f"ville {ville.name} sans region — referentiel incoherent",
+                        )
+                    )
+                    continue
                 quartiers = self._referentiel.quartiers_de_ville(ville.city_id)
                 quartier = quartiers[index % len(quartiers)].name
 

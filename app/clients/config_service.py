@@ -165,7 +165,13 @@ class ConfigServiceClient:
         telcos = await self.lister_telcos()
         rapport.nb_telcos = len(telcos)
         for telco in telcos:
-            motif = str(telco.get("regex") or telco.get("pattern") or "")
+            # Le champ s'appelle `phone_regex`. Ma premiere version lisait
+            # `regex` puis `pattern` — deux champs qui N'EXISTENT PAS. Elle
+            # aurait declare les QUATORZE operateurs inexploitables : une garde
+            # qui condamne tout au lieu de proteger. Trouve le 10/08 en
+            # comparant notre referentiel au serveur, jamais par un test — la
+            # methode n'est appelee nulle part (ecart #4).
+            motif = str(telco.get("phone_regex") or "")
             if regex_exploitable(motif):
                 rapport.nb_telcos_exploitables += 1
             else:

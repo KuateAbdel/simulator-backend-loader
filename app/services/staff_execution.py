@@ -56,7 +56,11 @@ from uuid import UUID
 
 from app.clients.contracts import IdentityType, UserType
 from app.core.configuration import ConfigurationExecution
-from app.core.invariants import InvariantViole, RegistreUnicite
+from app.core.invariants import (
+    InvariantViole,
+    RegistreUnicite,
+    valider_coherence_territoriale,
+)
 from app.models.enums import RunMode, RunStatus
 from app.services.generateur import patronyme, prenom
 from app.services.geographie import ReferentielGeo
@@ -319,6 +323,21 @@ class ExecuteurStaff:
         region = self._referentiel.region(ville.region_id)
         quartiers = self._referentiel.quartiers_de_ville(ville.city_id)
         quartier = quartiers[rang % len(quartiers)].name if quartiers else ville.name
+
+        # `D-13` — l'adresse est CORRECTE PAR CONSTRUCTION ici : elle sort de
+        # `villes_porteuses_de_quartiers(pays)`. On la VERIFIE quand meme.
+        #
+        # « Correct par construction » n'est pas une contrainte, c'est un chemin
+        # de construction correct. Le jour ou ce chemin change, rien ne le
+        # rattraperait — et le defaut du 10/08 (une Senegalaise domiciliee a
+        # Douala) est ne exactement de cette confiance-la.
+        valider_coherence_territoriale(
+            pays=pays,
+            region=region.name if region else "",
+            ville=ville.name,
+            quartier=quartier,
+            referentiel=self._referentiel,
+        )
 
         graine = f"{pays}{role[:3].upper()}{rang:04d}"
         numero, piece, courriel = self._reserver_identifiants(pays, role, rang, graine)

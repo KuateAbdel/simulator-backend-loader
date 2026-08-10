@@ -320,6 +320,116 @@ def valider_devise_pays(devise: str, pays: str, referentiel: object) -> str:
     return code
 
 
+def valider_coherence_territoriale(
+    *,
+    pays: str,
+    region: str,
+    ville: str,
+    quartier: str,
+    referentiel: object,
+) -> None:
+    """**L'adresse d'une personne DOIT se trouver dans son pays.**
+
+    DEFAUT TROUVE LE 10/08, ET IL PASSAIT TOUS LES AUTRES CONTROLES
+    ------------------------------------------------------------------
+    Une Senegalaise domiciliee a « Douala / Littoral », avec un numero
+    senegalais parfaitement valide et une piece delivree a Douala, franchissait
+    `valider_identite_complete()` sans un mot. Chaque champ etait correct
+    isolement ; **ensemble, ils ne voulaient rien dire**.
+
+    C'est le premier defaut qu'un gerant d'IMF repere : il ouvre le dossier, lit
+    « senegalaise, domiciliee a Douala, piece delivree a Douala », et referme.
+    Ce n'est pas une donnee invalide — c'est une donnee qui n'a pas de sens.
+
+    POURQUOI IL AVAIT ECHAPPE
+    -------------------------
+    Tous les invariants ecrits jusqu'ici portent sur UN champ — l'age, le genre,
+    la piece, le telephone, la devise. Un seul portait sur une RELATION :
+    `valider_coherence_matrimoniale`. Valider les champs ne valide pas leurs
+    liens, exactement comme tester des modules ne teste pas leur cablage.
+
+    CE QU'ELLE VERIFIE
+    ------------------
+    La chaine complete, remontee dans le referentiel :
+
+        quartier -> ville -> region -> pays
+
+    Chaque maillon doit exister ET appartenir au suivant. Un quartier d'une
+    autre ville, une ville d'une autre region, une region d'un autre pays : les
+    trois sont refuses.
+    """
+    attendu = pays.strip().upper()
+    quartiers = getattr(referentiel, "quartiers", None)
+    trouver_v = getattr(referentiel, "ville", None)
+    trouver_r = getattr(referentiel, "region", None)
+    if quartiers is None or trouver_v is None or trouver_r is None:
+        raise InvariantViole("referentiel incomplet — coherence territoriale inverifiable")
+
+    cible_q = _sans_accents_min(quartier)
+    cible_v = _sans_accents_min(ville)
+    cible_r = _sans_accents_min(region)
+
+    # ON NE RESOUT PAS PAR NOM, ON VERIFIE QU'UNE CHAINE COHERENTE EXISTE.
+    #
+    # Premiere version, fausse et rattrapee par les tests : elle cherchait « le »
+    # quartier portant ce nom, puis remontait. Or `Plateau` existe a Dakar ET a
+    # Abidjan — c'est l'homonyme deja rencontre en `D-12`. Elle declarait donc
+    # une adresse dakaroise incoherente parce qu'elle avait trouve celle
+    # d'Abidjan.
+    #
+    # La bonne question n'est pas « ou est ce quartier ? » mais « la combinaison
+    # (quartier, ville, region, pays) existe-t-elle ? ». Un homonyme dans un
+    # autre pays ne prouve rien contre celle-ci.
+    candidats = [q for q in quartiers.values() if _sans_accents_min(q.name) == cible_q]
+    if not candidats:
+        raise InvariantViole(
+            f"quartier '{quartier}' absent du referentiel — `EF-02`. Le Loader "
+            "n'invente aucune geographie : une adresse s'ancre sur un quartier reel."
+        )
+
+    villes_vues: list[str] = []
+    regions_vues: list[str] = []
+    pays_vus: list[str] = []
+    for q in candidats:
+        v = trouver_v(q.city_id)
+        if v is None:
+            continue
+        villes_vues.append(v.name)
+        if _sans_accents_min(v.name) != cible_v:
+            continue
+        rg = trouver_r(v.region_id)
+        if rg is None:
+            continue
+        regions_vues.append(rg.name)
+        if _sans_accents_min(rg.name) != cible_r:
+            continue
+        pays_vus.append(rg.country_iso2)
+        if rg.country_iso2.strip().upper() == attendu:
+            return  # chaine complete et coherente : quartier -> ville -> region -> pays
+
+    if pays_vus:
+        raise InvariantViole(
+            f"adresse incoherente avec la nationalite : '{quartier}, {ville}, {region}' "
+            f"est en {', '.join(sorted(set(pays_vus)))}, la personne est declaree "
+            f"{attendu}. Un client d'une IMF reside dans le pays ou il est enregistre."
+        )
+    if regions_vues:
+        raise InvariantViole(
+            f"la ville '{ville}' n'est pas dans la region '{region}' mais dans "
+            f"'{', '.join(sorted(set(regions_vues)))}' — adresse incoherente."
+        )
+    raise InvariantViole(
+        f"le quartier '{quartier}' n'est pas dans la ville '{ville}' mais dans "
+        f"'{', '.join(sorted(set(villes_vues))) or '?'}' — adresse incoherente."
+    )
+
+
+def _sans_accents_min(texte: str) -> str:
+    """Comparaison tolerante aux accents et a la casse — « Yaounde » = « Yaoundé »."""
+    normalise = unicodedata.normalize("NFKD", texte or "")
+    return "".join(c for c in normalise if not unicodedata.combining(c)).strip().lower()
+
+
 def exiger_champs_renseignes(donnees: dict[str, object], champs: tuple[str, ...]) -> None:
     """Aucun champ vide, jamais.
 

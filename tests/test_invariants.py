@@ -483,3 +483,126 @@ class TestChaineReferentielle:
         types = {q.zone_type for q in referentiel.quartiers.values()}  # type: ignore[attr-defined]
         assert types == {"residential", "commercial", "populaire", "mixte", "peripherique"}
         assert all(q.zone_type for q in referentiel.quartiers.values())  # type: ignore[attr-defined]
+
+
+class TestAdresseDansLePays:
+    """`D-13` — l'adresse d'une personne doit se trouver dans son pays.
+
+    Le defaut fondateur, mesure le 10/08 : une Senegalaise domiciliee a
+    « Douala / Littoral », numero senegalais valide, piece delivree a Douala,
+    franchissait TOUS les invariants. Chaque champ etait correct isolement ;
+    ensemble, ils ne voulaient rien dire.
+    """
+
+    @pytest.fixture(scope="class")
+    def geo(self):
+        from pathlib import Path
+
+        from app.services.geographie import charger_referentiel
+
+        return charger_referentiel(Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx"))
+
+    def test_les_82_adresses_reelles_du_referentiel_passent(self, geo) -> None:
+        from app.core.invariants import valider_coherence_territoriale
+
+        n = 0
+        for pays in ("CM", "CI", "BF", "SN"):
+            for ville in geo.villes_porteuses_de_quartiers(pays):
+                region = geo.region(ville.region_id)
+                assert region is not None
+                for q in geo.quartiers_de_ville(ville.city_id):
+                    valider_coherence_territoriale(
+                        pays=pays,
+                        region=region.name,
+                        ville=ville.name,
+                        quartier=q.name,
+                        referentiel=geo,
+                    )
+                    n += 1
+        assert n == 82
+
+    def test_une_senegalaise_domiciliee_a_douala_est_refusee(self, geo) -> None:
+        """Le cas fondateur."""
+        from app.core.invariants import InvariantViole, valider_coherence_territoriale
+
+        with pytest.raises(InvariantViole, match="est en CM, la personne est declaree SN"):
+            valider_coherence_territoriale(
+                pays="SN",
+                region="Littoral",
+                ville="Douala",
+                quartier="Bonapriso",
+                referentiel=geo,
+            )
+
+    def test_les_deux_Plateau_restent_valides_CHEZ_EUX(self, geo) -> None:
+        """`Plateau` existe a Dakar ET a Abidjan.
+
+        Une premiere version resolvait « le » quartier par son nom et prenait
+        le premier : elle declarait l'adresse dakaroise incoherente parce
+        qu'elle avait trouve celle d'Abidjan. La bonne question n'est pas « ou
+        est ce quartier ? » mais « cette combinaison existe-t-elle ? ».
+        """
+        from app.core.invariants import valider_coherence_territoriale
+
+        valider_coherence_territoriale(
+            pays="SN", region="Dakar", ville="Dakar", quartier="Plateau", referentiel=geo
+        )
+        valider_coherence_territoriale(
+            pays="CI",
+            region="District Autonome d'Abidjan",
+            ville="Abidjan",
+            quartier="Plateau",
+            referentiel=geo,
+        )
+
+    def test_un_Plateau_attribue_au_mauvais_pays_est_refuse(self, geo) -> None:
+        from app.core.invariants import InvariantViole, valider_coherence_territoriale
+
+        with pytest.raises(InvariantViole):
+            valider_coherence_territoriale(
+                pays="CI",
+                region="Dakar",
+                ville="Dakar",
+                quartier="Plateau",
+                referentiel=geo,
+            )
+
+    def test_un_quartier_invente_est_refuse(self, geo) -> None:
+        """`EF-02` — le Loader n'invente aucune geographie."""
+        from app.core.invariants import InvariantViole, valider_coherence_territoriale
+
+        with pytest.raises(InvariantViole, match="absent du referentiel"):
+            valider_coherence_territoriale(
+                pays="CM",
+                region="Littoral",
+                ville="Douala",
+                quartier="Atlantide",
+                referentiel=geo,
+            )
+
+    def test_un_bon_quartier_dans_la_mauvaise_ville_est_refuse(self, geo) -> None:
+        from app.core.invariants import InvariantViole, valider_coherence_territoriale
+
+        with pytest.raises(InvariantViole, match="n'est pas dans la ville"):
+            valider_coherence_territoriale(
+                pays="CM",
+                region="Littoral",
+                ville="Yaounde",
+                quartier="Bonapriso",
+                referentiel=geo,
+            )
+
+    def test_une_ville_dans_la_mauvaise_region_est_refusee(self, geo) -> None:
+        """C'est le defaut trouve dans `organisation_execution` : la region
+        etait tiree INDEPENDAMMENT de la ville — « Adamaoua » avec
+        « Yaounde », qui est dans « Centre »."""
+        from app.core.invariants import InvariantViole, valider_coherence_territoriale
+
+        with pytest.raises(InvariantViole, match="n'est pas dans la region"):
+            valider_coherence_territoriale(
+                pays="CM",
+                region="Adamaoua",
+                ville="Yaounde",
+                quartier="Bastos",
+                referentiel=geo,
+            )
