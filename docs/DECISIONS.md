@@ -301,7 +301,7 @@ lui, le porte dès maintenant.
 | # | Sujet | Pourquoi c'est bloqué |
 |---|---|---|
 | ~~ANO-CPY-BUG-06~~ | ~~Création de Company bloquée~~ | ✅ **LEVÉ, mesuré le 08/08** — `POST /companies/` → HTTP 201. L'étape Organisation est débloquée. |
-| **A-01** | **Sénégal indisponible chez Faker** | 500 clients concernés. Trois voies : générateur interne pour SN · demande à Oti d'ajouter SN au `run_id` · réduction à 3 pays (contredirait `OBJ-01`). **Arbitrage utilisateur.** |
+| ~~A-01~~ | ~~**Sénégal indisponible chez Faker**~~ ✅ **TRANCHÉ le 10/08 — voir note ci-dessous.** ~~ | 500 clients concernés. Trois voies : générateur interne pour SN · demande à Oti d'ajouter SN au `run_id` · réduction à 3 pays (contredirait `OBJ-01`). **Arbitrage utilisateur.** |
 | **A-02** | **`EF-80` inapplicable tel qu'écrit** | Les champs `decision.*` n'existent pas, et les 2000 clients viennent de la famille A qui ne porte aucune décision. Deux options : le Loader attribue lui-même APPROVED/DECLINED dans les proportions du CDC (l'isolation vis-à-vis de ReadyScore reste totale), ou seuls quelques clients ont un vrai scoring. **Recommandation : la première.** |
 | ~~A-03~~ | ~~Raisons sociales non crédibles~~ | ✅ **RÉSOLU** — `app/services/generateur.py`. Le Loader **compose** à partir de la matière réelle de Faker (patronymes, formes juridiques, secteurs) : `DEMO_SARL Kouassi Textile` au lieu de `Test Business CI 200`. Rien n'est inventé à partir de rien. |
 | **A-04** | **Où stocker les ~700 prêts simulés** | `CR-10` exige de vérifier 100 séquences de remboursement, `ENF-14` les indicateurs PAR. Sans persistance, invérifiable. Une 7ᵉ collection `simulated_loans` ? |
@@ -402,3 +402,49 @@ Companies (3–5 par pays) ; il ne tiendra **pas** pour 2 000 clients. Le vrai
 tirage arrive avec le client Faker, **Sprint 4** — `D-FAKER-1` s'y appliquera.
 
 **Vérifié** : `TestUniciteDesNoms`, 4 tests · 341 au total.
+
+---
+
+## `A-01` — tranché le 10 août : le Sénégal n'est pas un cas particulier
+
+**Décision du pilote** : *« l'équipe Faker a dit vouloir l'intégrer, donc c'est
+prévu. Ne sois pas statique : traite le Sénégal comme tous les autres. »*
+
+### Ce que cet arbitrage change : rien dans la conception
+
+Vérifié le 10 août, le Sénégal était **déjà traité comme les trois autres à
+chaque niveau** :
+
+| | |
+|---|---|
+| `PAYS_CIBLES` | `("CM","CI","BF","SN")` — depuis le premier commit |
+| Référentiel | 22 quartiers, +221, XOF/BCEAO |
+| Opérateurs | Orange (Sonatel) 55 % · Free (Yas) 25 % · Expresso 20 % — **les trois vrais, avec leurs vrais préfixes** |
+| Planification | 10 Kiosques prévus dans le plan courant |
+| Invariants | `valider_devise_pays("XOF","SN")` ✅ · `XAF`, `EUR`, `USD` refusés |
+| MSISDN | **200/200 attribuables** à un opérateur réel sénégalais |
+
+**`A-01` ne bloquait qu'une chose : la source des payloads clients du Sprint 4.**
+Aucun module existant n'en dépend. La conception n'a jamais été statique sur ce
+point — c'est le **fournisseur de données** qui l'était.
+
+### Ce qui reste vrai, et qui n'est pas un blocage
+
+Tant que Faker ne rend pas le Sénégal, les 500 clients sénégalais du Sprint 4
+n'ont pas de source. Deux voies, et aucune n'exige de toucher à la conception :
+
+1. **Attendre l'intégration annoncée** — voie retenue par défaut ;
+2. **Composer** ces 500 clients comme le Loader compose déjà les raisons
+   sociales, les dates de naissance, les adresses et les MSISDN — puisque
+   *« les MSISDN de Faker ne respectent aucun plan réel »* et que nous les
+   remplaçons **déjà pour les quatre pays**.
+
+> **Le point de méthode** : le Loader ne dépend de Faker que pour les
+> patronymes, les formes juridiques et les secteurs. Tout le reste — géographie,
+> numérotation, identité, cohérence monétaire — vient de **notre** référentiel.
+> C'est précisément ce qui fait qu'un pays absent de Faker ne casse pas la
+> conception.
+
+**Vérifié le 10/08** : devises cloisonnées par pays (aucun croisement accepté),
+12 opérateurs réels avec leurs plans de numérotation, 800 MSISDN générés sur
+4 pays, **800 attribuables**.
