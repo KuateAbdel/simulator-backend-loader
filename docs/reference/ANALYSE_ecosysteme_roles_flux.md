@@ -148,3 +148,63 @@ l'Agent (CO) est la personne qui collecte**, validée par le Staff.
 *Pages Confluence restantes à exploiter : Lexique des Termes Clés (22118403),
 Core Engine & Shared Services (10715137), Définitions des Statuts Comptes
 (32964609), Stack Technique & Méthodologie (18448385), Audit RBAC (23232514).*
+
+---
+
+## 6. Le système COMPLET — et où le Loader se situe (lecture des 5 dernières pages)
+
+Lecture faite du Lexique (22118403), Core Engine (10715137), Statuts Comptes
+(32964609), Stack & Méthodologie (18448385).
+
+### Ce que ces pages révèlent du système entier
+
+| Concept clé | Ce que c'est | Le Loader le couvre ? |
+|---|---|---|
+| **Multi-tenant / marque blanche** | chaque partenaire (Baobab, SoliMFI…) est un *tenant* isolé sur la même infra | ✅ **oui** — nos Companies SONT les tenants |
+| **KYC 3 niveaux** (KYC0/1/2) | plafonds selon vérification d'identité (BCEAO) | ✅ nos identités portent le KYC complet |
+| **Statuts de compte** | Actif → Suspendu / Dormant / Clos (+ Pending / Blocked) | ✅ mesuré (`ANO-ACC-STATUS`), respecté |
+| **Collecte Cash + Produit** | épargne monnaie / articles physiques (kg, litre) | ✅ `D-COL`, catalogue COLLECT |
+| **Réconciliation** | le siège rapproche les collectes du cash reçu | ✅ c'est le 2ᵉ temps (validation ST) |
+| **Paiement marchand** (QR/NFC/MDR) | client paie un commerçant | ❌ **hors 9 services** — module Wallet |
+| **Top-Up / Float agent** | rechargement wallet, liquidité agent | ❌ **hors périmètre** — Mifos Payment |
+| **Bulk Payment** | paiement de masse (salaires) | ❌ module séparé, jamais rencontré |
+| **Group Lending / Round-Up** | prêt solidaire, arrondi | ❌ « en développement » |
+
+### La confirmation de la Stack (page 18448385)
+
+- **Serveur Test = `152.53.168.189`** — c'est **exactement** la gateway que nous
+  avons mesurée le 10/08. ARM64, NetCup. Confirmé.
+- Stack : **FastAPI, MongoDB, Redis, Kafka, PostgreSQL** — le Loader est en
+  FastAPI + MongoDB, aligné.
+- Environnements : **DEV / TEST / PRE-PROD-DEMO** — le Loader cible TEST + DEMO.
+- **DDD, Multi-tenant, Event-Driven, Zero Trust** — et *« Dynamic UI Rendering
+  basé sur la Matrice RBAC »* : l'interface elle-même se dessine selon les
+  permissions. D'où l'importance des 12 rôles que nous créons.
+
+---
+
+## 7. Verdict d'alignement du Loader
+
+**Le Loader couvre exactement le socle que sa mission lui assigne, et le couvre
+juste.**
+
+| Module de l'écosystème | Services | Loader |
+|---|---|---|
+| **Administration** | user, company, identity, account, config | ✅ **peuplé** |
+| **Collecte** | depositary, client, collect | ✅ **peuplé** |
+| **Prêt** | lender, (loan) | 🟡 Lenders enregistrés ; prêts non injectables (`loan-service` absent) |
+| **Canal USSD** | ussd | ⬜ découvert, non consommé |
+| **Wallet / Paiement** | Mifos, Transaction, Partner MoMo | ❌ **hors périmètre** (Kafka, `ENF-16`) |
+| **Bulk** | — | ❌ hors périmètre |
+
+**Les frontières ne sont pas des trous — ce sont des décisions.** Le Loader est
+un **orchestrateur HTTP** (`ENF-16`) : il ne touche pas au Wallet (Kafka), ne
+simule pas les prêts (`loan-service` non livré), n'entre pas dans le paiement
+marchand. Il peuple **l'épargne de proximité et son socle administratif** — le
+cœur de la microfinance.
+
+> **Rien de ce qui a été mesuré ne contredit ces documents. Tout ce que ces
+> documents décrivent du périmètre Loader, le Loader le respecte.** L'arbre,
+> les rôles, les types de compte, la collecte à deux temps, l'écriture en ROOT,
+> la cohérence monétaire XAF/XOF, le KYC — chaque pièce de notre conception a
+> maintenant sa justification métier dans le système officiel.
