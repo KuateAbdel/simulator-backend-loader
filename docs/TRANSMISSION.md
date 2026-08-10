@@ -453,10 +453,28 @@ apparaîtront dans toute démonstration qui liste les Companies.
 
 ### 6.3 Des choses que j'ai remarquées sans les documenter
 
-**Le référentiel contient 51 régions pour 50 villes.** Une région n'a donc
-aucune ville. Je ne l'ai jamais investigué — le planificateur n'utilise que les
-villes *porteuses de quartiers*, donc ça ne casse rien. Mais c'est peut-être
-une anomalie du classeur.
+**HUIT régions ne portent aucune ville** — `CI-05` Denguélé, `CI-13` Woroba,
+`BF-13` Sud-Ouest, `SN-03` Fatick, `SN-04` Kaffrine, `SN-06` Kédougou, `SN-09`
+Matam, `SN-11` Sédhiou.
+
+> ⚠️ **Correction du 9 août.** Une première version de ce document écrivait
+> *« 51 régions pour 50 villes, donc une région sans ville »*. **Arithmétique
+> naïve, chiffre faux** : cinq régions portent plusieurs villes (7 villes
+> surnuméraires), ce qui masque sept des huit vides. Corrigé sur vérification
+> du nouveau pilote.
+
+**Ce ne sont pas des lacunes du classeur — ce sont des choix de construction.**
+Un Kiosque de microfinance s'implante dans un quartier urbain identifiable, pas
+dans un village sans découpage. Le classeur est **leur** fichier, construit par
+eux ; les régions sans ville et les villes sans quartier sont cohérentes avec
+le terrain.
+
+**Le fait mesuré à retenir, sans l'interprétation fautive** : la génération
+exploite **11 régions sur 51** et **12 villes sur 50** — celles qui portent des
+quartiers. `OBJ-01` annonce « 51 régions, 50 villes, 82 quartiers » ; la
+démonstration montrera **12 villes**. Ce n'est pas une correction à faire,
+c'est **une phrase à préparer pour le 14**. La capacité reste confortable :
+82 quartiers pour 40 à 80 Kiosques.
 
 **Le Burkina Faso n'a que 2 villes porteuses de quartiers.** C'est le goulot
 d'étranglement de tout l'arbre organisationnel : une Agence placée ailleurs ne
