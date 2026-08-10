@@ -448,3 +448,65 @@ n'ont pas de source. Deux voies, et aucune n'exige de toucher à la conception :
 **Vérifié le 10/08** : devises cloisonnées par pays (aucun croisement accepté),
 12 opérateurs réels avec leurs plans de numérotation, 800 MSISDN générés sur
 4 pays, **800 attribuables**.
+
+---
+
+## D-09 v2 · Mapping role -> UserType revise — alignement CDC + Manuel (10/08)
+
+**Ce qui a change.** Le premier mapping `D-09` classait 9 des 12 roles metier
+en `UserType.STAFF`. **C'etait une erreur de lecture du systeme**, revelee en
+lisant la documentation officielle (Doc Fonctionnel, Manuel de Reference
+14516354, Matrice RBAC 10321921, CDC).
+
+**La distinction que j'avais manquee :**
+
+| UserType | Qui c'est (Manuel de Reference) |
+|---|---|
+| `STAFF` | l'equipe de gestion **du siege FinZuu** (Back-Office) |
+| `COMPANY` | le personnel **d'une institution cliente** — *« englobe le Business, l'Agent, le Kiosque, la Secretaire, le CFO, le Guichetier »* |
+
+**Le Loader genere des INSTITUTIONS (IMF), pas le siege.** Le CDC est explicite :
+*« il rattache chaque Agent a une **Company mere** »*. Un Agent, un Kiosque, une
+Branche appartiennent a une institution — donc `COMPANY`, pas `STAFF`.
+
+**Le mapping n'etait pas prescrit.** La page Seed v2.0 note : *« le mapping
+12 roles -> 5 UserType n'est pas encore materialise »*. `D-09` etait donc une
+decision de ma part, non une exigence — et elle etait fausse.
+
+### Le mapping revise
+
+| Role | Ancien | Nouveau | Justification |
+|---|---|---|---|
+| Super-Admin | ROOT | **ROOT** | administration plateforme (inchange) |
+| Admin | STAFF | **COMPANY** | admin d'une institution |
+| Marketing | STAFF | **COMPANY** | marketing/campagnes d'institution |
+| Collecte | STAFF | **COMPANY** | pilotage collecte terrain (CO) |
+| Comptable | STAFF | **COMPANY** | CFO d'institution (Manuel : CO englobe le CFO) |
+| Branche | STAFF | **COMPANY** | unite territoriale de l'institution |
+| Agent | STAFF | **COMPANY** | rattache a une Company mere (CDC) |
+| **Compliance** | STAFF | **STAFF** | validation KYC finale — fonction SIEGE (Matrice RBAC : approbation = Institution/ST) |
+| **Employe/IT** | STAFF | **STAFF** | exploitation, logs systeme — fonction SIEGE exclusive |
+| Marchand, Kiosque | COMPANY | **COMPANY** | inchange |
+| Client | CUSTOMER | **CUSTOMER** | inchange |
+
+**Repartition : 1 ROOT, 8 COMPANY, 2 STAFF, 1 CUSTOMER.**
+
+### Trois lignes de conduite respectees
+
+1. **La geographie n'est pas touchee.** Le `type_user` est du TRANSPORT
+   (conformiste, on suit leur contrat) ; l'arbre et le referentiel geographique
+   sont notre MODELE (anti-corruption, notre richesse). Corriger un type ne
+   change rien a la geographie.
+2. **Les permissions restent distinctes.** Le *type* (niveau 1) et les
+   *permissions* (niveau 3) sont deux choses. Cette revision ne touche que le
+   type ; les permissions par role restent l'arbitrage `A-05`, non valide.
+3. **Les 3 niveaux ne se confondent pas** : UserType (5, contrat CDC) / Role-
+   Groupe (12, Seed v2.0) / Permission (40, catalogue serveur).
+
+### Consequence sur l'environnement TEST
+
+Les 11 groupes deja crees en base (run du 09/08) portent l'ANCIEN type. Le
+`GET`-avant-`POST` les reutilise par NOM — il ne corrigera donc pas leur type
+tout seul. Pour resynchroniser : `DELETE /groupes/{id}` (fonctionnel, prouve le
+09/08) sur les 6 roles reclasses, puis recreation. **A faire au prochain run
+`REAL`, signale, pas execute en silence.**

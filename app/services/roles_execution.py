@@ -9,8 +9,27 @@ recree pas.
 
 Origine des 12 roles : *Strategie Seed v2.0*, reprise en Gap 1 de la page
 Service Anatomy user-service (56360965). Le Confluence note explicitement que
-le mapping vers les 5 `UserType` *« n'est pas encore materialise »* — celui de
-`D-09` est le premier.
+le mapping vers les 5 `UserType` *« n'est pas encore materialise »*.
+
+MAPPING REVISE LE 10/08 (D-09 v2) — alignement sur le CDC et le Manuel.
+Le premier mapping mettait 9 roles en `STAFF`. C'etait une erreur de lecture :
+`STAFF` designe le SIEGE FinZuu, `COMPANY` le personnel des INSTITUTIONS
+clientes. Or le Loader genere des institutions (IMF), pas le siege — le CDC
+dit « rattache chaque Agent a une Company mere », et le Manuel de Reference
+(14516354) dit « CO englobe le Business, l'Agent et le Kiosque ».
+
+  ROOT (1)     Super-Admin — administration complete de la plateforme
+  STAFF (2)    Compliance, Employe/IT — fonctions SIEGE exclusives
+               (validation KYC finale, exploitation, logs systeme : la
+               Matrice RBAC les reserve a l'Institution/ST)
+  COMPANY (8)  Admin, Marketing, Collecte, Comptable, Branche, Agent,
+               Marchand, Kiosque — personnel operationnel d'institution
+  CUSTOMER (1) Client — le client final
+
+Ne touche PAS a la geographie ni a l'arbre org_hierarchy : le TYPE d'un user
+est du TRANSPORT (conformiste), le modele geographique reste notre richesse
+(anti-corruption). Les PERMISSIONS par role restent l'arbitrage A-05, distinct
+du type.
 
 CE QUI REND CE MODULE PARTICULIER
 ----------------------------------
@@ -98,15 +117,15 @@ ROLES_METIER: tuple[RoleMetier, ...] = (
     RoleMetier(
         "Admin",
         "Administration d'une institution : utilisateurs, roles, parametrage",
-        TagGroupe.STAFF,
-        UserType.STAFF,
+        TagGroupe.COMPANY,
+        UserType.COMPANY,
         ("USER_", "COMPANY_", "IDENTITY_"),
     ),
     RoleMetier(
         "Marketing",
         "Consultation de la base client et des campagnes",
-        TagGroupe.STAFF,
-        UserType.STAFF,
+        TagGroupe.COMPANY,
+        UserType.COMPANY,
         ("CLIENT_", "PRODUCT_"),
     ),
     RoleMetier(
@@ -119,22 +138,22 @@ ROLES_METIER: tuple[RoleMetier, ...] = (
     RoleMetier(
         "Collecte",
         "Pilotage des operations de collecte terrain",
-        TagGroupe.STAFF,
-        UserType.STAFF,
+        TagGroupe.COMPANY,
+        UserType.COMPANY,
         ("COLLECT_", "DEPOSITARY_"),
     ),
     RoleMetier(
         "Comptable",
         "Consultation des comptes et des mouvements financiers",
-        TagGroupe.STAFF,
-        UserType.STAFF,
+        TagGroupe.COMPANY,
+        UserType.COMPANY,
         ("ACCOUNT_",),
     ),
     RoleMetier(
         "Branche",
         "Encadrement d'une unite territoriale",
-        TagGroupe.STAFF,
-        UserType.STAFF,
+        TagGroupe.COMPANY,
+        UserType.COMPANY,
         ("DEPOSITARY_", "CLIENT_"),
     ),
     RoleMetier(
@@ -147,8 +166,8 @@ ROLES_METIER: tuple[RoleMetier, ...] = (
     RoleMetier(
         "Agent",
         "Agent de terrain rattache a un Kiosque",
-        TagGroupe.STAFF,
-        UserType.STAFF,
+        TagGroupe.COMPANY,
+        UserType.COMPANY,
         ("COLLECT_", "CLIENT_"),
     ),
     RoleMetier(
