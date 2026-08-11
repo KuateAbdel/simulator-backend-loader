@@ -77,7 +77,7 @@ import logging
 import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
-from uuid import UUID
+from uuid import NAMESPACE_OID, UUID, uuid5
 
 from app.clients.base import ErreurService
 from app.clients.client_service import (
@@ -457,6 +457,14 @@ class ExecuteurClients:
             return rapport
 
         for pays, cible in self._configuration.repartir_clients().items():
+            # Un pays DESACTIVE arrive ici avec une cible de zero. Lui fabriquer
+            # un quota et une alerte « EF-26 inapplicable, 0 clients non
+            # generes » serait du bruit — et le rapport a blanc est lu par un
+            # humain (`D-01`) : chaque ligne parasite dilue celles qui comptent.
+            # Le motif de desactivation vit deja dans l'empreinte de
+            # configuration persistee avec le run (`D-10`).
+            if cible == 0:
+                continue
             quota = QuotaPays(pays=pays, cible=cible)
             rapport.quotas.append(quota)
 
@@ -838,7 +846,7 @@ class ExecuteurClients:
             return compose
 
         try:
-            await self._clients.onboarder(
+            fiche = await self._clients.onboarder(
                 msisdn=compose.msisdn,
                 identity=compose.identite.en_payload(),
                 product_id=produit.product_id,
@@ -852,9 +860,45 @@ class ExecuteurClients:
             rapport.echoues.append((faker.client_id, str(erreur)[:200]))
             return None
 
+        # LE SECOND TEMPS DU WRITE-AHEAD — defaut trouve le 11/08 EN ECRIVANT LES
+        # TESTS de ce module : `reserver()` etait appele avant le reseau, et
+        # `confirmer()` ne l'etait NULLE PART. En REEL, les 1500 clients seraient
+        # tous restes RESERVE. Consequence double : la reconciliation aurait crie
+        # 1500 orphelines sur un run REUSSI, et `compter_par_usage()` — qui ne
+        # compte que les consommations SCELLEES — aurait affiche ZERO client au
+        # rapport. La moitie d'un write-ahead log ne vaut rien ; onzieme
+        # occurrence du defaut recurrent, celle-ci dans du code du jour meme.
+        await self._sceller(faker.client_id, fiche)
+
         # Compte APRES l'ecriture : un compteur incremente sur une intention
         # annoncerait des comptes qui n'existent pas.
         rapport.comptes_attendus += 1
         rapport.solde_dote += solde_initial(faker)
         rapport.crees.append(nom)
         return compose
+
+    async def _sceller(self, faker_client_id: str, fiche: dict[str, object]) -> None:
+        """Scelle la consommation au registre — la preuve que l'entite existe.
+
+        L'identifiant serveur n'est PAS garanti au format UUID : le contrat de
+        client-service ne le declare pas, et l'ecriture reelle de ce module n'a
+        jamais eu lieu. Un id illisible ne doit pas faire perdre le lien — on
+        derive alors un UUID stable (uuid5 du meme id brut rend toujours le meme
+        UUID) et l'id brut est journalise : la tracabilite vit dans le log.
+
+        `ConsommationIncoherente` n'est PAS rattrapee ici, volontairement : elle
+        signale qu'une entite irreversible existe hors registre ou en double —
+        un defaut de cablage qui doit crier, pas un aleas d'exploitation.
+        """
+        brut = ClientServiceClient.identifiant(fiche)
+        try:
+            entite = UUID(str(brut))
+        except ValueError:
+            entite = uuid5(NAMESPACE_OID, f"finzuu-client:{brut}")
+            logger.warning(
+                "id serveur %r hors format UUID — consommation scellee sous l'UUID "
+                "derive %s (stable : le meme id rend toujours le meme UUID)",
+                brut,
+                entite,
+            )
+        await self._ledger.confirmer(faker_client_id, entite)
