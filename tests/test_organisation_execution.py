@@ -188,7 +188,10 @@ class TestDryRun:
 
         rapport = await executeur.executer(plan, SIM_START, SIM_END)
 
-        attendu = sum(p.nb_companies for p in plan.pays)
+        # `EF-12` — les 4 Lenders institutionnels GLOBAUX s'ajoutent aux
+        # Companies par pays du plan. Ils etaient auparavant une simple ligne de
+        # rapport, jamais crees : le total attendu ne les comptait donc pas.
+        attendu = sum(p.nb_companies for p in plan.pays) + len(LENDERS_INSTITUTIONNELS)
         assert len(rapport.companies_creees) == attendu
         assert len(rapport.admins_crees) == attendu, "un Admin User par Company (D-CMP-2)"
         assert rapport.statut is RunStatus.COMPLETED
@@ -214,8 +217,10 @@ class TestAnticipationDesAnomalies:
 
         assert rapport.companies_echouees, "l'echec doit etre journalise"
         assert all("NoneType" in motif for _, motif in rapport.companies_echouees)
-        assert len(rapport.companies_echouees) == sum(p.nb_companies for p in plan.pays), (
-            "toutes les Companies ont ete tentees, aucune interruption"
+        attendu = sum(p.nb_companies for p in plan.pays) + len(LENDERS_INSTITUTIONNELS)
+        assert len(rapport.companies_echouees) == attendu, (
+            "toutes les Companies ont ete tentees, institutionnelles comprises, "
+            "aucune interruption"
         )
         assert rapport.statut is RunStatus.FAILED, "aucune Company creee = probleme systemique"
 

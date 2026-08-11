@@ -86,7 +86,11 @@ class LenderRegistryEntry(LoaderDocument):
     id: UUID = Field(alias="_id")
     company_id: UUID = Field(description="Reference vers la Company porteuse du role")
     lender_type: LenderType
-    country_code: str = Field(min_length=2, max_length=2)
+    #: `None` pour les 4 institutionnels : `EF-12` les qualifie de **globaux**,
+    #: ils n'ont pas de pays d'intervention. Les 12 locaux le portent toujours.
+    #: Inventer un code fictif aurait contredit `EF-05`, qui borne le perimetre
+    #: aux quatre pays cibles.
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
     capital_account_id: UUID | None = None
     interest_account_id: UUID | None = None
     penalty_account_id: UUID | None = None

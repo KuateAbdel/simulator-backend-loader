@@ -35,7 +35,7 @@ class LendersRegistryRepository(RepositoryBase):
         self,
         company_id: UUID,
         lender_type: LenderType,
-        country_code: str,
+        country_code: str | None,
         comptes: dict[str, UUID] | None = None,
     ) -> LenderRegistryEntry | None:
         """Inscrit le role. Renvoie None si la Company le porte deja.
@@ -48,7 +48,7 @@ class LendersRegistryRepository(RepositoryBase):
             id=uuid4(),
             company_id=company_id,
             lender_type=lender_type,
-            country_code=country_code.upper(),
+            country_code=country_code.upper() if country_code else None,
             capital_account_id=comptes.get("capital"),
             interest_account_id=comptes.get("interest"),
             penalty_account_id=comptes.get("penalty"),

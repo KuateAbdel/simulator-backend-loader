@@ -44,7 +44,7 @@ import logging
 import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -58,6 +58,8 @@ from app.core.cdc import (
     LENDERS_INSTITUTIONNELS,
     LENDERS_LOCAUX_PAR_PAYS,
     LICENCE_MARGE_FUTURE_JOURS,
+    PAYS_CIBLES,
+    PREFIXE_DONNEES,
 )
 from app.models.enums import LenderType, RunMode, RunStatus
 from app.repositories import AuditTrailRepository, LendersRegistryRepository
@@ -228,13 +230,23 @@ class ExecuteurOrganisation:
         telephone: str,
         rapport: RapportOrganisation,
         est_imf: bool = False,
+        raison_imposee: str | None = None,
     ) -> dict[str, Any] | None:
         """Cree une Company, sa licence et son Admin User.
 
         Renvoie None si la creation echoue — l'appelant poursuit avec la
         suivante, conformement a UC-07.
+
+        `raison_imposee` court-circuite la composition du nom. Un seul cas
+        l'exige, et `UC-08` est formel : les 4 Lenders institutionnels portent
+        *« leurs identites officielles »*. Les passer par `raison_sociale()` les
+        deformait — « IFC » devenait « Etablissement Ifc Financement ». Un nom
+        officiel ne se compose pas, il se recopie ; seul le prefixe `DEMO_`
+        s'ajoute, parce que `EF-63` l'exige de toute donnee generee.
         """
-        raison = self._generateur.raison_sociale(patronyme, forme_juridique, secteur, pays)
+        raison = raison_imposee or self._generateur.raison_sociale(
+            patronyme, forme_juridique, secteur, pays
+        )
         court = self._generateur.nom_court(raison)
 
         # INV-CPY-01 — GET-avant-POST. Une Company deja presente n'est jamais
@@ -422,8 +434,14 @@ class ExecuteurOrganisation:
         lender_type: LenderType,
         pays: str,
         rapport: RapportOrganisation,
+        portee_mondiale: bool = False,
     ) -> None:
         """UC-10 — cree les 4 comptes puis inscrit le role au registre.
+
+        `portee_mondiale` distingue les 4 institutionnels des 12 locaux : `EF-12`
+        les qualifie de **globaux**, et le registre le dit en n'inscrivant aucun
+        `country_code`. `pays` reste renseigne — il porte la devise du bureau,
+        pas le perimetre d'intervention.
 
         Un Lender partiellement initialise est un etat LEGITIME (UC-10, cas
         d'exception) : on inscrit ce qui existe, on signale ce qui manque.
@@ -458,7 +476,7 @@ class ExecuteurOrganisation:
         entree = await self._registre.enregistrer(
             company_id=UUID(company_id),
             lender_type=lender_type,
-            country_code=pays,
+            country_code=None if portee_mondiale else pays,
             comptes=comptes,
         )
         if entree is None:
@@ -541,12 +559,22 @@ class ExecuteurOrganisation:
                     if source_patronymes
                     else _patronyme_bouchon(pays, index)
                 )
+                # `EF-10` — « distribution des types configurables (IMF, banque,
+                # fondation, merchant) ». Le CDC nomme QUATRE types ; nous n'en
+                # emettions que DEUX, `IMF` et `BANK`. Consequence visible dans
+                # le rapport a blanc : « DEMO_SA Fall Commerce » etait typee
+                # `BANK` — un commerce n'est pas une banque.
+                #
+                # `AGENCY` et `KIOSK` ne sont jamais emis : ce sont nos niveaux
+                # LOGIQUES (`D-05`), ils n'ont pas de contrepartie Company.
+                # `FUNDING_PROVIDER` est reserve aux 4 institutionnels (`EF-12`).
+                type_company, forme, secteur = _profil_company(est_imf, index)
                 company = await self.creer_company(
                     pays=pays,
                     patronyme=patronyme,
-                    forme_juridique="SARL" if est_imf else "SA",
-                    secteur="MicroFinance" if est_imf else "Commerce",
-                    type_company=CompanyType.IMF if est_imf else CompanyType.BANK,
+                    forme_juridique=forme,
+                    secteur=secteur,
+                    type_company=type_company,
                     region=region.name,
                     ville=ville.name,
                     quartier=quartier,
@@ -571,12 +599,128 @@ class ExecuteurOrganisation:
                             rapport=rapport,
                         )
 
-        # UC-08 — les 4 institutionnels, noms fixes, jamais issus de Faker.
-        for nom_institutionnel in LENDERS_INSTITUTIONNELS:
-            rapport.lenders_enregistres.append(f"{nom_institutionnel} [INSTITUTIONNEL, prevu]")
-
+        await self._creer_lenders_institutionnels(sim_start, sim_end, rapport)
         return rapport
+
+    async def _creer_lenders_institutionnels(
+        self, sim_start: date, sim_end: date, rapport: RapportOrganisation
+    ) -> None:
+        """`UC-08` et `EF-12` — les 4 Lenders institutionnels GLOBAUX.
+
+        CE QUI ETAIT FAIT AVANT, ET CE QUE CA VALAIT
+        ---------------------------------------------
+        Une ligne de rapport, `[INSTITUTIONNEL, prevu]`, et rien de cree. Le
+        resume affichait donc « Lenders : 16 » pour 12 reels. `UC-08` exige
+        qu'ils soient *« crees dans le systeme »*, et `EF-13` exige les 4 comptes
+        de **chaque** Lender : il manquait 4 Companies, 4 licences et 16 comptes.
+
+        POURQUOI ILS SONT DES COMPANIES `FUNDING_PROVIDER`
+        --------------------------------------------------
+        `UC-07` liste « Fonds institutionnel » parmi les 7 types, et
+        `CompanyType.FUNDING_PROVIDER` est sa valeur serveur. Un Lender reste un
+        ROLE porte par une Company (`D-02`) : il n'existe pas d'entite Lender.
+
+        LEUR ADRESSE — le point qui demandait une decision d'ingenieur
+        --------------------------------------------------------------
+        `EF-12` les qualifie de **globaux**, `EF-11` exige que **chaque** Company
+        soit rattachee a une Region existante de son pays. Les deux tiennent
+        ensemble parce que ces institutions ont reellement des **bureaux pays**
+        en Afrique de l'Ouest et centrale : l'entite creee ici est le bureau
+        regional, pas le siege mondial.
+
+        L'affectation est une rotation deterministe sur les 4 pays cibles — un
+        bureau par pays, dans l'ordre du referentiel. Elle ne pretend PAS
+        reproduire les sieges reels : elle garantit seulement que chaque bureau
+        s'ancre sur une ville REELLE du classeur. Rien n'est invente, ni
+        geographie hors referentiel, ni pays fantome.
+
+        Le registre marque leur portee mondiale par `country_code = None`,
+        distinct des 12 locaux qui portent le leur.
+        """
+        # Un bureau par pays cible, dans l'ordre du referentiel : la repartition
+        # est deterministe, donc reproductible (`ENF-15`).
+        for index, nom_institutionnel in enumerate(LENDERS_INSTITUTIONNELS):
+            pays = PAYS_CIBLES[index % len(PAYS_CIBLES)]
+            villes = self._referentiel.villes_porteuses_de_quartiers(pays)
+            if not villes:
+                rapport.companies_echouees.append(
+                    (nom_institutionnel, f"{pays} : aucune ville porteuse — bureau impossible")
+                )
+                continue
+            ville = villes[0]
+            region = self._referentiel.region(ville.region_id)
+            quartiers = self._referentiel.quartiers_de_ville(ville.city_id)
+            if region is None or not quartiers:
+                rapport.companies_echouees.append(
+                    (nom_institutionnel, f"{ville.name} : region ou quartier manquant")
+                )
+                continue
+
+            company = await self.creer_company(
+                pays=pays,
+                # Le nom officiel est IMPOSE par `UC-08`, jamais issu de Faker.
+                # `raison_sociale()` composerait un patronyme : on passe le nom
+                # tel quel comme forme juridique vide de sens commercial.
+                patronyme=nom_institutionnel,
+                forme_juridique="Etablissement",
+                secteur="Financement",
+                type_company=CompanyType.FUNDING_PROVIDER,
+                raison_imposee=f"{PREFIXE_DONNEES}{nom_institutionnel}",
+                region=region.name,
+                ville=ville.name,
+                quartier=quartiers[0].name,
+                telephone=self._telephone_du_pays(pays, 90 + index),
+                rapport=rapport,
+                est_imf=False,
+            )
+            if company is None:
+                continue
+            company_id = self._companies.identifiant(company)
+            if not company_id:
+                continue
+
+            # `UC-07` — une licence active parmi les 4 packages. Un bailleur
+            # finance du credit : `READY_CASH`.
+            await self.creer_licence(
+                company_id, [PackageName.READY_CASH], sim_start, sim_end, rapport
+            )
+            await self.enregistrer_lender(
+                company_id=company_id,
+                nom=str(company.get("name", "")),
+                lender_type=LenderType.INSTITUTIONNEL,
+                pays=pays,
+                rapport=rapport,
+                portee_mondiale=True,
+            )
 
     # Le type_user des Admin Users est expose ici pour que l'appelant n'ait pas
     # a connaitre l'enum serveur : un Admin de Company est de type COMPANY.
     TYPE_ADMIN: UserType = UserType.COMPANY
+
+
+def _profil_company(est_imf: bool, index: int) -> tuple[CompanyType, str, str]:
+    """Le triplet (type serveur, forme juridique, secteur) d'une Company.
+
+    `EF-10` nomme QUATRE types : **IMF, banque, fondation, merchant**. Nous n'en
+    emettions que deux — `IMF` et `BANK` — et le rapport a blanc le rendait
+    visible : « DEMO_SA Fall Commerce » etait typee `BANK`. Un commerce n'est pas
+    une banque.
+
+    Les IMF sont imposees par le plan : seules elles portent la hierarchie
+    (`UC-09`). Les suivantes tournent sur les trois autres types nommes.
+
+    La forme juridique et le secteur SUIVENT le type, sinon la raison sociale
+    dementirait la fiche. `raison_sociale()` traite d'ailleurs « Fondation » a
+    part, sans suffixe commercial — une fondation ne s'appelle pas « & Fils ».
+
+    `AGENCY` et `KIOSK` ne sont JAMAIS emis : ce sont nos niveaux LOGIQUES
+    (`D-05`), sans contrepartie Company. `FUNDING_PROVIDER` est reserve aux 4
+    institutionnels (`EF-12`).
+    """
+    if est_imf:
+        return CompanyType.IMF, "SARL", "MicroFinance"
+    return (
+        (CompanyType.MERCHANT, "SA", "Commerce"),
+        (CompanyType.FONDATION, "Fondation", ""),
+        (CompanyType.BANK, "SA", "Banque"),
+    )[index % 3]
