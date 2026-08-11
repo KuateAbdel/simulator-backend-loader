@@ -61,6 +61,7 @@ from app.core.cdc import (
     PAYS_CIBLES,
     PREFIXE_DONNEES,
 )
+from app.core.invariants import valider_devise_pays
 from app.models.enums import LenderType, RunMode, RunStatus
 from app.repositories import AuditTrailRepository, LendersRegistryRepository
 from app.services.generateur import Generateur
@@ -232,7 +233,20 @@ class ExecuteurOrganisation:
         devise = self._referentiel.devise_du_pays(pays)
         if devise is None:
             raise ValueError(f"aucune devise rattachee au pays {pays!r} dans le referentiel")
-        return devise.code
+        # LE GARDE-FOU ETAIT ECRIT, TESTE, ET APPELE NULLE PART — 11/08.
+        #
+        # Lire la devise dans le referentiel est la bonne SOURCE ; ce n'est pas
+        # une VERIFICATION. `valider_devise_pays` confronte le code a la zone
+        # monetaire reelle (BEAC/CEMAC contre BCEAO/UEMOA), une verite qui ne
+        # vient PAS du classeur — donc capable de le contredire.
+        #
+        # L'enjeu est definitif : `currency` n'est validee nulle part cote
+        # serveur. Elle traverse company-service en etant PERDUE a la
+        # persistance (`FRA-199`), traverse client-service (`D-CLI-9`) et
+        # **atterrit verbatim dans le compte CHECKING** (`FRA-222`). Une devise
+        # fausse devient un solde dans une monnaie qui n'existe pas pour ce
+        # pays, sur un service sans `DELETE`.
+        return valider_devise_pays(devise.code, pays, self._referentiel)
 
     # ----------------------------------------------------------------------
     # UC-07 — Companies et licences

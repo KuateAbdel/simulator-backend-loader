@@ -76,6 +76,28 @@ SITUATIONS_FAMILIALES: Final[frozenset[str]] = frozenset(
     {"SINGLE", "MARRIED", "DIVORCED", "WIDOWED"}
 )
 
+#: LES ZONES MONETAIRES — la verite INDEPENDANTE du classeur.
+#:
+#: `valider_devise_pays` interrogeait le referentiel pour savoir quelle devise
+#: attendre... et comparait donc le classeur a lui-meme. Une erreur DANS le
+#: classeur passait invisible, et `currency` n'est validee NULLE PART cote
+#: serveur : elle traverse company-service (`FRA-199`, perdue a la persistance),
+#: traverse client-service (`D-CLI-9`) et **atterrit verbatim dans le compte
+#: CHECKING** (`FRA-222` / `ANO-ACC-CUR-08`). Une devise fausse devient donc un
+#: solde dans une monnaie qui n'existe pas pour ce pays, definitivement.
+#:
+#: Ces deux zones ne sont pas une opinion, ce sont des unions monetaires :
+#:   `XAF` — franc CFA d'Afrique CENTRALE, banque centrale BEAC, zone CEMAC
+#:   `XOF` — franc CFA d'Afrique de l'OUEST, banque centrale BCEAO, zone UEMOA
+#:
+#: Un pays cible absent de cette table fait echouer bruyamment : `EF-04` autorise
+#: l'ajout d'un pays au classeur, mais sa zone monetaire doit etre DECLAREE, pas
+#: devinee.
+ZONES_MONETAIRES: Final[dict[str, tuple[str, frozenset[str]]]] = {
+    "XAF": ("BEAC", frozenset({"CM"})),
+    "XOF": ("BCEAO", frozenset({"CI", "BF", "SN"})),
+}
+
 #: Un `id_number` alphanumerique. Le serveur annonce une contrainte de
 #: MAJUSCULES qu'il n'applique pas (FRA-228) ; le Loader s'y conforme pour
 #: rester valide si elle est un jour reellement posee.
@@ -307,15 +329,39 @@ def valider_devise_pays(devise: str, pays: str, referentiel: object) -> str:
     (`FRA-222`).
     """
     code = str(devise).strip().upper()
-    resoudre = getattr(referentiel, "devise_du_pays", None)
-    attendue = resoudre(pays) if resoudre else None
-    if attendue is None:
-        raise InvariantViole(f"aucune devise rattachee au pays {pays!r} dans le referentiel")
-    if code != attendue.code:
+    territoire = str(pays).strip().upper()
+
+    # 1. La verite INDEPENDANTE : les unions monetaires. Elle ne vient pas du
+    #    classeur, donc elle peut le contredire — c'est tout son interet.
+    attendu = next(
+        (iso for iso, (_, membres) in ZONES_MONETAIRES.items() if territoire in membres),
+        None,
+    )
+    if attendu is None:
         raise InvariantViole(
-            f"devise '{code}' pour un client de {pays} — la zone monetaire impose "
-            f"'{attendue.code}' ({attendue.banque_centrale}). Le serveur accepterait "
-            "n'importe quoi, y compris une chaine vide (FRA-222)."
+            f"pays '{territoire}' sans zone monetaire declaree dans `ZONES_MONETAIRES`. "
+            "`EF-04` autorise l'ajout d'un pays au referentiel, mais sa zone doit etre "
+            "DECLAREE : une devise devinee atterrit verbatim dans un compte (FRA-222)."
+        )
+    if code != attendu:
+        banque = ZONES_MONETAIRES[attendu][0]
+        raise InvariantViole(
+            f"devise '{code}' pour une entite de {territoire} — la zone monetaire impose "
+            f"'{attendu}' ({banque}). Le serveur accepterait n'importe quoi, y compris "
+            "une chaine vide (FRA-222), et la valeur finirait dans le compte."
+        )
+
+    # 2. Le referentiel doit CONCORDER. S'il diverge, c'est le classeur qui est
+    #    faux — et on veut le savoir avant d'ecrire, pas apres.
+    resoudre = getattr(referentiel, "devise_du_pays", None)
+    au_classeur = resoudre(territoire) if resoudre else None
+    if au_classeur is None:
+        raise InvariantViole(f"aucune devise rattachee au pays {territoire!r} dans le referentiel")
+    if au_classeur.code.strip().upper() != attendu:
+        raise InvariantViole(
+            f"le referentiel rattache {territoire} a '{au_classeur.code}' alors que la zone "
+            f"monetaire impose '{attendu}' — **le classeur est faux**, corriger "
+            "`Loader_Base_FinZuu_v1_1.xlsx` avant toute generation."
         )
     return code
 

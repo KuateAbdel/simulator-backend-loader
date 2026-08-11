@@ -68,6 +68,18 @@ class PlanAgence:
 class PlanBranche:
     region_id: str
     agences: tuple[PlanAgence, ...]
+    #: L'IMF PROPRIETAIRE de cette Branche, par son rang dans le pays.
+    #:
+    #: Il n'existait pas, et l'executeur distribuait les Branches en TOURNIQUET
+    #: entre les IMF : `porteuses[rang % len(porteuses)]`. Consequence au
+    #: Cameroun — 3 Branches pour 2 IMF : l'IMF n°1 recevait Centre, la n°2
+    #: Littoral, la n°1 Nord-Ouest. **Chaque IMF n'operait que dans une ou deux
+    #: regions.** Ce n'est pas un reseau, c'est une boutique avec une succursale.
+    #:
+    #: Le Manuel de Reference dit l'inverse : « **Agence** : point de
+    #: commercialisation DISTANT du headquarter de la microfinance ». Une IMF a
+    #: plusieurs agences, dans plusieurs villes — c'est ce qui fait un reseau.
+    imf_rang: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,20 +310,61 @@ def planifier(
         }
         attribution = _repartir(nb_kiosques, capacites, alea)
 
+        # LA PARTITION SE FAIT AU QUARTIER, JAMAIS A LA VILLE
+        # ----------------------------------------------------
+        # Si l'on partage les VILLES entre les IMF, chacune reste enfermee dans
+        # les siennes. Si l'on partage les QUARTIERS de chaque ville, alors
+        # chaque IMF a une Agence dans chaque ville ou elle opere — et son
+        # reseau devient national. C'est la seule lecture compatible avec le
+        # Manuel (« Agence : point distant du headquarter ») et avec la vraie vie
+        # (deux IMF concurrentes ont chacune leur agence a Douala).
+        #
+        # La ressource finie est le quartier — `D-03`, un quartier = un Kiosque.
+        # Les quartiers d'une ville sont donc distribues en tourniquet entre les
+        # IMF : l'unicite globale du quartier reste garantie, et chaque IMF
+        # recoit une part de CHAQUE ville.
+        #
+        # Le cout est nul : Branche et Agence sont des niveaux LOGIQUES (`D-05`),
+        # ils vivent dans `org_hierarchy`. Zero ecriture serveur, zero Company
+        # consommee sur le budget de `UC-07`, zero appel HTTP. Le nombre de
+        # Kiosques — donc de Depositaires REELS — ne change pas d'une unite.
+        #
+        # `arbres[rang][region_id][city_id] = [district_id, ...]`
+        arbres: list[dict[str, dict[str, list[str]]]] = [{} for _ in range(nb_imf)]
+        # LE TOURNIQUET EST CONTINU D'UNE VILLE A L'AUTRE, ET C'EST DELIBERE.
+        #
+        # Premiere version : le compteur repartait de zero a chaque ville. Biais
+        # systematique — toute ville n'ayant qu'UN Kiosque le donnait a l'IMF n°1.
+        # Mesure au Senegal : l'IMF n°1 raflait Pikine, Thies ET Saint-Louis,
+        # l'IMF n°2 restait confinee a Dakar (1 Branche contre 3).
+        #
+        # Un compteur qui traverse les villes fait alterner les petites villes.
+        # Aucune IMF n'herite structurellement de la province.
+        position = 0
+        for ville in villes_retenues:
+            quartiers = referentiel.quartiers_de_ville(ville.city_id)
+            alea.shuffle(quartiers)
+            retenus = quartiers[: attribution.get(ville.city_id, 0)]
+            for quartier in retenus:
+                rang = position % nb_imf
+                arbres[rang].setdefault(ville.region_id, {}).setdefault(
+                    ville.city_id, []
+                ).append(quartier.district_id)
+                position += 1
+
         branches: list[PlanBranche] = []
-        for region_id, villes_ids in sorted(agences_par_region.items()):
-            agences: list[PlanAgence] = []
-            for city_id in villes_ids:
-                quartiers = referentiel.quartiers_de_ville(city_id)
-                alea.shuffle(quartiers)
-                retenus = quartiers[: attribution.get(city_id, 0)]
-                agences.append(
+        for rang, arbre in enumerate(arbres):
+            for region_id, villes_ids in sorted(arbre.items()):
+                agences = [
                     PlanAgence(
                         city_id=city_id,
-                        kiosques=tuple(PlanKiosque(q.district_id, city_id) for q in retenus),
+                        kiosques=tuple(PlanKiosque(d, city_id) for d in districts),
                     )
+                    for city_id, districts in sorted(villes_ids.items())
+                ]
+                branches.append(
+                    PlanBranche(region_id=region_id, agences=tuple(agences), imf_rang=rang)
                 )
-            branches.append(PlanBranche(region_id=region_id, agences=tuple(agences)))
 
         plan.pays.append(
             PlanPays(

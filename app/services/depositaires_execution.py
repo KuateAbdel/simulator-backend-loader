@@ -388,11 +388,21 @@ class ExecuteurDepositaires:
                 )
                 continue
 
-            for rang, plan_branche in enumerate(plan_pays.branches):
-                # Repartition circulaire : chaque IMF recoit au moins une
-                # Branche des lors qu'il y a au moins autant de Branches que
-                # d'IMF, ce que `planifier()` garantit.
-                company = porteuses[rang % len(porteuses)]
+            for plan_branche in plan_pays.branches:
+                # LE PLAN DIT DESORMAIS A QUI APPARTIENT CHAQUE BRANCHE.
+                #
+                # Avant : `porteuses[rang % len(porteuses)]` — un tourniquet, qui
+                # donnait a chaque IMF une ou deux regions et pas un reseau. Le
+                # plan partitionne maintenant les QUARTIERS entre les IMF, et
+                # chaque Branche porte son `imf_rang`. Chaque IMF a donc une
+                # Branche par region ou elle opere et une Agence par ville —
+                # exactement ce que le Manuel decrit d'une Agence, « point de
+                # commercialisation distant du headquarter ».
+                #
+                # Le modulo protege le cas ou l'etape Organisation aurait produit
+                # moins d'IMF que le plan n'en prevoyait (UC-07, cas alternatif :
+                # une Company en echec ne stoppe pas le run).
+                company = porteuses[plan_branche.imf_rang % len(porteuses)]
                 region = self._referentiel.region(plan_branche.region_id)
                 nom_region = region.name if region else plan_branche.region_id
                 nom_branche = self._generateur.nom_branche(nom_region, plan_pays.country_code)
