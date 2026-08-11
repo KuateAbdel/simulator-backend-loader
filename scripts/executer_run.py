@@ -257,6 +257,7 @@ async def executer(
             generateur=generateur,
             faker=faker,
             client_service=clients_finaux,
+            account_service=comptes,
             hierarchie=hierarchie,
             ledger=ledger_faker,
             produits=produits,

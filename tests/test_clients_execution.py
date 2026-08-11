@@ -24,6 +24,7 @@ from uuid import NAMESPACE_OID, UUID, uuid4, uuid5
 
 import pytest
 
+from app.clients.account_service import AccountServiceClient
 from app.clients.base import ErreurService
 from app.clients.contracts import ClientCategory, ProductType
 from app.clients.faker_service import CategorieClient, ClientFaker
@@ -142,9 +143,11 @@ class ServiceInterdit:
 class FauxClientService:
     """client-service simule ; `echouer_1_sur` fait echouer un appel sur N."""
 
-    def __init__(self, echouer_1_sur: int = 0) -> None:
+    def __init__(self, echouer_1_sur: int = 0, *, sans_account_id: bool = False) -> None:
         self.onboardes: list[dict[str, Any]] = []
+        self.fiches: list[dict[str, Any]] = []
         self._echouer = echouer_1_sur
+        self._sans_account = sans_account_id
         self._n = 0
 
     async def onboarder(self, **kwargs: Any) -> dict[str, Any]:
@@ -152,7 +155,49 @@ class FauxClientService:
         if self._echouer and self._n % self._echouer == 0:
             raise ErreurService("client-service", "POST", "/onboard", 500, "panne simulee", "-")
         self.onboardes.append(kwargs)
-        return {"_id": str(uuid4()), "msisdn": kwargs["msisdn"]}
+        # La VRAIE cascade rend les trois : Client, Identity et le compte
+        # CHECKING (`D-CLI-1`). Un double qui omet `account_id` ferait croire a
+        # un defaut de dotation alors que c'est le double qui est infidele.
+        fiche: dict[str, Any] = {"_id": str(uuid4()), "msisdn": kwargs["msisdn"],
+                                 "identity": {"_id": str(uuid4())}}
+        if not self._sans_account:
+            fiche["account_id"] = str(uuid4())
+        self.fiches.append(fiche)
+        return fiche
+
+
+class FauxComptes:
+    """account-service simule. Reproduit le piege `FRA-218` : le solde relu
+    n'est PAS le montant demande — des frais sont retranches et credites nulle
+    part. Un compteur qui ferait confiance au montant emis serait faux."""
+
+    FRAIS = 0.97
+
+    def __init__(self, *, echouer: bool = False, solde_illisible: bool = False) -> None:
+        self.credits: list[dict[str, Any]] = []
+        self._echouer = echouer
+        self._illisible = solde_illisible
+
+    def payload_solde_initial_client(
+        self, *, compte_checking_id: Any, montant: float, nom_client: str
+    ) -> dict[str, Any]:
+        return AccountServiceClient.payload_solde_initial_client(
+            self,  # type: ignore[arg-type]
+            compte_checking_id=compte_checking_id,
+            montant=montant,
+            nom_client=nom_client,
+        )
+
+    async def crediter(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._echouer:
+            raise ErreurService("account-service", "POST", "/credit", 500, "panne", "-")
+        self.credits.append(payload)
+        return {"ok": True}
+
+    async def solde(self, account_id: Any) -> float | None:
+        if self._illisible:
+            return None
+        return round(self.credits[-1]["amount"] * self.FRAIS, 2) if self.credits else None
 
 
 def _produits() -> list[ProduitSouscriptible]:
@@ -196,6 +241,7 @@ def _executeur(
     ledger: Any = None,
     clients: Any = None,
     arbre: Any = None,
+    comptes: Any = None,
 ) -> ExecuteurClients:
     configuration = ConfigurationExecution.defaut_cdc()
     configuration.nb_clients = nb_clients
@@ -210,6 +256,7 @@ def _executeur(
         generateur=Generateur(RUN, reference=date(2026, 8, 11)),
         faker=faker or FauxFaker(),
         client_service=clients or ServiceInterdit(),
+        account_service=comptes or FauxComptes(),
         hierarchie=arbre or FauxArbre(),
         ledger=ledger or FauxLedger(),
         produits=_produits(),
@@ -585,3 +632,101 @@ class TestProduits:
         rapport = RapportClients(mode=RunMode.DRY_RUN)
         assert ex._produits_collect(rapport) == []
         assert any("COLLECT" in a for a in rapport.alertes)
+
+
+# ---------------------------------------------------------------------------
+# UC-13 pt 3 / EF-73 — la dotation du solde initial
+# ---------------------------------------------------------------------------
+
+
+class TestLaDotationDuSoldeInitial:
+    """LE DÉFAUT LE PLUS TROMPEUR DU 11/08 : `solde_dote` accumulait
+    1,04 Md FCFA et le rapport l'affichait, sans qu'aucun appel à `crediter()`
+    existe. Même en RÉEL, les 2000 comptes seraient restés à zéro. Ce n'était
+    pas un module muet — c'était un rapport qui affirmait un fait que le code
+    ne produisait pas, et `D-01` fait de ce rapport la dernière occasion de
+    dire non."""
+
+    async def _reel(self, **kw: Any) -> tuple[RapportClients, FauxComptes, FauxClientService]:
+        comptes = kw.pop("comptes", None) or FauxComptes()
+        clients = kw.pop("clients", None) or FauxClientService()
+        ex = _executeur(
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
+            clients=clients,
+            comptes=comptes,
+            arbre=FauxArbre(_kiosques("CM")),
+            **kw,
+        )
+        return await ex.executer(), comptes, clients
+
+    async def test_chaque_client_cree_recoit_UN_credit(self) -> None:
+        rapport, comptes, _ = await self._reel()
+        assert len(rapport.crees) == 40
+        assert len(comptes.credits) == 40, "UC-13 pt 3 — un dépôt par client, pas zéro"
+
+    async def test_le_solde_compte_ce_que_le_SERVEUR_a_confirme(self) -> None:
+        """`FRA-218` : les frais sont retranchés du montant et crédités nulle
+        part. Le solde se RELIT, il ne se calcule pas — un compteur qui fait
+        confiance au montant émis serait faux, et faux en silence."""
+        rapport, comptes, _ = await self._reel()
+        demande = sum(c["amount"] for c in comptes.credits)
+        assert rapport.solde_dote < demande, "le rapport ne doit PAS compter le montant émis"
+        assert rapport.solde_dote == pytest.approx(demande * FauxComptes.FRAIS, rel=1e-6)
+
+    async def test_le_payload_porte_les_trois_valeurs_du_metier(self) -> None:
+        """`EF-73` dit « dérivé du montant **Mobile Money** », et le CDC dit
+        « il **DÉPOSE** ce montant ». Et jamais `tag=LENDER` : c'est la SEULE
+        occurrence du concept de bailleur dans tout l'écosystème FinZuu."""
+        _, comptes, _ = await self._reel()
+        for credit in comptes.credits:
+            assert credit["provider_src"] == "MOMO", "l'origine est le portefeuille mobile"
+            assert credit["type"] == "DEPOSIT", "le CDC emploie le mot « dépose »"
+            assert credit["tag"] == "SELF", "le client se crédite depuis son propre argent"
+            assert credit["tag"] != "LENDER", "LENDER est réservé aux bailleurs"
+            # L'argent vient de l'EXTÉRIEUR de FinZuu : aucun compte source
+            # n'existe, et le schéma exige pourtant les deux identifiants.
+            assert credit["src_account_id"] == credit["dest_account_id"]
+
+    async def test_le_compte_credite_est_celui_de_la_CASCADE(self) -> None:
+        """On n'en crée jamais un : `POST /clients/onboard` produit le CHECKING,
+        et account-service n'a aucun `DELETE` — un doublon serait définitif."""
+        _, comptes, clients = await self._reel()
+        rendus = {f["account_id"] for f in clients.fiches}
+        credites = {c["dest_account_id"] for c in comptes.credits}
+        assert credites == rendus, "chaque crédit vise le compte rendu par la cascade"
+        assert len(credites) == 40, "un compte distinct par client, aucun réutilisé"
+
+    async def test_une_dotation_refusee_alerte_sans_annuler_le_client(self) -> None:
+        """Le client existe, il est scellé, il est utilisable. Le compter comme
+        non créé déséquilibrerait les quotas pour un motif étranger à la
+        distribution."""
+        rapport, _, _ = await self._reel(comptes=FauxComptes(echouer=True))
+        assert len(rapport.crees) == 40, "les clients existent malgré la dotation refusée"
+        assert rapport.solde_dote == 0.0, "rien n'est compté sans confirmation serveur"
+        assert len(rapport.alertes) >= 40
+        assert any("dotation refusee" in a for a in rapport.alertes)
+
+    async def test_un_solde_illisible_n_est_jamais_compte(self) -> None:
+        rapport, _, _ = await self._reel(comptes=FauxComptes(solde_illisible=True))
+        assert rapport.solde_dote == 0.0
+        assert any("FRA-218" in a for a in rapport.alertes)
+
+    async def test_une_cascade_sans_account_id_est_signalee(self) -> None:
+        """Si la cascade ne rend pas de compte, on le DIT — on n'invente pas un
+        identifiant et on ne crée pas un second compte."""
+        rapport, comptes, _ = await self._reel(
+            clients=FauxClientService(sans_account_id=True)
+        )
+        assert comptes.credits == [], "aucun crédit émis à l'aveugle"
+        assert any("account_id" in a for a in rapport.alertes)
+        assert len(rapport.crees) == 40, "le client reste créé et utilisable"
+
+    async def test_a_blanc_le_montant_PREVU_est_annonce_sans_aucun_credit(self) -> None:
+        """`D-01` — le rapport à blanc doit montrer ce que le RÉEL ferait."""
+        comptes = FauxComptes()
+        ex = _executeur(mode=RunMode.DRY_RUN, nb_clients=100, comptes=comptes)
+        rapport = await ex.executer()
+        assert comptes.credits == [], "à blanc, aucune écriture serveur"
+        assert rapport.solde_dote > 0, "et pourtant le montant prévu est annoncé"

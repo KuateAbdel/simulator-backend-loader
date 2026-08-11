@@ -77,9 +77,10 @@ import logging
 import random
 from dataclasses import dataclass, field
 from hashlib import sha256
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 from uuid import NAMESPACE_OID, UUID, uuid5
 
+from app.clients.account_service import AccountServiceClient
 from app.clients.base import ErreurService
 from app.clients.client_service import (
     ClientServiceClient,
@@ -461,6 +462,7 @@ class ExecuteurClients:
         generateur: Generateur,
         faker: FakerClient,
         client_service: ClientServiceClient,
+        account_service: AccountServiceClient,
         interne: SourceIdentites | None = None,
         hierarchie: OrgHierarchyRepository,
         ledger: FakerLedgerRepository,
@@ -474,6 +476,7 @@ class ExecuteurClients:
         self._faker = faker
         self._interne = interne or SourceInterne()
         self._clients = client_service
+        self._comptes = account_service
         self._hierarchie = hierarchie
         self._ledger = ledger
         self._produits = produits
@@ -914,12 +917,86 @@ class ExecuteurClients:
         # occurrence du defaut recurrent, celle-ci dans du code du jour meme.
         await self._sceller(faker.client_id, fiche)
 
+        # `UC-13` points 2-3 / `EF-73` — LE SOLDE INITIAL EST DEPOSE ICI.
+        #
+        # DEFAUT LE PLUS TROMPEUR DU 11/08 : `solde_dote` accumulait 1,04 Md FCFA
+        # et le rapport l'AFFICHAIT — sans qu'aucun appel a `crediter()` existe.
+        # Meme en REEL, les 2000 comptes CHECKING seraient restes a zero. Ce
+        # n'etait pas un module muet : c'etait un rapport qui affirmait un fait
+        # que le code ne produisait pas, et `D-01` fait de ce rapport « la
+        # derniere occasion de dire non ». Un rapport qui ment lui retire sa
+        # raison d'etre.
+        await self._doter(compose, faker, fiche, rapport)
+
         # Compte APRES l'ecriture : un compteur incremente sur une intention
         # annoncerait des comptes qui n'existent pas.
         rapport.comptes_attendus += 1
-        rapport.solde_dote += solde_initial(faker)
         rapport.crees.append(nom)
         return compose
+
+    async def _doter(
+        self,
+        compose: ClientCompose,
+        faker: ClientFaker,
+        fiche: dict[str, Any],
+        rapport: RapportClients,
+    ) -> None:
+        """Depose le solde initial sur le compte CHECKING, puis le RELIT.
+
+        LE COMPTE VIENT DE LA CASCADE, jamais de nous. `POST /clients/onboard`
+        cree le Client, l'Identity et le compte CHECKING d'un seul geste ; en
+        creer un ici produirait un doublon definitif (account-service n'a aucun
+        `DELETE`).
+
+        LE SOLDE SE RELIT, IL NE SE CALCULE PAS — `FRA-218` : les frais sont
+        retranches du montant et credites nulle part. Un solde deduit du montant
+        emis serait FAUX, et faux en silence. `rapport.solde_dote` ne compte donc
+        que ce que le serveur a CONFIRME, jamais ce que nous avons demande.
+
+        UNE DOTATION MANQUEE N'EST PAS UN ECHEC DU CLIENT. Le client existe, il
+        est scelle au registre, il est utilisable. Un solde a zero est un ecart
+        a signaler — pas une raison de le compter comme non cree, ce qui
+        desequilibrerait les quotas `EF-22`/`EF-23`/`EF-24` pour un motif
+        etranger a la distribution.
+        """
+        montant = solde_initial(faker)
+        nom = f"{compose.identite.first_name} {compose.identite.last_name}"
+
+        if not self.ecriture_reelle:
+            # A blanc, on annonce le montant PREVU : c'est precisement ce que
+            # `D-01` demande de montrer avant de dire oui.
+            rapport.solde_dote += montant
+            return
+
+        compte = ClientServiceClient.account_id(fiche)
+        if compte is None:
+            rapport.alertes.append(
+                f"{compose.faker_client_id} : la cascade n'a rendu aucun `account_id` — "
+                "solde initial non depose (UC-13 pt 3). Le client existe et reste "
+                "utilisable ; son compte est a zero."
+            )
+            return
+
+        try:
+            await self._comptes.crediter(
+                self._comptes.payload_solde_initial_client(
+                    compte_checking_id=compte, montant=montant, nom_client=nom
+                )
+            )
+            confirme = await self._comptes.solde(compte)
+        except ErreurService as erreur:
+            rapport.alertes.append(
+                f"{compose.faker_client_id} : dotation refusee — {str(erreur)[:150]}"
+            )
+            return
+
+        if confirme is None:
+            rapport.alertes.append(
+                f"{compose.faker_client_id} : solde illisible apres dotation — "
+                "compte non credite au rapport (FRA-218 : le solde se relit)"
+            )
+            return
+        rapport.solde_dote += confirme
 
     async def _sceller(self, faker_client_id: str, fiche: dict[str, object]) -> None:
         """Scelle la consommation au registre — la preuve que l'entite existe.

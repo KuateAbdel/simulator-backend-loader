@@ -128,6 +128,53 @@ class AccountServiceClient:
         reponse = await self._client.requete("POST", "/api/v1/accounts/", json_body=payload)
         return reponse.data if isinstance(reponse.data, dict) else {}
 
+    def payload_solde_initial_client(
+        self, *, compte_checking_id: UUID | str, montant: float, nom_client: str
+    ) -> dict[str, Any]:
+        """`UC-13` points 2-3 et `EF-73` — le solde initial du compte client.
+
+        « Le Loader DOIT doter chaque compte client d'un solde initial a sa
+        creation, **derive du montant Mobile Money** du payload Faker. Cette voie
+        garantit que chaque client dispose d'un patrimoine coherent avec son
+        profil socio-economique, sans invention arbitraire de montants. »
+
+        POURQUOI `src == dest`, comme pour la dotation Lender
+        ----------------------------------------------------
+        `CreditAccountSchema` exige les DEUX identifiants, meme pour un credit.
+        Or cet argent vient de l'EXTERIEUR de FinZuu : le portefeuille mobile
+        money du client n'est pas un compte FinZuu, il n'existe nulle part dans
+        l'ecosysteme. Aucun compte source ne peut donc etre nomme.
+
+        LES TROIS VALEURS D'ENUM, ET POURQUOI CELLES-LA
+        -----------------------------------------------
+        `provider_src=MOMO` : `EF-73` dit « derive du montant **Mobile Money** ».
+        L'origine est le portefeuille mobile du client. Ni `BANK` (c'est
+        l'origine du capital d'un Lender, par virement), ni `CASH` (un depot de
+        guichet), ni `ACCOUNT` (il n'y a pas de compte FinZuu source).
+
+        `type=DEPOSIT` : le CDC emploie le mot exact — « il **DEPOSE** ce montant
+        comme solde initial du compte ». Ni `INVESTMENT` (doter un Lender EST un
+        investissement, doter un client ne l'est pas), ni `TRANSFERT` (aucun
+        compte source), ni `CHECKING` (c'est un type de COMPTE, pas de mouvement).
+
+        `tag=SELF` : le client se credite depuis son propre argent. Ni `COMPANY`
+        (ce n'est pas une entreprise), ni `SAVING` (l'epargne releve de
+        collect-service, et l'argent d'une collecte va au compte du DEPOSITAIRE
+        — jamais ici), ni `TO_SHARE`. Et surtout **jamais `LENDER`** :
+        `TransactionTag.LENDER` est la SEULE occurrence du concept de bailleur
+        dans tout l'ecosysteme FinZuu. L'employer pour 2000 clients polluerait
+        le seul endroit ou le serveur reconnait ce metier.
+        """
+        return {
+            "amount": montant,
+            "label": f"Solde initial — {nom_client}",
+            "src_account_id": str(compte_checking_id),
+            "dest_account_id": str(compte_checking_id),
+            "provider_src": ProviderSource.MOMO.value,
+            "tag": TransactionTag.SELF.value,
+            "type": TransactionType.DEPOSIT.value,
+        }
+
     def payload_dotation_capital(
         self, *, compte_capital_id: UUID | str, montant: float, nom_lender: str
     ) -> dict[str, Any]:
