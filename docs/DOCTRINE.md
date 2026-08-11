@@ -233,19 +233,97 @@ onboardings.
 
 ---
 
-## 8. La frontière — ce que le Loader ne fait pas
+## 8. La frontière — **tout** ce que le Loader ne fait pas
 
-Une doctrine se définit autant par ses refus.
+Une doctrine se définit autant par ses refus. Cette section a été **complétée le
+11/08/2026** après lecture intégrale du CDC v1.2, de la tête aux pieds. Elle
+distingue **cinq niveaux d'autorité** : ce que le CDC exclut formellement ne se
+discute pas ; ce qu'une mesure interdit se discute encore moins.
 
-| Le Loader **ne** | Pourquoi |
+### 8.1 Les cinq exclusions FORMELLES du CDC — §4.2 « Périmètre exclu »
+
+Ce sont les seules exclusions que le CDC énonce comme telles. Elles sont
+citées mot pour mot.
+
+| Le Loader ne couvre pas | Citation du CDC | Notre état |
+|---|---|---|
+| **l'injection réelle des prêts** tant que loan-service n'est pas livré | *« l'outil prépare et valide les payloads, l'injection sera activée ultérieurement »* | `CT-02` · module Prêt hors v1.0.0 |
+| **la génération hors des 4 pays cibles** | *« l'architecture doit toutefois être extensible »* | `EF-05` lève · `EF-04` extensible par fichier |
+| **l'édition manuelle des données générées** | *« toute modification passe par une réinitialisation puis une nouvelle génération »* | aucune route d'édition n'existe |
+| **le multi-utilisateurs à droits différenciés** | *« une gestion basique de verrou d'exécution est suffisante »* | `EF-55`, rendu structurel le 11/08 |
+| **l'alimentation de la production** | *« le Loader est strictement réservé à TEST et DEMO »* | `ENF-16` · toutes les bases pointent TEST |
+
+### 8.2 Ce que le CDC interdit ailleurs qu'au §4.2
+
+| Interdit | Source |
 |---|---|
-| ne répare **jamais** un défaut serveur | Ce n'est pas son rôle ; c'est celui de l'équipe qui tient le service |
-| ne supprime **rien** dans un référentiel partagé | Les 6 parasites de config-service sont signalés, pas purgés |
-| n'écrit **jamais** en base directement | Tier 2 : il consomme les API, comme n'importe quel client. Écrire en base court-circuiterait la validation métier et corromprait les invariants |
-| ne passe **jamais** par Kafka | `ENF-16` l'interdit. De Duhamel on reprend **la méthodologie**, jamais le transport |
-| ne calcule **aucun** indicateur PAR/DPD | Retiré du CDC v1.2 — c'est ReadyScore qui les produit |
-| n'appelle **jamais** ReadyScore | `EF-80` : les décisions sont extraites des payloads Faker. Un environnement de TEST ne dépend pas d'un service de PRODUCTION |
-| ne rejoue **jamais** un `4xx` | Un 4xx signale **notre** payload ; le rejouer le répéterait |
+| **aucun appel HTTP à ReadyScore** | `ENF-16` + `EF-80` : les décisions viennent des payloads Faker. Un environnement de TEST ne dépend pas d'un service de PRODUCTION |
+| **aucune dépendance à un cluster Kafka de production** | `ENF-16`. De Duhamel on reprend **la méthodologie**, jamais le transport |
+| **aucune exécution hors TEST ou DEMO** | `ENF-16`, et `R-06` en fait un risque *critique* : « vérification stricte du domaine cible, blocage en dur » |
+| **aucune modification des contrats REST FinZuu** | `ENF-10`. Le Loader s'adapte au serveur, jamais l'inverse |
+| **aucune donnée personnelle réelle** | `ENF-09` + `CR-02` réglementaire : *« les identités générées DOIVENT être fictives »* |
+| **aucune correction d'une défaillance de gateway** | `CT-01` : *« toute défaillance d'un service de gateway est **exogène au Loader et hors de son périmètre de correction** »* |
+| **aucun calcul d'indicateur PAR/DPD** | Retiré du CDC en v1.2 — responsabilité transférée à ReadyScore, avec l'ancien `OBJ-07`, l'ancien `EF-72` et l'ancien `CR-11` |
+
+### 8.3 Ce que la doctrine refuse, au-delà du CDC
+
+| Le Loader ne | Pourquoi |
+|---|---|
+| ne **répare jamais** un défaut serveur | Ce n'est pas son rôle ; c'est celui de l'équipe qui tient le service. Il neutralise l'effet chez lui, journalise, et poursuit |
+| ne **supprime rien** dans un référentiel partagé | Les 6 parasites de config-service sont **signalés, pas purgés** — le service est partagé par toute l'équipe |
+| n'**écrit jamais** en base FinZuu directement | Il consomme les API comme n'importe quel client. Écrire en base court-circuiterait la validation métier et corromprait les invariants |
+| ne **crée aucun menu** | Config d'interface, périmètre Zidane. Et la mesure du 11/08 le confirme : les 14 menus sont tous techniques et publics, `routes: []` sur les 16 groupes |
+| ne **crée aucune permission** | `POST /permissions/create` existe, **aucun `DELETE`** : une permission créée serait définitive. `D-07` écarte aussi les 22 `LENDER_*` |
+| ne **matérialise pas** Branche et Agence en Companies | `D-05`. Elles n'ont aucune contrepartie serveur, et les créer ferait exploser le budget de 12-20 Companies d'`UC-07` |
+| ne **touche pas company-service** en créant un Kiosque | Il ne fait que **référencer** un `company_id` déjà créé |
+| n'**invente aucune géographie** hors du référentiel | `patronyme("ZZ")` **lève** ; un pays inconnu arrête le run au lieu de se peupler de noms empruntés |
+| ne **compose pas** les noms officiels | `UC-08` impose les identités officielles des 4 institutionnels : `DEMO_IFC`, jamais « Etablissement Ifc Financement » |
+| ne **crée pas** les comptes en cascade | Il ne crée explicitement **que les 4 du Lender** (`D-01`). `OPERATION`, les 6 du Dépositaire et le `CHECKING` du client sont des cascades serveur |
+
+### 8.4 Les « jamais » issus d'une MESURE — la plus haute autorité
+
+Chacun neutralise un comportement serveur constaté. Ils ne se discutent pas :
+une mesure n'a pas d'opinion.
+
+| Le Loader ne jamais… | Le fait mesuré |
+|---|---|
+| envoyer un montant **≤ 0** à collect-service | `FRA-195` — **écriture fantôme** : rejet HTTP apparent, **mutation réelle et silencieuse**. La seule barrière est en amont du réseau |
+| rejouer un **`4xx`** | Un 4xx signale **notre** payload ; le rejouer le répéterait |
+| rejouer un **login échoué** | `INV-USR-19` — anti-brute-force à **3 tentatives**. Un rejeu verrouille le compte ROOT en pleine campagne |
+| dépasser **20 workers** simultanés | `H14`/`H15` — au-delà, la dégradation est **SILENCIEUSE**, sans `429`. Sur des services sans `DELETE`, la surcharge devient corruption |
+| rejouer sur un **`500` de `change-status`** | `FRA-219` — il répond 500 **et réussit** |
+| simuler une **clôture de collecte** | `FRA-196` — bloquée côté serveur. **Aucune méthode n'existe dans le client**, délibérément |
+| simuler une **collecte `PRODUCT`** | `FRA-197` — bloquée structurellement. Souscrire reste possible ; collecter non |
+| utiliser **`POST /search`** | `FRA-229` — **ignore tous ses critères** et renvoie tout. Croire avoir filtré est pire que ne pas filtrer |
+| se fier à **`is_active`** d'un Dépositaire | `FRA-203`/`204` — désactiver **n'arrête ni les collectes ni les retraits**. Et c'est *logiquement inévitable* : une souscription exige un Dépositaire actif |
+| présumer la cohérence de devise **Company ↔ Dépositaire** | `FRA-201` — `currency` accepte n'importe quelle chaîne |
+| compter sur **`Company.currency`** | `FRA-199` — write-only, **perdue à la persistance** (`D-DEP-4`) |
+| supposer qu'**`admin_email`** crée un User | `D-CMP-2` — il ne crée **rien**. L'Admin se crée en 3 requêtes |
+| utiliser **`owner._id`** | `FRA-227` — requis au contrat puis **ignoré**. Toujours relire l'identifiant rendu |
+| appeler **`GET /companies/{name}`** | `ANO-CPY-ROUTE-01` — **code mort**, intercepté par `{company_id}` |
+| appeler **`/ocr/*`** | `D-IDN-4` — suppose un document réel, nous n'en produisons aucun |
+| émettre **`ANY`** sur `gender` | Rendrait le quota `EF-22` (deux femmes pour un homme) **invérifiable** |
+| émettre le tag **`ROOT`** sur un groupe | Persisté en base mais **absent de l'énumération** |
+| émettre **`AGENCY`** ou **`KIOSK`** comme `CompanyType` | Ce sont nos niveaux **logiques**, et le Manuel les classe parmi les **utilisateurs** de CO |
+| appeler **`GET /playground-client/random`** en campagne | Timeout mesuré à **90 s** — `L-04` l'interdit |
+| **parser** un message d'erreur serveur | `ANO-CPY-LEAK-07` — ils fuient des traces Python. Tronqués à 500 caractères, jamais interprétés |
+| recréer un produit **existant** | `D-PRD-9` — `GET` avant `POST`. Et le doublon mesuré le 11/08 a des **abonnés sur ses deux copies** |
+| réutiliser un **`client_id` Faker** consommé | `D-FAKER-1` — garanti **structurellement** : `_id` du ledger EST le `client_id` |
+| **désactiver un pays** dans config-service | `A-08` **ouvert** — le service est partagé par toute l'équipe. Le Loader désactive **chez lui**, pas chez eux |
+
+### 8.5 Ce qu'il fait mais qui reste HORS MATRICE — déclaré, jamais tu
+
+Deux écarts sont **inévitables** et doivent figurer au rapport de run. Les taire
+serait affirmer une conformité que nous n'avons pas.
+
+| Écart | Pourquoi il est inévitable |
+|---|---|
+| **écrire en ROOT partout** | `H-05` du CDC suppose *« les credentiels des cinq rôles seront valides »* — **hypothèse non tenue**, seul ROOT nous est fourni. Et `FRA-205` : depositary-service n'applique aucun RBAC réel |
+| **collecter en ROOT** | La matrice RBAC réserve la collecte à `COMPANY` et `CUSTOMER`, **jamais `ROOT` ni `STAFF`** — le Staff *confirme*, il n'initie pas. Or `EF-77` impose de simuler l'épargne des 2 000 clients |
+
+> **La règle qui gouverne cette section entière :** un refus se documente avec sa
+> source. Un « on ne fait pas ça » sans preuve devient une superstition, et une
+> superstition se contourne au premier délai serré.
 
 ---
 
