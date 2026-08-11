@@ -76,6 +76,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
+from hashlib import sha256
 from typing import TYPE_CHECKING, Final
 from uuid import NAMESPACE_OID, UUID, uuid5
 
@@ -87,7 +88,6 @@ from app.clients.client_service import (
 )
 from app.clients.contracts import ClientCategory, ProductType
 from app.clients.faker_service import (
-    PAYS_FAKER,
     CategorieClient,
     ClientFaker,
     FakerClient,
@@ -109,8 +109,13 @@ from app.services.clients_composition import (
     composer,
     occupation_du_secteur,
 )
-from app.services.generateur import Generateur
+from app.services.generateur import CLES_PROFIL_INTERNE, Generateur
 from app.services.geographie import ReferentielGeo
+from app.services.source_interne import (
+    SourceIdentites,
+    SourceInterne,
+    source_pour,
+)
 
 if TYPE_CHECKING:
     from app.models.domain import OrgHierarchyNode
@@ -127,20 +132,11 @@ PART_FEMMES: Final = 2 / 3
 SOLDE_INITIAL_MIN: Final = 5_000.0
 SOLDE_INITIAL_MAX: Final = 1_000_000.0
 
-#: Les 11 cles de `quick_win`, mesurees exhaustivement le 11/08. Elles decrivent
-#: la regularite d'usage, l'equipement et la derniere activite — le seul profil
-#: socio-economique que la famille A porte reellement.
-CLES_QUICK_WIN_BINAIRES: Final[tuple[str, ...]] = (
-    "IS_RGS_1",
-    "IS_RGS_7",
-    "IS_RGS_30",
-    "IS_RGS_90",
-    "IS_DATA_RGS1",
-    "IS_DATA_RGS7",
-    "IS_DATA_RGS30",
-    "IS_DATA_RGS90",
-    "IS_SMARTPHONE_USER",
-)
+#: Les onze cles de `quick_win`, definies UNE FOIS dans le generateur : la
+#: source interne les produit, cet executeur en derive le solde. Deux listes
+#: paralleles auraient divergé en silence — un solde calcule sur des cles que la
+#: source ne pose jamais.
+CLES_QUICK_WIN_BINAIRES: Final[tuple[str, ...]] = CLES_PROFIL_INTERNE
 
 #: Taille d'un lot. Assez grand pour saturer les 20 workers du semaphore
 #: partage, assez petit pour que l'arbitrage sequentiel des quotas reste court
@@ -167,16 +163,41 @@ def solde_initial(faker: ClientFaker) -> float:
     exactement « un patrimoine coherent avec son profil socio-economique », les
     mots du CDC.
 
-    DETERMINISTE : le meme `client_id` rend le meme solde, sans aucun tirage
-    aleatoire. `ENF-15` l'exige, et « sans invention arbitraire » l'exige aussi —
-    un `random()` ici serait precisement l'arbitraire interdit.
+    DEUX ETAGES, ET LE SECOND CORRIGE UN DEFAUT QUE MES TESTS ONT TROUVE
+    --------------------------------------------------------------------
+    La premiere version rendait `MIN + (presents / 9) x (MAX - MIN)`. Neuf
+    booleens ne donnent que **DIX montants possibles** : 2000 clients auraient
+    partage dix soldes distincts. Un test de la source interne l'a mesure — 8
+    valeurs sur 299 clients — et c'est exactement le graphique plat que
+    `seconds_per_day` existe pour eviter, reproduit sur l'axe des montants.
+
+    Le solde a donc deux etages :
+
+      1. LA STRATE vient du profil — les neuf signaux de `quick_win` decident
+         dans laquelle des dix bandes de l'Annexe E le client tombe. C'est le
+         « patrimoine coherent avec son profil socio-economique » du CDC.
+      2. LA POSITION DANS LA STRATE vient d'une empreinte stable du
+         `client_id`. Deux clients au meme profil n'ont pas le meme solde au
+         centime, comme dans la vraie vie.
+
+    **Le second etage n'est PAS un tirage aleatoire** — c'est une fonction pure
+    du `client_id` (SHA-256 tronque). Le meme client rend toujours le meme
+    solde : `ENF-15` tient, et « sans invention arbitraire de montants » tient
+    aussi, parce qu'aucune valeur ne sort d'un generateur de hasard. Le hachage
+    n'est pas cryptographique ici, il sert d'etalement deterministe.
 
     Borne par l'Annexe E : de 5 000 (Nano Very Low) a 1 000 000 FCFA (ReadyToGo
-    Very High).
+    Very High), bornes incluses.
     """
     presents = sum(1 for cle in CLES_QUICK_WIN_BINAIRES if faker.quick_win.get(cle) == 1)
-    fraction = presents / len(CLES_QUICK_WIN_BINAIRES)
-    return round(SOLDE_INITIAL_MIN + fraction * (SOLDE_INITIAL_MAX - SOLDE_INITIAL_MIN), 2)
+    nb_strates = len(CLES_QUICK_WIN_BINAIRES) + 1  # de 0 a 9 signaux inclus
+    largeur = (SOLDE_INITIAL_MAX - SOLDE_INITIAL_MIN) / nb_strates
+
+    empreinte = sha256(faker.client_id.encode()).digest()
+    # 24 bits suffisent a etaler une strate de ~100 000 FCFA au centime pres.
+    position = int.from_bytes(empreinte[:3], "big") / 0xFFFFFF
+
+    return round(SOLDE_INITIAL_MIN + (presents + position) * largeur, 2)
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,6 +393,11 @@ class RapportClients:
     solde_dote: float = 0.0
     #: Ce que le REEL ecrirait, annonce meme a blanc — `D-01`.
     comptes_attendus: int = 0
+    #: Les pays servis par la SOURCE INTERNE, et le compte produit. La
+    #: provenance doit se lire au rapport (`A-01`) — mais ce n'est PAS une
+    #: alerte : un ecart declare et arbitre n'est pas un echec, et le faire
+    #: basculer le run en PARTIAL a chaque fois noierait les vraies alertes.
+    servis_en_interne: dict[str, int] = field(default_factory=dict)
 
     @property
     def total_cible(self) -> int:
@@ -392,6 +418,15 @@ class RapportClients:
             f"Clients cibles : {self.total_cible}",
             f"Clients crees  : {len(self.crees)}",
             f"Comptes attendus : {self.comptes_attendus} (1 CHECKING par client, cascade)",
+            *(
+                [
+                    "Source INTERNE : "
+                    + " · ".join(f"{p} {n}" for p, n in sorted(self.servis_en_interne.items()))
+                    + "  (Faker ne sert pas ces pays — arbitrage A-01)"
+                ]
+                if self.servis_en_interne
+                else []
+            ),
             f"Solde dote     : {self.solde_dote:,.2f} (A-09 — recommandation appliquee)",
             f"Reservations liberees : {self.liberes} (ecartes ou echoues — D-FAKER-1)",
             f"Liberees a blanc      : {self.liberes_a_blanc} (aucune entite creee)",
@@ -426,6 +461,7 @@ class ExecuteurClients:
         generateur: Generateur,
         faker: FakerClient,
         client_service: ClientServiceClient,
+        interne: SourceIdentites | None = None,
         hierarchie: OrgHierarchyRepository,
         ledger: FakerLedgerRepository,
         produits: list[ProduitSouscriptible],
@@ -436,6 +472,7 @@ class ExecuteurClients:
         self._referentiel = referentiel
         self._generateur = generateur
         self._faker = faker
+        self._interne = interne or SourceInterne()
         self._clients = client_service
         self._hierarchie = hierarchie
         self._ledger = ledger
@@ -476,17 +513,23 @@ class ExecuteurClients:
                     f"{cible} clients non generes"
                 )
                 continue
-            if pays not in PAYS_FAKER:
-                # Le Senegal. La source interne n'est pas encore ecrite : on
-                # l'annonce plutot que de produire 500 clients camerounais
-                # deguises.
-                rapport.alertes.append(
-                    f"{pays} : Faker rend HTTP 422 (enum {sorted(PAYS_FAKER)}) — "
-                    f"{cible} clients relevent de la source interne, arbitrage A-01"
-                )
-                continue
-
-            await self._peupler_un_pays(pays, quota, kiosques[pays], collect, rapport)
+            # Le SEUL arbitrage de source du module. Faker declare
+            # `enum: ["BF","CI","CM"]` — le Senegal releve donc de la source
+            # interne (CDC §321, arbitrage `A-01`). Tout le reste du chemin est
+            # rigoureusement identique : meme composeur, meme registre, memes
+            # quotas, memes controles.
+            source = source_pour(pays, self._faker, self._interne)
+            avant = quota.faits
+            await self._peupler_un_pays(
+                pays, quota, kiosques[pays], collect, source, rapport
+            )
+            # La provenance, comptee sur ce que la source a REELLEMENT produit.
+            # Le compteur existait, etait rendu au rapport, et n'etait increments
+            # nulle part — le meme defaut que ce projet a trouve dix fois, ici
+            # dans du code ecrit dans la minute. Un champ qu'on affiche sans
+            # jamais l'alimenter affiche zero, et ce zero a l'air d'un fait.
+            if source is not self._faker and (produits := quota.faits - avant):
+                rapport.servis_en_interne[pays] = produits
 
         return rapport
 
@@ -626,6 +669,7 @@ class ExecuteurClients:
         quota: QuotaPays,
         kiosques: list[OrgHierarchyNode],
         collect: list[ProduitSouscriptible],
+        source: SourceIdentites,
         rapport: RapportClients,
     ) -> None:
         """Peuple un pays PAR LOTS, en trois temps.
@@ -676,7 +720,7 @@ class ExecuteurClients:
                 for i in range(taille)
             ]
             tirages = await asyncio.gather(
-                *(self._faker.tirer_client(pays, cat, seed) for seed, _, cat in demandes),
+                *(source.tirer_client(pays, cat, seed) for seed, _, cat in demandes),
                 return_exceptions=True,
             )
 

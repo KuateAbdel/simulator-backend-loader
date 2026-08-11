@@ -149,6 +149,28 @@ def prenom(genre: str, index: int) -> str:
     return liste[index % len(liste)]
 
 
+#: Les onze cles du bloc `quick_win` de Faker (famille A), mesurees
+#: exhaustivement le 11/08. Elles decrivent la regularite d'usage, l'usage data,
+#: l'equipement et la derniere activite — le seul profil socio-economique que la
+#: famille A porte reellement, et donc la seule matiere dont `solde_initial()`
+#: puisse deriver un patrimoine sans invention arbitraire (`A-09`).
+#:
+#: Declarees ICI, dans le generateur, parce que DEUX modules en dependent : la
+#: source interne les produit, et l'executeur CLIENTS en derive le solde. Deux
+#: listes paralleles auraient divergé — et la divergence aurait ete SILENCIEUSE,
+#: un solde calcule sur des cles que la source ne pose jamais.
+CLES_PROFIL_INTERNE: Final[tuple[str, ...]] = (
+    "IS_RGS_1",
+    "IS_RGS_7",
+    "IS_RGS_30",
+    "IS_RGS_90",
+    "IS_DATA_RGS1",
+    "IS_DATA_RGS7",
+    "IS_DATA_RGS30",
+    "IS_DATA_RGS90",
+    "IS_SMARTPHONE_USER",
+)
+
 #: Voies types. Le nom precis de la voie n'a aucune portee metier — seul compte
 #: le rattachement au quartier, qui lui vient du referentiel reel.
 TYPES_DE_VOIE: Final[tuple[str, ...]] = ("Rue", "Avenue", "Boulevard", "Carrefour")

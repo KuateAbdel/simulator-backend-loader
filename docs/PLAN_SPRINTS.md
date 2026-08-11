@@ -102,7 +102,7 @@ Rien n'est masqué. Chaque ligne porte sa preuve et son sprint.
 
 | # | Sujet | Impact |
 |---|---|---|
-| **`A-01`** | **Sénégal absent de Faker** — 500 clients sans source | bloque 25 % de `S4` |
+| ~~**`A-01`**~~ | ~~**Sénégal absent de Faker** — 500 clients sans source~~ **TRANCHÉ le 11/08 : source interne.** Absence re-vérifiée en direct — le contrat OpenAPI déclare `enum: ["BF","CI","CM"]`, et `real-scoring-phone` rend 404 sur SN quand la même URL rend 200 sur CM. Réponse = CDC §321 (générateur interne pour ce que Faker ne fournit pas), provenance visible via le préfixe `INTERNE-`. Voir `docs/empirical/2026-08-11_faker_senegal_confirme_absent.md`. | ✅ `S4` débloqué |
 | **`A-07`** | Forme des 4 profils comportementaux | bloque `S5` — *recommandation : on les définit* |
 | **`A-05`** | Permissions exactes des 11 rôles | bloque la finition de `S2` |
 | **`A-04`** | Persistance des ~700 prêts simulés | bloque `CR-10` en `S6` |

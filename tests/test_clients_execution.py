@@ -42,6 +42,7 @@ from app.services.clients_execution import (
 from app.services.depositaires_execution import ProduitSouscriptible
 from app.services.generateur import Generateur
 from app.services.geographie import charger_referentiel
+from app.services.source_interne import est_interne
 
 CLASSEUR = Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")
 REFERENTIEL = charger_referentiel(CLASSEUR)
@@ -221,13 +222,26 @@ def _executeur(
 
 
 class TestSoldeInitial:
-    def test_un_client_dormant_recoit_le_plancher_de_l_annexe_E(self) -> None:
-        """Aucun signal d'activite -> 5 000 FCFA, le Nano Very Low."""
-        assert solde_initial(_tirage(quick_win={})) == SOLDE_INITIAL_MIN
+    def test_un_client_dormant_tombe_dans_la_strate_la_plus_basse(self) -> None:
+        """Aucun signal d'activite -> la premiere bande de l'Annexe E."""
+        largeur = (SOLDE_INITIAL_MAX - SOLDE_INITIAL_MIN) / (len(CLES_QUICK_WIN_BINAIRES) + 1)
+        solde = solde_initial(_tirage(quick_win={}))
+        assert SOLDE_INITIAL_MIN <= solde < SOLDE_INITIAL_MIN + largeur
 
-    def test_un_client_au_profil_complet_recoit_le_plafond(self) -> None:
-        complet = dict.fromkeys(CLES_QUICK_WIN_BINAIRES, 1)
-        assert solde_initial(_tirage(quick_win=complet)) == SOLDE_INITIAL_MAX
+    def test_un_client_au_profil_complet_tombe_dans_la_strate_la_plus_haute(self) -> None:
+        largeur = (SOLDE_INITIAL_MAX - SOLDE_INITIAL_MIN) / (len(CLES_QUICK_WIN_BINAIRES) + 1)
+        solde = solde_initial(_tirage(quick_win=dict.fromkeys(CLES_QUICK_WIN_BINAIRES, 1)))
+        assert SOLDE_INITIAL_MAX - largeur <= solde <= SOLDE_INITIAL_MAX
+
+    def test_deux_clients_de_MEME_profil_n_ont_pas_le_MEME_solde(self) -> None:
+        """DEFAUT TROUVE PAR LES TESTS DE LA SOURCE INTERNE : la premiere version
+        comptait neuf booleens, donc DIX montants possibles — 2000 clients
+        auraient partage dix soldes. Le graphique plat, sur l'axe des montants.
+        La strate vient du profil ; la position DANS la strate vient d'une
+        empreinte stable du `client_id`."""
+        profil = {"IS_RGS_1": 1, "IS_SMARTPHONE_USER": 1}
+        soldes = {solde_initial(_tirage(seed=s, quick_win=profil)) for s in range(50)}
+        assert len(soldes) == 50, "chaque client a son propre solde au centime"
 
     def test_le_solde_est_DETERMINISTE(self) -> None:
         """`ENF-15`, et « sans invention arbitraire de montants » : le meme
@@ -236,9 +250,11 @@ class TestSoldeInitial:
         assert solde_initial(client) == solde_initial(client)
 
     def test_le_solde_croit_avec_le_profil(self) -> None:
-        """Un client plus actif a un patrimoine plus solide — les mots du CDC."""
+        """Un client plus actif a un patrimoine plus solide — les mots du CDC.
+        Compare a `client_id` CONSTANT pour isoler l'effet du profil de celui de
+        l'empreinte."""
         soldes = [
-            solde_initial(_tirage(quick_win=dict.fromkeys(CLES_QUICK_WIN_BINAIRES[:n], 1)))
+            solde_initial(_tirage(seed=1, quick_win=dict.fromkeys(CLES_QUICK_WIN_BINAIRES[:n], 1)))
             for n in range(len(CLES_QUICK_WIN_BINAIRES) + 1)
         ]
         assert soldes == sorted(soldes)
@@ -354,11 +370,13 @@ class TestDryRun:
         ex = _executeur(mode=RunMode.DRY_RUN, nb_clients=100, faker=faker, ledger=ledger)
         return await ex.executer(), faker, ledger
 
-    async def test_les_quotas_tombent_EXACTS_sur_les_trois_pays_faker(self) -> None:
-        """La table que l'operateur lit avant de dire oui (`D-01`)."""
+    async def test_les_quatre_pays_du_cdc_sont_servis_avec_des_quotas_EXACTS(self) -> None:
+        """`OBJ-01` exige QUATRE pays, et le Senegal en est un — servi par la
+        source interne depuis que Faker a confirme son `enum: ["BF","CI","CM"]`.
+        La table est celle que l'operateur lit avant de dire oui (`D-01`)."""
         rapport, _, _ = await self._rapport()
-        servis = {q.pays: q for q in rapport.quotas if q.pays != "SN"}
-        assert set(servis) == {"CM", "CI", "BF"}
+        servis = {q.pays: q for q in rapport.quotas}
+        assert set(servis) == {"CM", "CI", "BF", "SN"}, "les 4 pays cibles, sans exception"
         for quota in servis.values():
             assert quota.faits == 25, quota.resume()
             assert quota.corporate_faits == quota.cible_corporate == 5
@@ -366,13 +384,21 @@ class TestDryRun:
             assert quota.jeunes == quota.cible_jeunes == 15
             assert quota.agricoles == quota.cible_agricoles == 1
 
-    async def test_le_senegal_est_declare_pas_masque(self) -> None:
-        """`A-01` — 0/500 doit se VOIR. Un rapport qui masque le pays manquant
-        ferait decouvrir le trou devant le bailleur."""
+    async def test_le_senegal_est_SERVI_et_sa_provenance_est_declaree(self) -> None:
+        """`A-01` tranche : le Senegal est servi par la source interne (CDC
+        §321), et la provenance se LIT au rapport. Elle n'est pas une alerte —
+        un ecart declare et arbitre n'est pas un echec, et le faire basculer le
+        run en PARTIAL a chaque fois noierait les vraies alertes."""
         rapport, _, _ = await self._rapport()
         sn = next(q for q in rapport.quotas if q.pays == "SN")
-        assert sn.faits == 0
-        assert any("SN" in a and "A-01" in a for a in rapport.alertes)
+        assert sn.faits == 25, "le Senegal est peuple, plus laisse a zero"
+        assert rapport.servis_en_interne == {"SN": 25}, "provenance VISIBLE au rapport"
+        assert "Source INTERNE" in rapport.resume()
+        assert not any("A-01" in a for a in rapport.alertes), (
+            "la provenance est un fait declare, pas une alerte"
+        )
+
+
 
     async def test_aucune_ecriture_serveur_n_est_partie(self) -> None:
         """Le client-service est un stub qui leve si on l'appelle : le simple
@@ -384,9 +410,9 @@ class TestDryRun:
         """La lecon des Kiosques (« Comptes attendus : 0 » a blanc, 354 en
         reel) : un essai a blanc qui ne montre pas le reel n'en est pas un."""
         rapport, _, _ = await self._rapport()
-        assert len(rapport.crees) == 75
+        assert len(rapport.crees) == 100, "les 4 pays, source interne comprise"
         assert all(nom.endswith("[prevu]") for nom in rapport.crees)
-        assert rapport.comptes_attendus == 75
+        assert rapport.comptes_attendus == 100
         assert rapport.solde_dote > 0
 
     async def test_D_FAKER_1_le_registre_est_rendu_intact(self) -> None:
@@ -395,7 +421,7 @@ class TestDryRun:
         rapport, _, ledger = await self._rapport()
         assert ledger.reserves == set(), "aucune reservation ne survit a l'essai a blanc"
         assert ledger.confirmes == {}, "a blanc, rien n'est jamais scelle"
-        assert rapport.liberes_a_blanc == 75
+        assert rapport.liberes_a_blanc == 100
 
     async def test_l_arbre_vide_est_signale_et_les_ancres_planifiees(self) -> None:
         rapport, _, _ = await self._rapport()
@@ -455,6 +481,28 @@ class TestReel:
         assert quota.faits == len(rapport.crees), "le quota compte le REEL, pas l'intention"
         assert len(ledger.confirmes) == len(rapport.crees)
         assert ledger.reserves == set(), "les echecs sont liberes, jamais retenus"
+
+    async def test_la_provenance_interne_survit_jusqu_au_REGISTRE(self) -> None:
+        """Un operateur qui compte 500 Senegalais doit pouvoir dire d'ou ils
+        viennent SANS relire le code : le prefixe voyage avec l'`_id` jusque
+        dans `faker_consumption_ledger`, ou `compter_par_pays()` le relira."""
+        ledger, clients = FauxLedger(), FauxClientService()
+        ex = _executeur(
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("SN",),
+            ledger=ledger,
+            clients=clients,
+            arbre=FauxArbre(_kiosques("SN")),
+        )
+        rapport = await ex.executer()
+
+        assert rapport.servis_en_interne == {"SN": 40}
+        assert len(ledger.confirmes) == 40
+        assert all(est_interne(cid) for cid in ledger.confirmes), (
+            "chaque id scelle porte sa provenance"
+        )
+        assert all(cid.startswith("INTERNE-SN-") for cid in ledger.confirmes)
 
     async def test_en_reel_un_arbre_vide_est_un_VRAI_blocage(self) -> None:
         """`EF-26` exige un Kiosque EXISTANT : on n'invente pas un rattachement
