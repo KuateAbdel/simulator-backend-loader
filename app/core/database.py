@@ -20,6 +20,7 @@ from typing import Any, Final
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
 
 from app.core.config import settings
+from app.models.enums import NiveauOrganisation, RunStatus
 
 #: Type du document renvoye par motor. Les classes de app/models/domain.py
 #: valident ces dictionnaires bruts en entree comme en sortie -- aucun
@@ -112,6 +113,26 @@ async def ensure_indexes() -> None:
         [("status", 1)],
         name="idx_status",
     )
+    # `EF-55` RENDU STRUCTUREL — 11/08.
+    #
+    # Le verrou d'execution etait APPLICATIF : `dernier_en_cours()` interrogeait
+    # la base, puis on creait le run. Entre les deux, deux processus passent tous
+    # les deux. Un verrou qui se contourne par une fenetre de concurrence n'est
+    # pas un verrou, c'est une convention.
+    #
+    # Index unique PARTIEL sur `status == "RUNNING"` : deux runs RUNNING
+    # deviennent impossibles au niveau du moteur. `PAUSED` n'est pas concerne —
+    # un run en pause ne genere rien, et `EF-55` interdit deux GENERATIONS
+    # simultanees.
+    #
+    # `$in` n'est pas supporte par `partialFilterExpression` : l'egalite stricte
+    # est la seule forme legale, et c'est exactement celle qu'il nous faut.
+    await db[COLLECTION_LOADER_RUNS].create_index(
+        [("status", 1)],
+        name="uniq_un_seul_running",
+        unique=True,
+        partialFilterExpression={"status": RunStatus.RUNNING.value},
+    )
     await db[COLLECTION_AUDIT_TRAIL].create_index(
         [("run_id", 1), ("timestamp", 1)],
         name="idx_run_timestamp",
@@ -139,4 +160,27 @@ async def ensure_indexes() -> None:
         name="uniq_district_par_run",
         unique=True,
         partialFilterExpression={"district_id": {"$type": "string"}},
+    )
+    # LES DEUX NIVEAUX LOGIQUES MERITENT LA MEME GARANTIE — 11/08.
+    #
+    # Seul le KIOSQUE etait protege structurellement. Or le modele est aussi
+    # strict au-dessus : **une Branche par Region distincte, une Agence par
+    # Ville**. C'etait garanti par la seule construction du plan — donc par
+    # convention, pas par le moteur. Une reprise, un rejeu partiel ou un futur
+    # executeur concurrent auraient pu produire deux Branches sur la meme Region
+    # sans que rien ne s'y oppose.
+    #
+    # Un DBA ne laisse pas un invariant de modele reposer sur la discipline de
+    # l'appelant quand un index peut le rendre infranchissable.
+    await db[COLLECTION_ORG_HIERARCHY].create_index(
+        [("run_id", 1), ("region_id", 1)],
+        name="uniq_branche_par_region_et_run",
+        unique=True,
+        partialFilterExpression={"niveau": NiveauOrganisation.BRANCHE.value},
+    )
+    await db[COLLECTION_ORG_HIERARCHY].create_index(
+        [("run_id", 1), ("city_id", 1)],
+        name="uniq_agence_par_ville_et_run",
+        unique=True,
+        partialFilterExpression={"niveau": NiveauOrganisation.AGENCE.value},
     )

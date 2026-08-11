@@ -11,6 +11,27 @@
 > discipline n'est jamais une préférence de style : c'est une mesure du 8 ou 9
 > août transformée en règle exécutable.
 
+### 🔸 Convention d'origine — ajoutée le 11/08
+
+Les séries `D-XXX-*` viennent des pages **Service Anatomy** (espace TST). Nous
+avons **prolongé** certaines séries sans le signaler, et c'était une source de
+confusion : qui lit `D-DEP-9` va le chercher sur la page `63340549` et ne le
+trouve jamais.
+
+Le marqueur **🔸 signale une discipline qui est NÔTRE**, absente de la page
+Anatomy du service.
+
+| Service | Page Anatomy | Ce que nous appliquons |
+|---|---|---|
+| depositary (`63340549`) | `D-DEP-1` → `8` | + **`D-DEP-9`** 🔸 |
+| client (`60555267`) | `D-CLI-1` → `8` | + **`D-CLI-9`**, **`D-CLI-10`** 🔸 |
+| product (`60358657`) | `D-PRD-1` → `9` | identique |
+| collect (`62521348`) | `D-COL-1` → `16` | sous-ensemble |
+| user (`56360965`) | `D-USR-*` | sous-ensemble |
+
+Prolonger une numérotation d'autrui n'est pas neutre : elle donne à notre règle
+l'autorité d'une page qui ne la porte pas. Le marqueur rend l'emprunt visible.
+
 ---
 
 ## Une note de méthode — pourquoi ce document, et pas un module Python
@@ -86,7 +107,7 @@ persiste le JWT **en clair** dans ses logs pendant 7 jours (`VIOL-06.7`).
 
 ---
 
-## Client — `D-CLI-*` · 10 disciplines · `app/clients/client_service.py`
+## Client — `D-CLI-*` · 10 disciplines *(8 de la page Anatomy + 2 nôtres)* · `app/clients/client_service.py`
 
 | # | Discipline | Le fait mesuré |
 |---|---|---|
@@ -98,8 +119,8 @@ persiste le JWT **en clair** dans ses logs pendant 7 jours (`VIOL-06.7`).
 | `D-CLI-6` | **Le lien Client → Company n'existe pas à la création** | il passe par `Client →(Collect)→ Dépositaire → Company` |
 | `D-CLI-7` | `PUT /clients/subscribe` pour les 2ᵉ et 3ᵉ produits | `UC-13` : 1 à 3 souscriptions |
 | `D-CLI-8` | **`identity.phone` doit être strictement égal à `msisdn`** | sinon `400 "Identity phone field must match msisdn"` — **absent de toutes nos sources**, trouvé par sondage |
-| `D-CLI-9` | `currency` **n'est validée nulle part** | elle traverse le service, n'apparaît pas dans la fiche Client rendue, et **atterrit verbatim dans le compte CHECKING** |
-| `D-CLI-10` | Un Client ne souscrit **qu'à** des produits `COLLECT` | le serveur accepte un LENDING — `FRA-230` |
+| `D-CLI-9` 🔸 | `currency` **n'est validée nulle part** | elle traverse le service, n'apparaît pas dans la fiche Client rendue, et **atterrit verbatim dans le compte CHECKING** |
+| `D-CLI-10` 🔸 | Un Client ne souscrit **qu'à** des produits `COLLECT` | le serveur accepte un LENDING — `FRA-230` |
 
 ---
 
@@ -129,7 +150,7 @@ moins.
 
 ---
 
-## Dépositaire — `D-DEP-*` · 8 disciplines
+## Dépositaire — `D-DEP-*` · 9 disciplines *(8 de la page Anatomy + 1 nôtre)*
 
 | # | Discipline | Le fait mesuré |
 |---|---|---|
@@ -140,7 +161,7 @@ moins.
 | `D-DEP-6` | **Ne jamais présumer** la cohérence de devise Company ↔ Dépositaire | `currency` accepte n'importe quelle chaîne (`FRA-201`) |
 | `D-DEP-7` | Token ROOT en écriture | `FRA-205` |
 | `D-DEP-8` | Désactiver un Dépositaire **n'arrête ni les collectes ni les retraits** | `FRA-203`/`204` |
-| `D-DEP-9` | Un Dépositaire ne souscrit **qu'à** des produits `COLLECT` | le serveur accepte un LENDING |
+| `D-DEP-9` 🔸 | Un Dépositaire ne souscrit **qu'à** des produits `COLLECT` | le serveur accepte un LENDING (`FRA-223`) |
 
 ---
 

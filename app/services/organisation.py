@@ -170,7 +170,23 @@ def planifier(
 
     kiosques_min, kiosques_max = KIOSQUES_PAR_PAYS
     companies_min, companies_max = COMPANIES_PAR_PAYS
-    pays_a_planifier = tuple(configuration.pays_actifs) if configuration else PAYS_CIBLES
+    # L'ORDRE DE PARCOURS EST CELUI DU CDC, TOUJOURS.
+    #
+    # DEFAUT TROUVE LE 11/08 EN VERIFIANT MA PROPRE AFFIRMATION : ce filtre
+    # s'ecrivait `tuple(configuration.pays_actifs)`, et `pays_actifs` rend une
+    # liste TRIEE — donc `BF, CI, CM, SN` au lieu de `CM, CI, BF, SN`. Le
+    # generateur aleatoire etant consomme pays par pays, changer l'ordre change
+    # TOUS les tirages : 14 Companies sans configuration, 18 avec la
+    # configuration par DEFAUT. Le docstring promettait « comportement
+    # identique » ; il ne l'etait pas.
+    #
+    # `PAYS_CIBLES` fixe l'ordre, la configuration ne fait que FILTRER. Un pays
+    # desactive disparait ; les autres gardent leur rang, donc leurs tirages.
+    if configuration is None:
+        pays_a_planifier = PAYS_CIBLES
+    else:
+        actifs = set(configuration.pays_actifs)
+        pays_a_planifier = tuple(code for code in PAYS_CIBLES if code in actifs)
 
     for pays in pays_a_planifier:
         if configuration is not None:
@@ -227,20 +243,55 @@ def planifier(
             )
             continue
 
-        # Une Agence par ville utile, plafonnee par le referentiel. Chaque IMF
-        # recoit au moins une Branche (UC-09, postcondition).
+        # `EF-15` — « un nombre PARAMETRABLE d'Agences par Branche, rattachees a
+        # une Ville de la Region ». Une Agence par ville porteuse de quartiers :
+        # c'est le defaut, et il est impose par le referentiel, pas choisi. Une
+        # Agence placee dans une ville sans quartier ne pourrait heberger aucun
+        # Kiosque (`UC-09`, exception).
+        #
+        # Le plafond `agences` ne fait que BORNER ce que la geographie offre. Il
+        # n'invente jamais une ville : `EF-04` prevoit d'enrichir le referentiel,
+        # c'est la seule facon d'en avoir davantage.
         nb_agences = min(len(villes_utiles), max(nb_imf, len(villes_utiles)))
+        if configuration is not None:
+            plafond_agences = configuration.resoudre("agences", pays)
+            if plafond_agences is not None:
+                nb_agences = min(nb_agences, int(plafond_agences))
         villes_retenues = villes_utiles[:nb_agences]
 
-        # Repartition des Agences sur les Branches, une Branche par Region
-        # distincte (EF-14). Deux Agences d'une meme region partagent leur Branche.
+        # `EF-14` — « un nombre PARAMETRABLE de Branches par IMF, rattachees a
+        # une Region ». Une Branche par Region distincte des villes retenues :
+        # deux Agences d'une meme region partagent leur Branche, comme dans la
+        # realite d'un reseau territorial.
         agences_par_region: dict[str, list[str]] = {}
         for ville in villes_retenues:
             agences_par_region.setdefault(ville.region_id, []).append(ville.city_id)
 
-        # Repartition des Kiosques sur les Agences, au prorata des quartiers
-        # reellement disponibles dans chaque ville — jamais a parts egales :
-        # Dakar (15 quartiers) doit peser plus que Thies (2).
+        if configuration is not None:
+            plafond_branches = configuration.resoudre("branches", pays)
+            if plafond_branches is not None and len(agences_par_region) > int(plafond_branches):
+                # On retire les regions les MOINS pourvues en villes : plafonner
+                # doit couter le moins de couverture geographique possible.
+                gardees = sorted(
+                    agences_par_region.items(), key=lambda kv: (-len(kv[1]), kv[0])
+                )[: int(plafond_branches)]
+                retirees = len(agences_par_region) - len(gardees)
+                agences_par_region = dict(gardees)
+                villes_gardees = {c for _, ids in gardees for c in ids}
+                villes_retenues = [v for v in villes_retenues if v.city_id in villes_gardees]
+                plan.ecarts.append(
+                    f"{pays} : {retirees} Region(s) ecartee(s) par le plafond de "
+                    f"{plafond_branches} Branches — `EF-14` parametrable, la "
+                    f"couverture geographique en paie le prix"
+                )
+
+        # `EF-16` — « un nombre PARAMETRABLE de Kiosques par Agence, rattaches a
+        # un District de la Ville ». Le nombre TOTAL par pays vient de
+        # `configuration.resoudre("kiosques")` ; sa repartition entre les Agences
+        # se fait au prorata des quartiers reellement disponibles dans chaque
+        # ville — jamais a parts egales : Dakar (15 quartiers) doit peser plus
+        # que Thies (2). Et `D-03` tient : un quartier n'heberge qu'UN Kiosque,
+        # donc `_repartir` ne depasse jamais la capacite d'une ville.
         capacites = {
             ville.city_id: len(referentiel.quartiers_de_ville(ville.city_id))
             for ville in villes_retenues

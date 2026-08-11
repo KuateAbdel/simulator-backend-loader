@@ -90,13 +90,28 @@ from app.core.cdc import (
     STAFF_PAR_PAYS,
 )
 
-#: Les quatre quantites parametrables, avec leur defaut contractuel. Toute
-#: nouvelle quantite s'ajoute ICI — elle nait parametrable, jamais figee.
+#: Les quantites parametrables, avec leur defaut contractuel. Toute nouvelle
+#: quantite s'ajoute ICI — elle nait parametrable, jamais figee.
+#:
+#: `branches`, `agences` et `agents` ajoutes le 11/08. `EF-14`, `EF-15`, `EF-16`
+#: et `EF-17` emploient tous les quatre le meme mot — « un nombre
+#: **parametrable** de Branches par IMF / d'Agences par Branche / de Kiosques par
+#: Agence / d'Agents par Kiosque ». Seul `kiosques` l'etait. Les trois autres
+#: etaient DERIVES de la geographie sans qu'aucun parametre ne puisse les borner.
+#:
+#: Leur defaut est `None`, et c'est un defaut PLEIN de sens : « derive de la
+#: geographie ». Une Branche par Region distincte, une Agence par ville porteuse
+#: de quartiers, un Agent par Kiosque — c'est la regle que le referentiel impose
+#: et elle reste la meilleure en l'absence de consigne. Le parametre ne fait que
+#: PLAFONNER ce que la geographie offre ; il n'invente jamais un noeud de plus.
 DEFAUTS_CDC: Final[dict[str, Any]] = {
     "companies": COMPANIES_PAR_PAYS,
     "kiosques": KIOSQUES_PAR_PAYS,
     "staff": STAFF_PAR_PAYS,
     "part_corporate": PART_CORPORATE,
+    "branches": None,
+    "agences": None,
+    "agents": None,
 }
 
 #: `EF-22` : deux femmes pour un homme. Exprime en part de femmes pour que la
@@ -115,6 +130,12 @@ class Surcharge:
     clients: int | None = None
     part_femmes: float | None = None
     part_corporate: float | None = None
+    #: `EF-14` / `EF-15` / `EF-17` — PLAFONDS, jamais des cibles. `None` laisse
+    #: la geographie decider, ce qui reste le defaut contractuel : le CDC dit
+    #: « parametrable » sans donner de nombre.
+    branches: int | None = None
+    agences: int | None = None
+    agents: int | None = None
 
     def valeur(self, quantite: str) -> Any:
         return getattr(self, quantite, None)
@@ -418,7 +439,17 @@ class ConfigurationExecution:
 def _serialiser(surcharge: Surcharge) -> dict[str, Any]:
     return {
         champ: valeur
-        for champ in ("companies", "kiosques", "staff", "clients", "part_femmes", "part_corporate")
+        for champ in (
+            "companies",
+            "kiosques",
+            "staff",
+            "clients",
+            "part_femmes",
+            "part_corporate",
+            "branches",
+            "agences",
+            "agents",
+        )
         if (valeur := getattr(surcharge, champ)) is not None
     }
 

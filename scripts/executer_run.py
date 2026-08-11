@@ -22,7 +22,7 @@ import asyncio
 import logging
 from datetime import date, timedelta
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.clients.account_service import AccountServiceClient
 from app.clients.company_service import CompanyServiceClient
@@ -100,18 +100,29 @@ async def executer(
     #            aucun run n'ecrivait les checkpoints qui l'alimentent.
     depot_runs = LoaderRunRepository()
 
-    # `EF-55` — deux generations simultanees sur le meme environnement sont
-    # interdites. Un run interrompu brutalement reste `RUNNING` : l'echappatoire
-    # est explicite, jamais silencieuse.
+    # `EF-55` — deux generations simultanees sont interdites, et depuis le 11/08
+    # l'interdit est STRUCTUREL : un index unique partiel sur `status ==
+    # "RUNNING"` rend le second run impossible au niveau du moteur.
+    #
+    # CONSEQUENCE SUR L'ECHAPPATOIRE : `--ignorer-verrou` ne peut plus « passer
+    # outre » — un index ne se contourne pas. Il fait donc la seule chose
+    # correcte : il **CLOT** le run bloque en `FAILED`, un etat terminal et vrai,
+    # puis il laisse la place. C'est mieux que l'ancien contournement, qui aurait
+    # laisse deux runs se croire actifs.
     en_cours = await depot_runs.dernier_en_cours()
-    if en_cours is not None and not ignorer_verrou:
-        print(
-            f"REFUS (EF-55) — le run {en_cours.id} est {en_cours.status.value}.\n"
-            f"  Deux generations simultanees sont interdites.\n"
-            f"  S'il s'agit d'un run interrompu, relancer avec --ignorer-verrou."
-        )
-        close()
-        return 2
+    if en_cours is not None:
+        if not ignorer_verrou:
+            print(
+                f"REFUS (EF-55) — le run {en_cours.id} est {en_cours.status.value}.\n"
+                f"  Deux generations simultanees sont interdites.\n"
+                f"  S'il s'agit d'un run interrompu, relancer avec --ignorer-verrou :\n"
+                f"  il sera clos en FAILED, jamais laisse en suspens."
+            )
+            close()
+            return 2
+        if en_cours.status is RunStatus.RUNNING:
+            await depot_runs.changer_statut(en_cours.id, RunStatus.FAILED)
+            print(f"VERROU LIBERE — run {en_cours.id} clos en FAILED (etait RUNNING).")
 
     run = await depot_runs.creer(
         sim_start_date=debut,
@@ -230,13 +241,60 @@ async def executer(
             # On ne masque JAMAIS l'erreur d'origine : elle est relancee plus bas.
             logging.getLogger(__name__).exception("cloture du run %s impossible", run_id)
         raise
+    else:
+        # La reconciliation LIT MongoDB : elle doit avoir lieu avant `close()`.
+        # Placee apres le `finally`, elle rendait « Client MongoDB non
+        # initialise » — le journal d'intention restait muet au moment precis ou
+        # il sert.
+        reconciliation = await _reconcilier(audit, run_id)
     finally:
         for client in (users, companies, comptes, produits_client, depositaires, identites):
             await client.fermer()
         close()
 
     print(rapport.resume())
+    print(reconciliation)
     return 0 if rapport.statut.value != "FAILED" else 1
+
+
+async def _reconcilier(audit: AuditTrailRepository, run_id: UUID) -> str:
+    """LA BOUCLE D'ATOMICITE, FERMEE — 11/08.
+
+    `audit_trail` porte un journal d'intention write-ahead : on note ce qu'on VA
+    ecrire, puis ce qui s'est REELLEMENT passe. Une INTENTION sans RESULTAT est
+    **orpheline** : le processus est mort entre les deux, et **on ne sait pas si
+    le serveur a ecrit**.
+
+    `intentions_orphelines()` etait ecrit, teste, documente comme « le vrai
+    livrable de ce module »... et appele NULLE PART. Le journal d'intention
+    detectait donc des orphelines que personne ne lisait — la moitie d'un
+    write-ahead log ne vaut rien.
+
+    Sur trois services sans `DELETE`, cette liste est la seule facon de garder
+    `OBJ-05` (reversibilite) tenable apres une interruption : elle nomme
+    exactement les ecritures a aller verifier a la main.
+
+    Une base injoignable ne doit pas masquer le rapport du run : on le dit et on
+    rend la main.
+    """
+    try:
+        orphelines = await audit.intentions_orphelines(run_id)
+    except Exception as erreur:  # pragma: no cover — defense d'exploitation
+        return f"\nRECONCILIATION IMPOSSIBLE : {type(erreur).__name__} — {erreur}"
+
+    if not orphelines:
+        return "\nRECONCILIATION : aucune intention orpheline — le journal est clos."
+
+    lignes = [
+        f"\nRECONCILIATION : {len(orphelines)} INTENTION(S) ORPHELINE(S) — a verifier a la main.",
+        "  Chacune designe une ecriture dont on IGNORE si le serveur l'a appliquee.",
+    ]
+    for entree in orphelines[:20]:
+        cible = (entree.after or {}).get("cible", "?")
+        lignes.append(f"    {entree.entity_type:<12} {entree.entity_id} -> {cible}")
+    if len(orphelines) > 20:
+        lignes.append(f"    … et {len(orphelines) - 20} autres (journal complet : exporter_run)")
+    return "\n".join(lignes)
 
 
 def main() -> int:
