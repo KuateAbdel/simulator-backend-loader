@@ -120,6 +120,26 @@ class FakerLedgerRepository(RepositoryBase):
             return False
         return True
 
+    async def etat(self, client_id: str) -> FakerConsumptionLedger | None:
+        """L'entree du registre, ou `None`. Sert a INTERPRETER un refus.
+
+        `reserver()` rend `False` pour trois raisons qui n'appellent pas la meme
+        conduite, et les confondre coutait `CR-03` :
+
+        - `CONSOMME` — une entite EXISTE deja, nee de ce client Faker. Un second
+          run doit la RECONNAITRE et la compter, pas tirer un autre seed : les
+          services concernes n'ont aucun `DELETE`.
+        - `RESERVE` par un autre run — reservation orpheline, du ressort de
+          `reclamer_orphelines()`.
+        - `RESERVE` par ce run — collision reelle dans l'execution courante,
+          seul cas ou le CDC §185 s'applique (« changer le seed »).
+
+        Lecture APRES le refus, jamais avant : un `find_one` prealable
+        rouvrirait la fenetre que `reserver()` existe pour fermer.
+        """
+        document = await self.collection.find_one({"_id": client_id})
+        return FakerConsumptionLedger.model_validate(document) if document else None
+
     # ------------------------------------------------------------------
     # Temps 2 — la confirmation, APRES la creation de l'entite
     # ------------------------------------------------------------------

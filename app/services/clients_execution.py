@@ -100,7 +100,13 @@ from app.core.cdc import (
     PART_MOINS_DE_25_ANS,
 )
 from app.core.configuration import ConfigurationExecution
-from app.models.enums import FakerConsumptionType, NiveauOrganisation, RunMode, RunStatus
+from app.models.enums import (
+    EtatConsommationFaker,
+    FakerConsumptionType,
+    NiveauOrganisation,
+    RunMode,
+    RunStatus,
+)
 from app.repositories import FakerLedgerRepository, OrgHierarchyRepository
 from app.services.clients_composition import (
     OCCUPATIONS_PAR_SECTEUR,
@@ -149,6 +155,29 @@ TAILLE_LOT: Final = 40
 #: Faker muet peut rendre tout un lot inutile. Sans borne, la boucle tournerait
 #: indefiniment — et `ENF-01` ne pardonne pas une boucle infinie.
 TOURS_INFRUCTUEUX_MAX: Final = 5
+
+#: Borne haute des seeds Faker. Le CDC §185 traite `seed` comme un entier libre ;
+#: cette borne vient de la mesure du 09/08, ou l'API acceptait sans broncher tout
+#: entier positif. Un espace de 10^7 pour 500 tirages laisse la collision
+#: negligeable, et le CDC §185 la prevoit de toute facon.
+GRAINE_FAKER_MAX: Final = 10_000_000
+
+
+def _graine_faker(pays: str, rang: int) -> int:
+    """La graine d'un tirage — fonction du PERIMETRE, jamais du run.
+
+    C'est la piece qui rend `CR-03` atteignable. Deux executions du meme
+    perimetre parcourent la meme sequence de clients Faker ; le registre
+    `D-FAKER-1` reconnait alors ceux qui ont deja produit une entite, au lieu de
+    les remplacer par de nouveaux tirages et de doubler l'ecosysteme.
+
+    `sha256` plutot que `hash()` : le hachage des chaines est randomise par
+    processus en Python, donc `hash()` changerait d'un demarrage a l'autre — le
+    contraire exact de ce qu'on cherche ici.
+    """
+    empreinte = int(sha256(f"{pays.upper()}:{rang}".encode()).hexdigest()[:12], 16)
+    return 1 + empreinte % (GRAINE_FAKER_MAX - 1)
+
 
 def solde_initial(faker: ClientFaker) -> float:
     """Le solde initial du compte — **arbitrage `A-09`, recommandation appliquee**.
@@ -399,6 +428,11 @@ class RapportClients:
     #: alerte : un ecart declare et arbitre n'est pas un echec, et le faire
     #: basculer le run en PARTIAL a chaque fois noierait les vraies alertes.
     servis_en_interne: dict[str, int] = field(default_factory=dict)
+    #: `CR-03` — les clients Faker qu'un run ANTERIEUR a deja transformes en
+    #: entites. Ils ne sont ni crees ni echoues : ils sont RECONNUS, et comptes
+    #: dans la cible. Un second run du meme perimetre devrait n'afficher presque
+    #: que ceux-la — c'est la forme observable de l'idempotence.
+    deja_presents: list[str] = field(default_factory=list)
 
     @property
     def total_cible(self) -> int:
@@ -409,7 +443,12 @@ class RapportClients:
         """`PARTIAL` est un etat terminal LEGITIME (`UC-07`, cas alternatif)."""
         if not self.echoues and not self.refuses_avant_reseau and not self.alertes:
             return RunStatus.COMPLETED
-        if not self.crees:
+        # `deja_presents` compte autant que `crees` ICI, et pas par elegance : un
+        # second run du meme perimetre ne cree RIEN — tout est deja la. Sans
+        # cette lecture il serait declare FAILED alors qu'il vient precisement de
+        # DEMONTRER `CR-03`. « Le permis n'est pas le juste » a un pendant : un
+        # run qui n'ecrit rien parce que tout existe est un run reussi.
+        if not self.crees and not self.deja_presents:
             return RunStatus.FAILED
         return RunStatus.PARTIAL
 
@@ -431,6 +470,8 @@ class RapportClients:
             f"Solde dote     : {self.solde_dote:,.2f} (A-09 — recommandation appliquee)",
             f"Reservations liberees : {self.liberes} (ecartes ou echoues — D-FAKER-1)",
             f"Liberees a blanc      : {self.liberes_a_blanc} (aucune entite creee)",
+            f"Deja presents         : {len(self.deja_presents)} "
+            "(reconnus d'un run anterieur — CR-03, aucun doublon cree)",
             f"Refuses avant reseau  : {len(self.refuses_avant_reseau)}",
             f"Echecs serveur        : {len(self.echoues)}",
             f"STATUT : {self.statut.value}",
@@ -706,6 +747,8 @@ class ExecuteurClients:
         """
         reste = quota.cible
         tours_infructueux = 0
+        #: Position dans la sequence de tirage du pays. Strictement croissante.
+        rang_tirage = 0
 
         while reste > 0 and tours_infructueux < TOURS_INFRUCTUEUX_MAX:
             # On SUR-TIRE : une partie du lot sera ecartee par les quotas, et un
@@ -714,14 +757,33 @@ class ExecuteurClients:
             depart = quota.cible - reste
 
             # --- 1. TIRER, concurremment -----------------------------------
+            # `CR-03` — LA GRAINE NE VIENT PLUS DU RUN. Mesure du 12/08 : elle
+            # etait tiree dans `self._alea`, seme par le `run_id`, donc un second
+            # run reel tirait 2000 clients Faker ENTIEREMENT DIFFERENTS. Le
+            # registre `D-FAKER-1` ne pouvait alors rien reconnaitre, et les 2000
+            # clients du premier run se doublaient — sur des services sans
+            # `DELETE`. « Idempotence, aucun doublon » echouait totalement, et en
+            # silence.
+            #
+            # La graine est desormais fonction du PERIMETRE — pays et rang dans
+            # la sequence de tirage — jamais du run. Le second run parcourt la
+            # MEME sequence, retrouve les memes clients Faker, et le registre les
+            # reconnait un a un. `ENF-15` demandait la reproductibilite par run :
+            # un tirage fonction du perimetre la satisfait a plus forte raison.
+            #
+            # Le rang n'est pas `depart + i` : il ne doit JAMAIS reculer, sinon
+            # un rang ecarte serait retire a l'identique a chaque tour et la
+            # boucle piocherait indefiniment le meme client. Il avance a chaque
+            # tirage, gagnant ou perdant.
             demandes = [
                 (
-                    self._alea.randrange(1, 10_000_000),
+                    _graine_faker(pays, rang_tirage + i),
                     kiosques[(depart + i) % len(kiosques)],
                     self._categorie_a_tirer(quota, depart + i),
                 )
                 for i in range(taille)
             ]
+            rang_tirage += taille
             tirages = await asyncio.gather(
                 *(source.tirer_client(pays, cat, seed) for seed, _, cat in demandes),
                 return_exceptions=True,
@@ -757,7 +819,44 @@ class ExecuteurClients:
                     run_id=self.run_id,
                     seed=seed,
                 ):
-                    # Cache deterministe : la collision est prevue par le CDC §185.
+                    # UN REFUS A TROIS CAUSES, ET LES CONFONDRE COUTAIT `CR-03`.
+                    entree = await self._ledger.etat(tirage.client_id)
+                    if (
+                        entree is not None
+                        and entree.state is EtatConsommationFaker.CONSOMME
+                        and entree.run_id != self.run_id
+                    ):
+                        # REPRISE — une entite existe deja, nee de ce client
+                        # Faker par un run anterieur. Elle fait partie de
+                        # l'ecosysteme cible : on la COMPTE.
+                        #
+                        # CE QUI EMPECHE REELLEMENT LE DOUBLON, verifie par
+                        # mutation le 12/08 : la RESERVATION DE QUOTA CONSERVEE.
+                        # Ce client est bien une femme, un corporate ou un jeune
+                        # deja present ; `quota.faits` atteint donc sa cible et
+                        # tout tirage suivant est ecarte « quota sature ». Ma
+                        # premiere redaction attribuait ce role au `reste -= 1`
+                        # ci-dessous — c'etait faux, et le retirer ne creait
+                        # aucun doublon.
+                        #
+                        # `reste -= 1` sert a autre chose, et ce n'est pas
+                        # cosmetique : sans lui la boucle tourne cinq lots a vide
+                        # et le run se termine sur l'alerte « abandon apres 5
+                        # lots sans aucun client retenu », donc en PARTIAL. Un
+                        # run de reprise parfaite serait signale comme degrade
+                        # alors qu'il vient de DEMONTRER `CR-03`.
+                        rapport.deja_presents.append(tirage.client_id)
+                        reste -= 1
+                        continue
+                    # Cache deterministe : la collision est prevue par le CDC §185
+                    # — mais uniquement DANS le run courant. Rendre la reservation
+                    # est obligatoire : `quota.reserver()` a deja incremente.
+                    #
+                    # DEFAUT LATENT TROUVE EN LISANT CE CHEMIN LE 12/08 : le
+                    # `rendre()` manquait. La cible se serait remplie de clients
+                    # inexistants — invisible a blanc, ou le registre est vide a
+                    # chaque essai, donc jamais declenche jusqu'ici.
+                    quota.rendre(reservation)
                     quota.ecarter("deja consomme")
                     continue
                 # DEFAUT MESURE AU PREMIER ESSAI A BLANC : `<25ans 320/300`,
@@ -890,6 +989,31 @@ class ExecuteurClients:
             rapport.comptes_attendus += 1
             rapport.solde_dote += solde_initial(faker)
             rapport.crees.append(f"{nom} [prevu]")
+            return compose
+
+        # `D-CLI-5` — LE `GET` AVANT LE `POST`, SECONDE LIGNE DE DEFENSE.
+        #
+        # Le registre `D-FAKER-1` est la premiere, et la meilleure : il connait
+        # les clients Faker deja consommes. Mais il vit dans NOTRE MongoDB, que
+        # rien n'empeche d'etre reinitialisee — alors que les 2000 clients, eux,
+        # resteront sur un service sans `DELETE`. Le jour ou notre base est
+        # perdue et pas la leur, ce `GET` est tout ce qui separe la reprise du
+        # doublon.
+        #
+        # Il n'est devenu utile qu'aujourd'hui : le msisdn tirait son operateur
+        # du `run_id`, donc la cle de recherche changeait a chaque run et cette
+        # lecture n'aurait JAMAIS trouve personne. Poser le controle sans
+        # stabiliser la cle aurait produit un controle decoratif — la quinzieme
+        # occurrence du meme defaut.
+        deja = await self._clients.chercher_par_msisdn(compose.msisdn)
+        if deja is not None:
+            # PAS DE SECOND CREDIT. C'est le vrai enjeu, plus que le HTTP 400 :
+            # `_doter()` deposerait a nouveau le solde initial sur un compte qui
+            # le porte deja, et `account-service` n'expose aucun moyen de
+            # defaire un mouvement. Un doublon de client se voit ; un solde
+            # double se lit comme une donnee legitime.
+            await self._sceller(faker.client_id, deja)
+            rapport.deja_presents.append(faker.client_id)
             return compose
 
         try:

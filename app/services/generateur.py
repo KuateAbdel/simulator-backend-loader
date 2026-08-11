@@ -587,9 +587,25 @@ class Generateur:
         CDC interdit — l'ancre est le `client_id`, transmis par l'appelant. Le
         numero reste une fonction du client, jamais d'un hasard.
 
-        Ce qui vient d'`alea` (donc du `run_id`) : le choix de l'operateur et,
-        quand le plan en offre plusieurs, la variante de prefixe. Reproductible
-        par run, comme `ENF-15` l'exige.
+        L'OPERATEUR AUSSI EST ANCRE AU CLIENT — CORRECTION DU 12/08
+        -----------------------------------------------------------
+        La version precedente tirait l'operateur dans `self._alea`, seme par le
+        `run_id`. Mesure : la MEME matiere client rendait `237679614504` au run 1
+        et `237699614504` au run 2 — un seul chiffre d'ecart, celui de la
+        variante de prefixe, et cela suffisait a rendre le msisdn INUTILISABLE
+        comme cle de reprise. Or `D-CLI-5` en fait la cle du `GET`-avant-`POST`,
+        et `CR-03` exige « idempotence, aucun doublon » : un second run n'aurait
+        reconnu AUCUN des 2000 clients du premier, et en aurait cree 2000 de
+        plus, sur des services sans `DELETE`.
+
+        L'operateur est donc tire dans un generateur seme par le CLIENT. La
+        ponderation par parts de marche est intacte — chaque client tire encore
+        uniformement, donc `EF-27` garde sa distribution (MTN CM 46 %, Orange
+        43 %, Camtel 3 %) — mais le resultat ne bouge plus d'un run a l'autre.
+
+        Rien n'est perdu : `ENF-15` demandait la reproductibilite par run, et un
+        numero fonction du client la satisfait a plus forte raison. Ce que la
+        version d'avant offrait n'etait pas une garantie, c'etait un obstacle.
         """
         # DEFAUT DE MA PREMIERE VERSION, attrape par les tests dans la minute :
         # le repli derivait du RUN (`_graine_secours`) et non du CLIENT. Les 500
@@ -598,11 +614,14 @@ class Generateur:
         # « quota sature : 62 ». Un repli doit rester une fonction du client,
         # sinon il n'ancre rien et il collisionne par construction.
         ancre = str(matiere or self._graine_secours)
+        # Seme par le CLIENT, pas par le run — voir la docstring. `Random` accepte
+        # une chaine comme graine et la hache lui-meme, de facon stable.
+        de_ce_client = random.Random(f"{pays}:{ancre}")  # noqa: S311
         for tentative in range(TENTATIVES_MSISDN_MAX):
             # Escalade DETERMINISTE : le meme client au meme rang de tentative
             # rend toujours le meme corps. Pas un nouveau tirage au hasard.
             numero, operateur = referentiel.composer_msisdn(
-                pays, _corps_msisdn(ancre, tentative), self._alea
+                pays, _corps_msisdn(ancre, tentative), de_ce_client
             )
             if numero not in self._msisdns_emis:
                 self._msisdns_emis.add(numero)

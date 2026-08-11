@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from uuid import NAMESPACE_OID, UUID, uuid4, uuid5
 
@@ -29,7 +30,7 @@ from app.clients.base import ErreurService
 from app.clients.contracts import ClientCategory, ProductType
 from app.clients.faker_service import CategorieClient, ClientFaker
 from app.core.configuration import ConfigurationExecution
-from app.models.enums import RunMode, RunStatus
+from app.models.enums import EtatConsommationFaker, RunMode, RunStatus
 from app.repositories.faker_ledger import ConsommationIncoherente
 from app.services.clients_execution import (
     CLES_QUICK_WIN_BINAIRES,
@@ -49,6 +50,9 @@ CLASSEUR = Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")
 REFERENTIEL = charger_referentiel(CLASSEUR)
 #: Fige : les seeds derivent du run_id, donc tout le deroule est deterministe.
 RUN = UUID(int=42)
+#: Le `run_id` d'un SECOND run. `CR-03` ne se prouve qu'entre deux executions
+#: distinctes : reutiliser `RUN` rendrait tout test de reprise complaisant.
+AUTRE_RUN = UUID(int=4242)
 
 PRENOMS = ("Aya", "Moussa", "Ines", "Salif", "Awa", "Koffi")
 NOMS = ("Kouassi", "Ouattara", "Tamadou", "Sidibe", "Kabore", "Ngwa")
@@ -82,11 +86,17 @@ def _tirage(
 class FauxFaker:
     """Famille A simulee : deterministe par seed, 2 femmes pour 1 homme."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, replier_sur: int = 0) -> None:
         self.appels = 0
+        #: Le cache Faker est DETERMINISTE : deux graines distinctes peuvent
+        #: rendre le meme `client_id`, et le CDC §185 prevoit ce cas. `replier_sur`
+        #: le reproduit en ramenant les graines modulo N.
+        self._replier = replier_sur
 
     async def tirer_client(self, pays: str, categorie: str, seed: int) -> ClientFaker:
         self.appels += 1
+        if self._replier:
+            seed = seed % self._replier
         return _tirage(
             pays,
             genre="WOMAN" if seed % 3 else "MAN",
@@ -98,16 +108,38 @@ class FauxFaker:
 class FauxLedger:
     """Le registre D-FAKER-1, en memoire, avec les memes regles que le vrai."""
 
-    def __init__(self) -> None:
+    #: Un run ANTERIEUR, pour que `run_id != self.run_id` distingue la reprise
+    #: d'une collision interne au run courant.
+    RUN_ANTERIEUR = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+    def __init__(self, deja_consommes: set[str] | None = None) -> None:
         self.reserves: set[str] = set()
         self.confirmes: dict[str, UUID] = {}
         self.liberations = 0
+        #: `CR-03` — ce qu'un run precedent a deja transforme en entite. Le vrai
+        #: registre est GLOBAL (`_id` = client_id Faker), pas indexe par run :
+        #: c'est ce qui rend la reprise possible, et c'est ce que ce double doit
+        #: reproduire.
+        self._anterieurs = deja_consommes or set()
 
     async def reserver(self, client_id: str, **_: Any) -> bool:
         if client_id in self.reserves or client_id in self.confirmes:
             return False
+        if client_id in self._anterieurs:
+            return False
         self.reserves.add(client_id)
         return True
+
+    async def etat(self, client_id: str) -> Any:
+        if client_id in self._anterieurs:
+            return SimpleNamespace(
+                state=EtatConsommationFaker.CONSOMME, run_id=self.RUN_ANTERIEUR
+            )
+        if client_id in self.confirmes:
+            return SimpleNamespace(state=EtatConsommationFaker.CONSOMME, run_id=RUN)
+        if client_id in self.reserves:
+            return SimpleNamespace(state=EtatConsommationFaker.RESERVE, run_id=RUN)
+        return None
 
     async def liberer(self, client_id: str) -> bool:
         if client_id in self.reserves:
@@ -139,16 +171,41 @@ class ServiceInterdit:
     async def onboarder(self, **_: Any) -> dict[str, Any]:
         raise AssertionError("DRY_RUN ne doit JAMAIS appeler client-service")
 
+    async def chercher_par_msisdn(self, _msisdn: str) -> dict[str, Any] | None:
+        raise AssertionError("DRY_RUN ne lit meme pas — aucun appel reseau")
+
 
 class FauxClientService:
     """client-service simule ; `echouer_1_sur` fait echouer un appel sur N."""
 
-    def __init__(self, echouer_1_sur: int = 0, *, sans_account_id: bool = False) -> None:
+    def __init__(
+        self,
+        echouer_1_sur: int = 0,
+        *,
+        sans_account_id: bool = False,
+        msisdns_existants: set[str] | None = None,
+    ) -> None:
         self.onboardes: list[dict[str, Any]] = []
         self.fiches: list[dict[str, Any]] = []
+        self.recherches: list[str] = []
         self._echouer = echouer_1_sur
         self._sans_account = sans_account_id
+        #: `D-CLI-5` — ce que le serveur porte DEJA. Vide par defaut : un double
+        #: qui rendrait une fiche pour tout msisdn ferait croire que rien ne se
+        #: cree jamais.
+        self._existants = msisdns_existants or set()
         self._n = 0
+
+    async def chercher_par_msisdn(self, msisdn: str) -> dict[str, Any] | None:
+        """Le vrai service rend `404` — donc `None` — quand le client n'existe
+        pas (mesure du 09/08, traite par `vide_si_404`). Un double qui omettait
+        cette methode a fait echouer neuf tests sans qu'aucun defaut du code soit
+        en cause : c'est le double qui ne ressemblait pas au service."""
+        self.recherches.append(msisdn)
+        if msisdn not in self._existants:
+            return None
+        return {"_id": str(uuid4()), "msisdn": msisdn, "identity": {"_id": str(uuid4())},
+                "account_id": str(uuid4())}
 
     async def onboarder(self, **kwargs: Any) -> dict[str, Any]:
         self._n += 1
@@ -242,6 +299,11 @@ def _executeur(
     clients: Any = None,
     arbre: Any = None,
     comptes: Any = None,
+    #: Un vrai second run porte un AUTRE `run_id`. Le figer a `RUN` rendait le
+    #: test de reprise aveugle : `self._alea` produisait la meme suite dans les
+    #: deux executions, donc les memes clients Faker meme quand la graine venait
+    #: du run. Le test de mutation l'a montre — il passait avec le defaut remis.
+    run_id: UUID = RUN,
 ) -> ExecuteurClients:
     configuration = ConfigurationExecution.defaut_cdc()
     configuration.nb_clients = nb_clients
@@ -249,11 +311,11 @@ def _executeur(
         if code not in pays_actifs:
             configuration.desactiver_pays(code, "hors de ce test")
     return ExecuteurClients(
-        run_id=RUN,
+        run_id=run_id,
         mode=mode,
         configuration=configuration,
         referentiel=REFERENTIEL,
-        generateur=Generateur(RUN, reference=date(2026, 8, 11)),
+        generateur=Generateur(run_id, reference=date(2026, 8, 11)),
         faker=faker or FauxFaker(),
         client_service=clients or ServiceInterdit(),
         account_service=comptes or FauxComptes(),
@@ -730,3 +792,217 @@ class TestLaDotationDuSoldeInitial:
         rapport = await ex.executer()
         assert comptes.credits == [], "à blanc, aucune écriture serveur"
         assert rapport.solde_dote > 0, "et pourtant le montant prévu est annoncé"
+
+
+class TestGraineDeterministe:
+    """`CR-03` — la population est fonction du PERIMETRE, jamais du run.
+
+    Mesure du 12/08 : la graine venait de `self._alea`, seme par le `run_id`. Un
+    second run reel tirait donc 2000 clients Faker entierement differents, le
+    registre `D-FAKER-1` ne reconnaissait rien, et 2000 clients se doublaient sur
+    des services sans `DELETE`.
+    """
+
+    def test_stable_pour_un_meme_rang(self) -> None:
+        from app.services.clients_execution import _graine_faker
+
+        assert _graine_faker("CM", 7) == _graine_faker("CM", 7)
+
+    def test_distincte_par_rang_et_par_pays(self) -> None:
+        from app.services.clients_execution import _graine_faker
+
+        graines = [_graine_faker("CM", r) for r in range(500)]
+        assert len(set(graines)) == 500, "500 rangs doivent donner 500 graines"
+        assert _graine_faker("CM", 3) != _graine_faker("CI", 3)
+
+    def test_stable_D_UN_PROCESSUS_A_L_AUTRE(self) -> None:
+        """`hash()` des chaines est randomise par processus : l'utiliser aurait
+        fait deriver la population a chaque redemarrage du Loader, ce qui est
+        exactement le defaut qu'on corrige. Valeur figee ici pour le prouver."""
+        import subprocess
+        import sys
+
+        code = (
+            "from app.services.clients_execution import _graine_faker;"
+            "print(_graine_faker('CM', 42))"
+        )
+        sortie = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", code], capture_output=True, text=True, check=True
+        )
+        from app.services.clients_execution import _graine_faker
+
+        assert int(sortie.stdout.strip()) == _graine_faker("CM", 42)
+
+    def test_dans_les_bornes_admises_par_faker(self) -> None:
+        from app.services.clients_execution import GRAINE_FAKER_MAX, _graine_faker
+
+        for rang in range(0, 2000, 7):
+            assert 1 <= _graine_faker("SN", rang) < GRAINE_FAKER_MAX
+
+
+class TestReprise:
+    """`CR-03` — « idempotence, aucun doublon ». Deux lignes de defense.
+
+    La premiere est le registre `D-FAKER-1` : il sait quels clients Faker ont
+    deja produit une entite. La seconde est `D-CLI-5`, le `GET`-avant-`POST`, qui
+    couvre le cas ou NOTRE MongoDB serait perdue alors que les clients, eux,
+    resteraient sur un service sans `DELETE`.
+    """
+
+    async def test_un_client_consomme_par_un_run_ANTERIEUR_est_reconnu_pas_recree(
+        self,
+    ) -> None:
+        clients = FauxClientService()
+        ledger = FauxLedger()
+        ex = _executeur(
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
+            ledger=ledger,
+            clients=clients,
+            arbre=FauxArbre(_kiosques("CM")),
+        )
+        # On rejoue le meme perimetre : les graines etant deterministes, ce sont
+        # exactement les memes clients Faker que le run precedent aurait pris.
+        premier = await ex.executer()
+        assert len(premier.crees) == 40
+
+        rejoue = _executeur(
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(deja_consommes=set(ledger.confirmes)),
+            clients=FauxClientService(),
+            arbre=FauxArbre(_kiosques("CM")),
+            run_id=AUTRE_RUN,
+        )
+        second = await rejoue.executer()
+
+        assert len(second.deja_presents) == 40, "les 40 doivent etre RECONNUS"
+        assert second.crees == [], "et AUCUN ne doit etre recree — CR-03"
+        quota = next(q for q in second.quotas if q.pays == "CM")
+        assert quota.faits == 40, (
+            "un client reconnu compte dans la cible : sans cela la boucle "
+            "continuerait et creerait 40 doublons"
+        )
+
+    async def test_un_run_de_pure_reprise_n_est_pas_declare_FAILED(self) -> None:
+        """Il ne cree rien parce que tout existe deja — c'est une REUSSITE, et
+        c'est meme la demonstration de `CR-03`."""
+        ledger = FauxLedger()
+        ex = _executeur(
+            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
+            ledger=ledger, clients=FauxClientService(), arbre=FauxArbre(_kiosques("CM")),
+        )
+        premier = await ex.executer()
+        rejoue = _executeur(
+            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
+            ledger=FauxLedger(deja_consommes=set(ledger.confirmes)),
+            clients=FauxClientService(), arbre=FauxArbre(_kiosques("CM")),
+            run_id=AUTRE_RUN,
+        )
+        second = await rejoue.executer()
+
+        assert second.crees == []
+        assert second.statut is not RunStatus.FAILED
+        # Trouve par MUTATION : retirer le `reste -= 1` du chemin de reprise ne
+        # cree aucun doublon — le quota s'en charge — mais fait tourner cinq lots
+        # a vide et termine sur une fausse alerte d'abandon. Un run de reprise
+        # parfaite ne doit pas se declarer degrade.
+        assert second.alertes == [], f"reprise parfaite, alertes parasites : {second.alertes}"
+        assert second.statut is RunStatus.COMPLETED
+        # LA PROPRIETE QUI COMPTE, et mon premier jet l'avait ratee en exigeant
+        # zero ecart : la boucle SUR-TIRE par conception, donc quelques tirages
+        # sont ecartes par saturation de sous-quota — dans le premier run comme
+        # dans le second. Ce qu'il faut prouver n'est pas l'absence d'ecarts,
+        # c'est que la sequence est rejouee A L'IDENTIQUE : memes rangs, memes
+        # decisions, memes ecarts. C'est cela que la graine deterministe achete.
+        assert (
+            next(q for q in second.quotas if q.pays == "CM").ecartes
+            == next(q for q in premier.quotas if q.pays == "CM").ecartes
+        ), "le second run doit rejouer exactement le chemin du premier"
+
+    async def test_D_CLI_5_un_msisdn_deja_present_n_est_PAS_recredite(self) -> None:
+        """LE VRAI ENJEU, plus que le HTTP 400.
+
+        Un doublon de client se voit. Un solde credite deux fois se lit comme une
+        donnee legitime — et `account-service` n'expose aucun moyen de defaire un
+        mouvement. On mesure donc d'abord les msisdn que le Loader produit, puis
+        on rejoue en les declarant deja presents cote serveur.
+        """
+        comptes = FauxComptes()
+        ex = _executeur(
+            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=FauxClientService(),
+            comptes=comptes, arbre=FauxArbre(_kiosques("CM")),
+        )
+        premier = await ex.executer()
+        deja = {o["msisdn"] for o in ex._clients.onboardes}  # type: ignore[attr-defined]
+        assert len(deja) == 40 and len(comptes.credits) == 40
+
+        comptes_2 = FauxComptes()
+        clients_2 = FauxClientService(msisdns_existants=deja)
+        rejoue = _executeur(
+            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
+            # Registre VIDE : on isole `D-CLI-5`, comme si notre MongoDB avait
+            # ete perdue et le serveur, lui, avait garde ses 40 clients.
+            ledger=FauxLedger(), clients=clients_2,
+            comptes=comptes_2, arbre=FauxArbre(_kiosques("CM")),
+            run_id=AUTRE_RUN,
+        )
+        second = await rejoue.executer()
+
+        assert clients_2.onboardes == [], "aucun POST : le GET a trouve le client"
+        assert comptes_2.credits == [], "AUCUN second credit — le solde doublerait"
+        assert len(second.deja_presents) == 40
+        assert premier.solde_dote > 0 and second.solde_dote == 0.0, (
+            "le rapport ne doit pas annoncer une dotation qui n'a pas eu lieu"
+        )
+
+    async def test_le_msisdn_ne_depend_PAS_du_run(self) -> None:
+        """Sans cette propriete le `GET` de `D-CLI-5` ne trouverait jamais rien,
+        et le controle serait purement decoratif."""
+        msisdns = []
+        for run in (UUID(int=1), UUID(int=2)):
+            ex = _executeur(
+                mode=RunMode.REAL, nb_clients=20, pays_actifs=("CM",),
+                ledger=FauxLedger(), clients=FauxClientService(),
+                arbre=FauxArbre(_kiosques("CM")), run_id=run,
+            )
+            await ex.executer()
+            msisdns.append({o["msisdn"] for o in ex._clients.onboardes})  # type: ignore[attr-defined]
+        assert msisdns[0] == msisdns[1], (
+            "deux runs du meme perimetre doivent produire les MEMES msisdn"
+        )
+
+
+    async def test_une_collision_DANS_le_run_rend_la_reservation_de_quota(self) -> None:
+        """Defaut latent trouve par MUTATION le 12/08 : le chemin « deja
+        consomme » appelait `ecarter()` sans `rendre()`, alors que
+        `quota.reserver()` avait deja incremente. La cible se remplissait de
+        clients inexistants — invisible a blanc, ou le registre est vide a chaque
+        essai, donc ce chemin ne se declenchait jamais.
+
+        On force ici de VRAIES collisions internes au run : le cache Faker replie
+        les graines sur un vivier de 30 `client_id` pour une cible de 40, donc au
+        moins dix tirages retombent sur un client deja reserve.
+        """
+        rapport = await _executeur(
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
+            faker=FauxFaker(replier_sur=30),
+            ledger=FauxLedger(),
+            clients=FauxClientService(),
+            arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+
+        quota = next(q for q in rapport.quotas if q.pays == "CM")
+        assert "deja consomme" in quota.ecartes, (
+            "le test ne prouve rien si aucune collision ne s'est produite"
+        )
+        assert quota.faits == len(rapport.crees), (
+            "le quota doit compter le REEL : sans `rendre()` il compterait les "
+            "collisions comme des clients crees"
+        )
+        assert quota.femmes + quota.hommes == len(rapport.crees)

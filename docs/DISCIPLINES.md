@@ -107,7 +107,7 @@ persiste le JWT **en clair** dans ses logs pendant 7 jours (`VIOL-06.7`).
 
 ---
 
-## Client — `D-CLI-*` · 10 disciplines *(8 de la page Anatomy + 2 nôtres)* · `app/clients/client_service.py`
+## Client — `D-CLI-*` · 12 disciplines *(8 de la page Anatomy + 4 nôtres)* · `app/clients/client_service.py`
 
 | # | Discipline | Le fait mesuré |
 |---|---|---|
@@ -115,12 +115,14 @@ persiste le JWT **en clair** dans ses logs pendant 7 jours (`VIOL-06.7`).
 | `D-CLI-2` | `id_expire_on` **toujours** fourni | son absence fait planter la cascade identity en `400 'NoneType' object has no attribute 'isoformat'` — le champ est pourtant **déclaré optionnel** |
 | `D-CLI-3` | `id_number` alphanumérique | le serveur annonce une contrainte MAJUSCULES **qu'il n'applique pas** (`FRA-228`) — on s'y conforme quand même |
 | `D-CLI-4` | `identity.type` envoyé est **ignoré** | le serveur écrase vers `CORPORATE` |
-| `D-CLI-5` | `GET`-avant-`POST` par `msisdn` | rejouer le même msisdn rend le client existant |
+| `D-CLI-5` | `GET`-avant-`POST` par `msisdn` | rejouer le même msisdn rend le client existant — **inapplicable jusqu'au 12/08**, voir `D-CLI-11` |
 | `D-CLI-6` | **Le lien Client → Company n'existe pas à la création** | il passe par `Client →(Collect)→ Dépositaire → Company` |
 | `D-CLI-7` | `PUT /clients/subscribe` pour les 2ᵉ et 3ᵉ produits | `UC-13` : 1 à 3 souscriptions |
 | `D-CLI-8` | **`identity.phone` doit être strictement égal à `msisdn`** | sinon `400 "Identity phone field must match msisdn"` — **absent de toutes nos sources**, trouvé par sondage |
 | `D-CLI-9` 🔸 | `currency` **n'est validée nulle part** | elle traverse le service, n'apparaît pas dans la fiche Client rendue, et **atterrit verbatim dans le compte CHECKING** |
 | `D-CLI-10` 🔸 | Un Client ne souscrit **qu'à** des produits `COLLECT` | le serveur accepte un LENDING — `FRA-230` |
+| `D-CLI-11` 🔸 | **Le `msisdn` est fonction du client, jamais du `run_id`** | mesuré le 12/08 : le tirage de l'opérateur venait d'`alea`, donc la même matière client rendait `237679614504` au run 1 et `237699614504` au run 2. `D-CLI-5` cherchait une clé qui changeait à chaque run — il n'aurait **jamais** trouvé personne |
+| `D-CLI-12` 🔸 | **La graine Faker est fonction du périmètre, jamais du `run_id`** | corollaire : elle était tirée dans `alea`, donc un second run réel tirait 2000 clients Faker entièrement différents. Le registre `D-FAKER-1` ne reconnaissait rien et l'écosystème doublait, sur des services sans `DELETE` |
 
 ---
 

@@ -289,3 +289,61 @@ class TestCeQueLaV1PromettaitATort:
         await depot.reserver(cible, consumed_for=USAGE, country_code="CM", run_id=run)
         entree = await depot.obtenir(cible)
         assert entree is not None and entree.run_id == run
+
+
+class TestLEtatQuiPermetLaReprise:
+    """`CR-03` — `reserver()` rend `False` pour trois raisons distinctes.
+
+    Les confondre coutait l'idempotence : un refus etait traite comme une
+    collision de cache (CDC §185, « changer le seed »), alors qu'il pouvait dire
+    « une entite existe deja ». Le second cas exige l'inverse exact — reconnaitre
+    l'entite au lieu d'en tirer une autre.
+    """
+
+    async def test_un_client_inconnu_n_a_pas_d_etat(
+        self, depot: FakerLedgerRepository
+    ) -> None:
+        assert await depot.etat("TEST-jamais-vu") is None
+
+    async def test_une_reservation_se_lit_RESERVE_avec_son_run(
+        self, depot: FakerLedgerRepository
+    ) -> None:
+        run = uuid4()
+        await depot.reserver("TEST-etat-1", consumed_for=USAGE, country_code="CM", run_id=run)
+        entree = await depot.etat("TEST-etat-1")
+        assert entree is not None
+        assert entree.state is EtatConsommationFaker.RESERVE
+        assert entree.run_id == run
+
+    async def test_une_consommation_scellee_se_lit_CONSOMME_avec_son_entite(
+        self, depot: FakerLedgerRepository
+    ) -> None:
+        """C'est CE cas qui autorise la reprise : l'entite existe, et le registre
+        sait laquelle. Un second run doit la compter, pas la recreer."""
+        run, entite = uuid4(), uuid4()
+        await depot.reserver("TEST-etat-2", consumed_for=USAGE, country_code="CI", run_id=run)
+        await depot.confirmer("TEST-etat-2", entite)
+        entree = await depot.etat("TEST-etat-2")
+        assert entree is not None
+        assert entree.state is EtatConsommationFaker.CONSOMME
+        assert entree.resulting_entity_id == entite
+        assert entree.run_id == run, (
+            "le run d'origine doit rester lisible : c'est lui qui distingue une "
+            "reprise d'une collision interne au run courant"
+        )
+
+    async def test_le_registre_est_GLOBAL_et_non_indexe_par_run(
+        self, depot: FakerLedgerRepository
+    ) -> None:
+        """La propriete sur laquelle repose toute la reprise. Si le registre
+        etait indexe par run, un second run ne verrait rien du premier."""
+        premier, second = uuid4(), uuid4()
+        await depot.reserver("TEST-etat-3", consumed_for=USAGE, country_code="BF", run_id=premier)
+        await depot.confirmer("TEST-etat-3", uuid4())
+
+        assert not await depot.reserver(
+            "TEST-etat-3", consumed_for=USAGE, country_code="BF", run_id=second
+        )
+        vu_du_second = await depot.etat("TEST-etat-3")
+        assert vu_du_second is not None
+        assert vu_du_second.run_id == premier != second
