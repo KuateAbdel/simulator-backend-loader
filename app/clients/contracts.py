@@ -152,8 +152,21 @@ class ClientCategory(StrEnum):
 
 
 class ClientSegment(StrEnum):
-    """`Segment` cote serveur. Point de jonction avec metadata.behavior_segment
-    de Faker (EF-80)."""
+    """`Segment` cote serveur.
+
+    **CORRECTIF 11/08 — ce docstring annoncait « point de jonction avec
+    metadata.behavior_segment de Faker (EF-80) ». Cette jonction n'existe pas.**
+
+    Mesure : `metadata.behavior_segment` vaut **0.0 dans 14 cas sur 15**, et il
+    n'appartient qu'a la **famille B** de Faker. Le vrai segment est
+    `features.__precomputed_scores.segment` (les 5 valeurs de l'Annexe E) —
+    famille B egalement.
+
+    Nos 2000 clients viennent necessairement de la famille A, qui ne porte
+    AUCUNE donnee de scoring : `EF-80` n'est pas applicable tel qu'ecrit a cette
+    population. Le Loader emet donc `ANY`, valeur legitime de l'enum, jusqu'a ce
+    qu'une derivation interne soit tranchee.
+    """
 
     ANY = "ANY"
     VERY_LOW = "VERY_LOW"
