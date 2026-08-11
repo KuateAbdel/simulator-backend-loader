@@ -152,11 +152,17 @@ moins.
 
 ## Dépositaire — `D-DEP-*` · 9 disciplines *(8 de la page Anatomy + 1 nôtre)*
 
+> **`D-DEP-4` retrouvee le 11/08.** Le registre allait de `D-DEP-3` a `D-DEP-5` :
+> un trou a 4. La regle etait appliquee dans le code (`company_service.py`,
+> `FRA-199`) et vivait dans un seul document empirique. Une discipline non
+> enregistree est une discipline qu'on redecouvre.
+
 | # | Discipline | Le fait mesuré |
 |---|---|---|
 | `D-DEP-1` | Créer d'abord, **souscrire ensuite** | la création seule ne crée **aucun** compte (mesure du 08/08) |
 | `D-DEP-2` | Les **6 comptes** naissent à la **première** souscription | par Dépositaire, pas par souscription |
 | `D-DEP-3` | `GET`-avant-`POST` | aucune unicité de nom, **aucun `DELETE`** |
+| `D-DEP-4` | **Ne jamais compter sur `Company.currency`** — le Loader garde sa propre trace | `FRA-199` : le champ est write-only et **perdu à la persistance** |
 | `D-DEP-5` | `id_expire_on` toujours renseigné | `FRA-200` |
 | `D-DEP-6` | **Ne jamais présumer** la cohérence de devise Company ↔ Dépositaire | `currency` accepte n'importe quelle chaîne (`FRA-201`) |
 | `D-DEP-7` | Token ROOT en écriture | `FRA-205` |

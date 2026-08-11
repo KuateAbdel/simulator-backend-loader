@@ -21,7 +21,9 @@ un identifiant produit par un autre :
 
   1 Roles          aucune dependance — et **seul module reversible**
   2 Organisation   un Admin User exige un `group_id` (1)
-  3 Catalogue      un Produit exige un `company_id` (2)
+  3 Catalogue      AUCUNE dependance. Mesure du 11/08 : `CreateProductSchema`
+                   n'a pas de `company_id` — requis : `type`, `name`, `category`.
+                   L'ordre annoncait une contrainte qui n'existe pas.
   4 Depositaires   un Depositaire exige un `company_id` (2)
   5 Staff/Agents   un User exige (1) ET (2) ; un AGENT exige un Kiosque (4), D-11
   6 Clients        un onboarding exige un `product_id` (3) et un Kiosque (4)

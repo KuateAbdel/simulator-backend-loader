@@ -25,7 +25,7 @@ tri topologique possible du graphe de dépendances.
 |---|---|---|---|
 | 1 | **Rôles** | 11 `group_id` | rien — **aucune dépendance** |
 | 2 | **Organisation** | `company_id`, licences, Admin Users, 4 comptes Lender | un Admin User exige un `group_id` (1) |
-| 3 | **Catalogue** | `product_id` | un Produit exige un `company_id` (2) |
+| 3 | **Catalogue** | `product_id` | **RIEN. Mesure du 11/08 : `CreateProductSchema` n'a AUCUN `company_id`** — requis : `type`, `name`, `category`. Le Catalogue pourrait passer en premier. Il reste ici parce que `product-service` expose un `deactivate` — donc partiellement reversible — et qu'on ouvre par le module totalement reversible |
 | 4 | **Dépositaires** | Branches, Agences, Kiosques | un Dépositaire exige un `company_id` (2) |
 | 5 | **Staff & Agents** | 60 à 100 Users | un User exige `group_id` (1) **et** `company_id` (2) ; un **Agent** exige un Kiosque (4) — `D-11` |
 | 6 | **Clients** | 2 000 clients + comptes cascadés | un onboarding exige un `product_id` (3) ; le rattachement exige un Kiosque (4) |
