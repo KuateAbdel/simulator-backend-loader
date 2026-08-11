@@ -121,7 +121,7 @@ et branchés à rien.
 | `P-01` | **L'index inverse comme service.** Enregistrer le lien inverse à l'écriture (`client → produit`, `client → kiosque`) | Le système ne stocke **jamais** la référence inverse. « Combien de clients par produit ? » = 20 requêtes paginées + comptage local. Même famille que `A-04` | **S4** |
 | `P-02` | **Plafonds KYC.** Invariant « cumul mensuel ≤ plafond du niveau KYC » | *Lexique des Termes Clés* (Confluence 22118403), réglementation BCEAO : KYC0 ≤ 50 000 FCFA/mois · KYC1 ≤ 500 000 · KYC2 ≤ 5 000 000. Nous générons 180 j de mouvements **sans aucune notion de niveau KYC** | **S4** — s'écrit **avec** le module Clients |
 | `P-03` | **Float de l'agent.** Invariant « montant retiré ≤ float disponible » | *Lexique* : l'agent tient une provision qui diminue au retrait, augmente au dépôt. Sans lui, la simulation montrerait des agents décaissant un argent qu'ils n'ont jamais eu | **S5** |
-| `P-04` | **Rapport de recette `CR-01` → `CR-12`.** Étendre le verdict de run | Le verdict `ENF-01` (budget 30 min) est branché depuis le 11/08 — c'est la première brique. Le module `RECETTE` est `NON_LIVRE` | **S6** |
+| ~~`P-04`~~ | ~~Rapport de recette~~ | ✅ **LIVRÉ le 11/08** — `app/services/recette.py`, 8ᵉ étape de l'orchestration, 16 tests. Le module `RECETTE` n'est plus `NON_LIVRE`. Les critères des Sprints 4-5 restent `NON VÉRIFIABLE`, avec leur raison | — |
 
 ---
 

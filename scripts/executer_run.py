@@ -49,6 +49,7 @@ from app.services.geographie import charger_referentiel
 from app.services.orchestrateur import Etape, Orchestrateur, RapportEtape, Travail
 from app.services.organisation import CompanyPorteuse
 from app.services.organisation_execution import ExecuteurOrganisation
+from app.services.recette import ControleRecette
 from app.services.roles_execution import ExecuteurRoles
 from app.services.staff_execution import ExecuteurStaff
 
@@ -205,6 +206,25 @@ async def executer(
             par_pays.setdefault(porteuse.country_code, []).append(porteuse)
         return await ex_dep.executer(plan, par_pays, produits)
 
+    async def _recette() -> RapportEtape:
+        """MODULE 8 — le verdict sur ce que ce run vient de construire.
+
+        `verifier_cr02()`, `kiosques_sans_agent()`, `partiellement_initialises()`
+        et `compter_par_type()` etaient ecrits, testes, et appeles NULLE PART.
+        `CR-02` — « aucune incoherence geo-organisationnelle apres une generation
+        complete » — n'etait donc jamais verifie.
+
+        Pour une demonstration devant Nordic Microfinance, l'IFC, l'AFD et la BAD,
+        c'est le defaut le plus couteux : **une generation dont on ne peut rien
+        prouver n'est pas une demonstration, c'est une affirmation.**
+
+        Il tourne en DERNIER et il ne fait que LIRE — il peut donc etre relance
+        sans rien modifier de ce qu'il mesure.
+        """
+        return await ControleRecette(
+            run_id=run_id, hierarchie=hierarchie, registre=registre, audit=audit
+        ).executer()
+
     async def _staff() -> RapportEtape:
         return await ExecuteurStaff(
             run_id=run_id,
@@ -221,6 +241,7 @@ async def executer(
         Etape.CATALOGUE: _catalogue,
         Etape.DEPOSITAIRES: _depositaires,
         Etape.STAFF: _staff,
+        Etape.RECETTE: _recette,
     }
     # Deploiement PAR ETAPE — la seule facon responsable d'aborder des services
     # sans `DELETE`. On passe en reel un module a la fois, en commencant par le
@@ -247,12 +268,21 @@ async def executer(
         # initialise » — le journal d'intention restait muet au moment precis ou
         # il sert.
         reconciliation = await _reconcilier(audit, run_id)
+        # Le resume de l'orchestrateur tronque le detail de chaque etape a une
+        # ligne — utile pour lire huit modules d'un coup, inutilisable pour un
+        # rapport de recette. Il est donc rendu EN ENTIER, parce que c'est lui
+        # qui prouve la generation devant un bailleur.
+        verdict = await ControleRecette(
+            run_id=run_id, hierarchie=hierarchie, registre=registre, audit=audit
+        ).executer()
     finally:
         for client in (users, companies, comptes, produits_client, depositaires, identites):
             await client.fermer()
         close()
 
     print(rapport.resume())
+    print()
+    print(verdict.resume())
     print(reconciliation)
     return 0 if rapport.statut.value != "FAILED" else 1
 

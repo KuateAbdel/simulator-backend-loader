@@ -226,8 +226,19 @@ initiaux. **Le Sénégal exige une source alternative.**
 EF-50 à EF-59, EF-65, EF-66 · Routes de configuration, lancement, progression,
 journal, purge par préfixe, verrou d'exécution.
 
-### ⬜ Étape 9 — Recette
-CR-01 à CR-12 · Mesure des 30 minutes, contrôles statistiques, indicateurs PAR.
+### 🟡 Étape 9 — Recette · *le socle est livré le 11/08*
+CR-01 à CR-12 · `app/services/recette.py`, branché comme 8ᵉ étape de
+l'orchestration. **Chaque run rend désormais son verdict.**
+
+Trois verdicts, jamais deux : `TENU`, `VIOLÉ`, **`NON VÉRIFIABLE`** — cette
+troisième valeur porte sa raison, et un seul `NON VÉRIFIABLE` suffit à rendre la
+recette `PARTIAL`. Vérifiable aujourd'hui : `CR-01`, `CR-02`, `CR-06`, `CR-07`,
+`CR-08`, `UC-09` postcondition, `EF-13`. Reste `CR-03` (exige deux runs RÉEL),
+`CR-04`/`CR-09`/`CR-10`/`CR-12` (modules Clients et Vie), `CR-05` (interface).
+
+Le défaut que ça corrige : `verifier_cr02()`, `kiosques_sans_agent()`,
+`partiellement_initialises()` et `compter_par_type()` étaient écrits, testés, et
+appelés **nulle part**. `CR-02` n'était donc jamais vérifié.
 
 ---
 
