@@ -47,7 +47,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.clients.base import ErreurService
 from app.clients.contracts import ProductType
@@ -268,7 +268,27 @@ class ExecuteurDepositaires:
         if not self.ecriture_reelle:
             self._quartiers_pris.add(district_id)
             rapport.kiosques_crees.append(f"{nom} [prevu]")
-            return None
+            # IDENTIFIANT FICTIF — DEFAUT CORRIGE LE 11/08.
+            #
+            # Cette branche rendait `None`, et l'appelant enchainait sur
+            # `if cree is None: continue`. **La souscription n'etait donc JAMAIS
+            # exercee en DRY_RUN**, et le rapport annoncait
+            # « Comptes attendus : 0 » quand le run reel en creerait 6 par
+            # Kiosque — 354 comptes pour 59 Kiosques, definitifs, sur un service
+            # sans `DELETE`.
+            #
+            # `D-01` fait de ce rapport « la derniere occasion de dire non ». Un
+            # humain lisant zero aurait dit oui a 354 ecritures. Le defaut etait
+            # donc DANS le mecanisme de securite, pas a cote.
+            #
+            # Le module Organisation applique deja ce motif, et pour la meme
+            # raison ecrite noir sur blanc : « en DRY_RUN les Depositaires ne
+            # doivent RIEN ecrire, mais ils doivent pouvoir derouler leur plan
+            # pour que le rapport a blanc soit complet. »
+            #
+            # Regle du 09/08 : un essai a blanc qui n'exerce pas les MEMES
+            # DEPENDANCES que le reel n'est pas un essai a blanc.
+            return uuid4(), nom
 
         try:
             depositaire = await self._depositaires.creer(nom, company.devise, company.company_id)
@@ -334,6 +354,25 @@ class ExecuteurDepositaires:
         premiere souscription effective : c'est ce compteur, et non le nombre de
         souscriptions, qui donne le nombre de comptes.
         """
+        if not self.ecriture_reelle:
+            # On ANNONCE, on n'interroge pas : le `depositary_id` est fictif en
+            # DRY_RUN, demander au serveur « a-t-il deja souscrit ? » n'aurait
+            # aucun sens. Le catalogue est deja filtre COLLECT par l'appelant
+            # (`D-DEP-9`), donc chaque produit compte.
+            rapport.souscriptions_creees += len(produits)
+            if produits:
+                # `D-DEP-2` — 6 comptes par Kiosque SOUSCRIT, pas par
+                # souscription. C'est ce compteur qui rend `comptes_attendus`
+                # honnete : 6 x Kiosques, jamais 6 x souscriptions.
+                rapport.kiosques_souscrits += 1
+            logger.info(
+                "[DRY_RUN] %s — %d souscription(s) prete(s), %d comptes en cascade",
+                nom_kiosque,
+                len(produits),
+                len(COMPTES_DEPOSITAIRE),
+            )
+            return
+
         premier_succes = False
         for produit in produits:
             if await self._depositaires.a_deja_souscrit(depositary_id, produit.product_id):
