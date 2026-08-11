@@ -27,7 +27,7 @@ from app.core.config import settings
 MongoDocument = dict[str, Any]
 
 # --------------------------------------------------------------------------
-# Noms des 5 collections proprietaires. Aucune autre collection n'est creee
+# Noms des 6 collections proprietaires. Aucune autre collection n'est creee
 # par le Loader (cf. app/models/domain.py).
 # --------------------------------------------------------------------------
 COLLECTION_FAKER_CONSUMPTION_LEDGER: Final = "faker_consumption_ledger"

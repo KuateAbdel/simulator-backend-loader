@@ -1,7 +1,8 @@
 """
 app/repositories/org_hierarchy.py
 =================================
-Arbre operationnel Branche -> Agence -> Kiosque, cote Loader (decision D-05).
+Arbre operationnel Branche -> Agence -> Kiosque -> Agent, cote Loader
+(decisions `D-05` pour les trois premiers niveaux, `D-11` pour l'Agent).
 
 Cette collection porte a elle seule la verification de recette **CR-02** :
 « aucune incoherence geo-organisationnelle apres une generation complete —
@@ -221,6 +222,16 @@ class OrgHierarchyRepository(RepositoryBase):
                     anomalies.append(f"Kiosque {noeud.name} sans depositary_id")
                 if parent.niveau is not NiveauOrganisation.AGENCE:
                     anomalies.append(f"Kiosque {noeud.name} rattache a un {parent.niveau.value}")
+            elif noeud.niveau is NiveauOrganisation.AGENT:
+                # Le 4e niveau manquait a ce controle. `D-11` a cree le niveau
+                # AGENT precisement pour rendre `UC-09` point 4 verifiable ; le
+                # laisser hors de `verifier_cr02()` revenait a le poser sans le
+                # verifier. Un Agent rattache a une Agence, ou sans `user_id`,
+                # passait en silence.
+                if noeud.user_id is None:
+                    anomalies.append(f"Agent {noeud.name} sans user_id")
+                if parent.niveau is not NiveauOrganisation.KIOSQUE:
+                    anomalies.append(f"Agent {noeud.name} rattache a un {parent.niveau.value}")
 
         return anomalies
 

@@ -50,7 +50,7 @@ l'exigence. Une exigence sans ligne ici est une exigence oubliée.
 | EF-10 | Companies par pays, distribution des types configurable | 🟡 | planifié, création à écrire |
 | EF-11 | Rattacher chaque Company à une Region | 🟡 | plan géographique prêt |
 | EF-12 | 3 Lenders locaux/pays + 4 institutionnels | ⬜ | `LENDERS_INSTITUTIONNELS` figé |
-| EF-13 | 4 comptes financiers par Lender | ⬜ | mécanisme tranché (**D-01**) : 4 POST explicites |
+| EF-13 | 4 comptes financiers par Lender | ✅ **vérifié en écriture 09/08** | **D-01** confirmé : aucune cascade ne les produit, 4 POST explicites |
 | EF-14 | Branches par IMF, rattachées à une Region | 🟡 | `PlanBranche` |
 | EF-15 | Agences par Branche, rattachées à une Ville | 🟡 | `PlanAgence` |
 | EF-16 | Kiosques par Agence, rattachés à un District | 🟡 | `PlanKiosque` |
@@ -84,7 +84,7 @@ dans `cdc.py`, et le fichier source contient 25 % : **borne obligatoire côté L
 Tous ⬜. Constantes figées (`COMPANIES_MIN_PAR_JOUR`, `ENTREES_PAR_JOUR`,
 `MOUVEMENTS_PAR_CLIENT_PAR_JOUR`). Dépend de l'étape 6.
 
-### 2.6 Module Interface graphique — EF-50 → EF-58 · **backend à écrire**
+### 2.6 Module Interface graphique — EF-50 → EF-59 · **backend à écrire**
 
 🔵 côté écrans (Zidane). Côté Loader, il faut exposer : configuration, lancement,
 progression temps réel, journal d'erreurs, réinitialisation par préfixe, et
@@ -223,7 +223,7 @@ initiaux. **Le Sénégal exige une source alternative.**
 `UC-01` à `UC-04`, `UC-16`, `UC-17` · EF-67 à EF-75 · Bloquée par **A-06** et **A-04**
 
 ### ⬜ Étape 8 — Pilotage Super-Admin
-EF-50 à EF-58, EF-65, EF-66 · Routes de configuration, lancement, progression,
+EF-50 à EF-59, EF-65, EF-66 · Routes de configuration, lancement, progression,
 journal, purge par préfixe, verrou d'exécution.
 
 ### ⬜ Étape 9 — Recette

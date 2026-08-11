@@ -1,7 +1,7 @@
 """
 app/models/domain.py
 ====================
-Les 5 documents MongoDB proprietaires du Loader, package "Domaine Loader"
+Les 6 documents MongoDB proprietaires du Loader, package "Domaine Loader"
 de docs/reference/uml_diagrams/02_class.puml.
 
 Regle de nommage stricte : chaque classe ci-dessous porte EXACTEMENT les
@@ -12,7 +12,7 @@ devient necessaire, il passe d'abord par une mise a jour du diagramme.
 Le champ MongoDB `_id` est expose sous l'alias Python `id` (populate_by_name
 actif) : la serialisation vers motor utilise systematiquement by_alias=True.
 
-Frontiere a ne jamais franchir : ces 5 collections sont la SEULE persistance
+Frontiere a ne jamais franchir : ces 6 collections sont la SEULE persistance
 du Loader. Toute entite FinZuu (Company, Client, Product, Account, Identity,
 Kiosque...) vit dans son service amont et n'est jamais dupliquee ici -- seuls
 ses identifiants sont references.
@@ -67,11 +67,20 @@ class LenderRegistryEntry(LoaderDocument):
     """Collection `lenders_registry` -- le Lender comme ROLE porte par une Company.
 
     Les 4 comptes financiers (CAPITAL / INTEREST / PENALTY / TAXE, UC-10 et
-    EF-13) sont declares optionnels ici, et c'est deliberé : leur cascade de
-    creation cote account-service est un TROU CONFIRME (Trou #2, diagramme
-    03_sequence_lender) -- jamais verifiee empiriquement, contrairement aux 6
-    comptes du Depositaire. Un Lender partiellement initialise est un etat
-    legitime a representer, pas une donnee invalide a rejeter.
+    EF-13) sont declares optionnels ici, et c'est deliberé.
+
+    **`EF-13` est VERIFIE EN ECRITURE depuis le 09/08/2026.** Aucune cascade
+    serveur ne produit ces 4 comptes -- mesure exhaustive du 08/08 : 8 Companies
+    en base, toutes avec le seul compte OPERATION. Le Loader les cree donc
+    explicitement, par 4 POST (`D-01`), et l'ecriture reelle du 09/08 l'a
+    confirme sur `DEMO_QA0808_SARL Tamadou Textile`.
+
+    Ils restent optionnels parce qu'un Lender partiellement initialise est un
+    etat legitime a representer (UC-10, cas d'exception), pas une donnee invalide
+    a rejeter.
+
+    (Cet en-tete disait « jamais verifiee empiriquement » jusqu'au 11/08, en
+    contradiction avec `lenders_registry.py` dans le meme depot.)
     """
 
     id: UUID = Field(alias="_id")
@@ -136,7 +145,7 @@ class AuditTrailEntry(LoaderDocument):
 
 
 class OrgHierarchyNode(LoaderDocument):
-    """Collection `org_hierarchy` -- arbre operationnel cote Loader (niveaux 3 a 5).
+    """Collection `org_hierarchy` -- arbre operationnel cote Loader (niveaux 3 a 6).
 
     SIXIEME collection, ajoutee le 08/08/2026 en consequence directe de la
     decision (b) sur Branche/Agence. Elle n'est pas un confort : sans elle,

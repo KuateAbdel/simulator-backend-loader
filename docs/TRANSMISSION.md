@@ -364,7 +364,7 @@ c'est son insistance sur la re-vérification qui l'a évitée.
 
 Ce que j'ai dans le dossier :
 - `OBJ-05` mentionne un **journal purgeable par préfixe** — donc réutilisable ;
-- `EF-50` → `EF-58` décrivent des **routes Super-Admin** de pilotage ;
+- `EF-50` → `EF-59` décrivent des **routes Super-Admin** de pilotage ;
 - `CR-01` → `CR-12` sont des critères de recette d'un **produit livré**, pas d'un script jetable ;
 - le diagramme de déploiement prévoit un **frontend Next.js** développé par Zidane, avec un vhost dédié et un certificat déjà en place ;
 - `ENF-15` (reproductibilité) et `CR-04` (deux exécutions identiques → même résultat) n'ont de sens que pour un outil **réutilisé**.
@@ -515,7 +515,7 @@ autres équipes, et permanente.
 | Le module Clients (Sprint 4) | **n'existe pas** — 0 client créé |
 | Le module Vie 180 jours (Sprint 5) | **n'existe pas** — 0 ligne |
 | Le module Recette (`CR-01`→`CR-12`) | **n'existe pas** |
-| Les routes Super-Admin (`EF-50`→`EF-58`) | **n'existent pas** |
+| Les routes Super-Admin (`EF-50`→`EF-59`) | **n'existent pas** |
 | Le frontend | **Zidane, aucun commit connu** |
 | MongoDB local | **non installé** |
 

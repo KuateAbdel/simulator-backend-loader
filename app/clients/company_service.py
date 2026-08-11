@@ -25,13 +25,19 @@ vide provoque un HTTP 422. La validation est faite ici, avant l'appel.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from app.clients.base import ClientFinZuu, JournalRequetes, normaliser_id
 from app.clients.contracts import CompanyType, PackageName
 from app.core.config import settings
-from app.services.generateur import Adresse, IdentiteGeneree
+
+if TYPE_CHECKING:
+    # SEULE INVERSION DE COUCHE DU PROJET, retiree de l'execution le 11/08.
+    # Un client (transport) importait un service (metier) : la dependance allait
+    # a contresens de `ENF-08`. Sous `TYPE_CHECKING`, le typage reste complet et
+    # plus aucune importation ne se produit au chargement du module.
+    from app.services.generateur import Adresse, IdentiteGeneree
 
 
 class CompanyServiceClient:

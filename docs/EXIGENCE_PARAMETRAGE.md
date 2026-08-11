@@ -200,7 +200,7 @@ une désactivation silencieuse coûterait une demi-journée à quelqu'un d'autre
 | `CFG-06` | `PUT /countries/{id}` : relecture complète avant écriture (`TS-CFG-09`) | **S6** |
 
 **Sprint 6 — Pilotage**, avec les routes Super-Admin déjà prévues
-(`EF-50` → `EF-58`). L'exigence ne perturbe pas les sprints 2 à 5 : elle les
+(`EF-50` → `EF-59`). L'exigence ne perturbe pas les sprints 2 à 5 : elle les
 **paramètre**. La seule contrainte à respecter dès maintenant est **de ne pas
 figer davantage** — toute nouvelle constante de volumétrie doit naître
 paramétrable.

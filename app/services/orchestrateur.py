@@ -156,6 +156,21 @@ class RapportRun:
     interrompu_a: Etape | None = None
 
     @property
+    def duree_totale_s(self) -> float:
+        return sum(e.duree_s for e in self.etapes)
+
+    @property
+    def budget_respecte(self) -> bool:
+        """`ENF-01` / `CR-04` — la campagne complete tient-elle en 30 minutes ?
+
+        `BUDGET_SECONDES` etait declare depuis le debut, les durees etaient
+        mesurees par etape, et **rien ne les comparait jamais**. Une exigence
+        qui a sa constante, sa mesure, et aucun verdict n'est une exigence non
+        verifiee.
+        """
+        return self.duree_totale_s <= BUDGET_SECONDES
+
+    @property
     def statut(self) -> RunStatus:
         """`COMPLETED` exige que **toutes** les etapes livrees aient abouti.
 
@@ -193,6 +208,10 @@ class RapportRun:
                 "dependent de ses identifiants et n'ont pas ete tentees."
             )
         lignes.append("")
+        verdict = "tenu" if self.budget_respecte else "DEPASSE"
+        lignes.append(
+            f"ENF-01 : {self.duree_totale_s:.1f}s sur un budget de {BUDGET_SECONDES}s — {verdict}"
+        )
         lignes.append(f"STATUT : {self.statut.value}")
         return "\n".join(lignes)
 

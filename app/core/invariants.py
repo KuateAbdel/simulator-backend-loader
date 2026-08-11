@@ -503,7 +503,14 @@ def valider_identite_complete(
         "date_of_birth": naiss,
         "id_expire_on": exp,
         "gender": valider_genre(genre),
-        "marital_status": valider_situation_familiale(situation_familiale),
+        # `INV-16` — la COHERENCE, pas seulement l'appartenance a l'enum.
+        #
+        # Cette fonction se declarait « point d'entree unique » et n'appelait que
+        # `valider_situation_familiale`, qui verifie l'enum et rien d'autre. Un
+        # veuf de 18 ans passait donc integralement — alors que la regle existait,
+        # etait testee, et n'etait appelee par AUCUN producteur.
+        # Un garde-fou qu'on n'appelle pas ne garde rien.
+        "marital_status": valider_coherence_matrimoniale(situation_familiale, age),
         "nationality": valider_nationalite(nationalite),
         "id_number": valider_id_number(id_number),
         "email": normaliser_email(email),
@@ -528,7 +535,7 @@ class RegistreUnicite:
     processus, borne a 30 minutes (`ENF-01`), et le prefixe `DEMO_` isole nos
     donnees. Le serveur applique de toute facon ses propres unicites : notre
     registre ne les remplace pas, il evite d'aller les decouvrir en 400. Deux
-    executions concurrentes sont exclues par le verrou d'execution (`EF-58`).
+    executions concurrentes sont exclues par le verrou d'execution (`EF-55`).
 
     La normalisation est appliquee **avant** comparaison : le serveur, lui, ne
     normalise rien — `Demo@x` et `demo@x` y produisent deux Identities.

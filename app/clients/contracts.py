@@ -346,7 +346,9 @@ FAKER_RUN_ID: Final = "20260620123721"
 #
 #   « SN est accepte au runtime, les 4 pays sont atteignables »
 #      -> FAUX. Famille A : HTTP 422. Famille B : HTTP 404. Le Senegal est
-#         ABSENT de Faker — c'est l'arbitrage `A-01`, 500 clients en suspens.
+#         ABSENT de Faker. `A-01` a ete TRANCHE le 10/08 : le Senegal n'est pas
+#         un cas particulier, le generateur interne le sert comme les trois
+#         autres. Plus aucun client en suspens.
 #   « CT-04/F-11 : Faker ne valide PAS ses filtres, `country_code=ZZ` rend un
 #     client au hasard »
 #      -> FAUX, et c'est une AMELIORATION de leur cote : `ZZ` rend desormais

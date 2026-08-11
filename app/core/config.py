@@ -26,7 +26,11 @@ class Settings(BaseSettings):
 
     # -- Application -------------------------------------------------------
     app_name: str = "Loader FinZuu — Backend"
-    app_version: str = "1.0.0"
+    #: SemVer, regle de `docs/PLAN_SPRINTS.md` §5 : `1.0.0` = premiere livraison
+    #: couvrant `CR-01` a `CR-12`. Le numero n'est pose que sur un increment dont
+    #: la definition de terminé est atteinte — jamais sur une intention. Sprint 2
+    #: clos = `0.2.0` ; Sprint 3 en cours = `0.3.0`.
+    app_version: str = "0.3.0"
     debug: bool = False
 
     # -- Persistance MongoDB (motor, cf. FZ-STACK-LOADER-2026-001 §5.3) ----

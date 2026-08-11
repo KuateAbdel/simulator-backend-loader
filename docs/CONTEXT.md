@@ -48,6 +48,41 @@ Orchestrateur HTTP. Consomme Faker fintech4esg (clients, historique credit, scor
 ## Bootstrap Super-Admin
 Variables d'environnement SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD_INITIAL. Creation automatique au demarrage si absent en base.
 
-## Sous-domaines cibles (infrastructure, pas encore configuree cote Nginx)
-Backend : simul.api.fintech4esg.com
-Frontend : simul.fintech4esg.com
+## Les trois domaines — à ne jamais confondre
+
+| Domaine | À qui | Ce qu'il expose |
+|---|---|---|
+| `faker.fintech4esg.com` | **Faker** (Oti, fintech4esg) | les 15 endpoints de payloads simulés |
+| `<service>.test.services.fintech4esg.com` | les **9 microservices FinZuu** | leur OpenAPI / Swagger |
+| **`simul.fintech4esg.com`** | **notre serveur** | Loader (backend + frontend + BDD + SIEM), Newsletter, SendMail |
+
+### Notre cible — `simul.fintech4esg.com`
+
+Source : `FZ-INFRA-SIMUL-2026-001` (Confluence TST 52330498).
+
+| | |
+|---|---|
+| Frontend | `simul.fintech4esg.com` |
+| Backend | `simul.api.fintech4esg.com` |
+| Serveur | NetCup, **ARM64**, 6 vCPU / 8 Go / 256 Go, `152.53.53.139` |
+| OS | Debian 13 Trixie minimal |
+| Reverse proxy | **Traefik** — ADR-02, Nginx explicitement rejeté |
+| Colocataires | Newsletter, SendMail |
+| Statut | **vierge, non provisionné** au 18/07/2026 |
+
+> **Deux corrections du 11/08.**
+>
+> 1. Le CDC écrit trois fois `loader.fintech4esg.com` (§268, `ENF-11`, `H-04`).
+>    **Ce lien est incorrect** — arbitrage de Yaniv. Le domaine réel est
+>    `simul.*`. `ENF-11` se lit donc : déploiement sur `simul.api.fintech4esg.com`
+>    avec authentification requise.
+> 2. Ce document et `app/main.py` annonçaient « le Nginx déjà en place sur
+>    152.53.118.110 ». **Ni cette IP ni Nginx n'existent dans la documentation
+>    d'infrastructure** : le reverse proxy retenu est Traefik, l'IP est
+>    `152.53.53.139`, et le serveur n'est pas encore provisionné.
+
+**Contrainte qui en découle, et elle est dure : le serveur est ARM64.** Les
+images Docker doivent être multi-architecture (`linux/amd64` + `linux/arm64`),
+sinon elles ne démarrent pas (piège `P11`, `ADR-13`). C'est déjà la raison du
+choix de `scrypt` dans `app/core/security.py` — bibliothèque standard, aucune
+extension compilée à faire exister sur `linux_aarch64`.

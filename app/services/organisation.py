@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from app.core.cdc import COMPANIES_PAR_PAYS, KIOSQUES_PAR_PAYS, PAYS_CIBLES
+from app.core.configuration import ConfigurationExecution
 from app.services.geographie import ReferentielGeo
 
 
@@ -138,6 +139,7 @@ def planifier(
     run_id: UUID,
     *,
     nb_imf_par_pays: int = 2,
+    configuration: ConfigurationExecution | None = None,
 ) -> PlanOrganisation:
     """Construit le plan complet et verifie sa faisabilite.
 
@@ -147,14 +149,34 @@ def planifier(
     Branche ni Kiosque — un bailleur de fonds n'a pas de guichet de quartier.
 
     Le tirage est deterministe pour un run_id donne (ENF-15).
+
+    UNE SEULE SOURCE POUR LES QUANTITES
+    -----------------------------------
+    `configuration` est OPTIONNELLE et sans elle **le comportement est
+    identique** : les defauts de `ConfigurationExecution` sont les constantes du
+    CDC. Elle existe parce que les quantites avaient DEUX sources qui se
+    seraient contredites au premier parametrage :
+
+        ici                       ->  `cdc.KIOSQUES_PAR_PAYS`
+        `staff_execution.py:175`  ->  `configuration.resoudre("kiosques", pays)`
+
+    Aujourd'hui les deux rendent (10, 20). Le jour ou un pays est surcharge, le
+    planificateur aurait ignore la surcharge et le Staff l'aurait honoree : des
+    Agents dimensionnes pour des Kiosques que le plan n'a jamais produits.
+    La repartition geographique, elle, ne change pas d'un iota.
     """
     plan = PlanOrganisation(run_id=run_id)
     alea = random.Random(run_id.int)  # noqa: S311 — reproductibilite, pas de cryptographie
 
     kiosques_min, kiosques_max = KIOSQUES_PAR_PAYS
     companies_min, companies_max = COMPANIES_PAR_PAYS
+    pays_a_planifier = tuple(configuration.pays_actifs) if configuration else PAYS_CIBLES
 
-    for pays in PAYS_CIBLES:
+    for pays in pays_a_planifier:
+        if configuration is not None:
+            kiosques_min, kiosques_max = configuration.resoudre("kiosques", pays)
+            companies_min, companies_max = configuration.resoudre("companies", pays)
+
         villes_utiles = referentiel.villes_porteuses_de_quartiers(pays)
         quartiers_dispo = referentiel.nb_quartiers_du_pays(pays)
 

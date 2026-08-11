@@ -109,6 +109,26 @@ Rien n'est masqué. Chaque ligne porte sa preuve et son sprint.
 | — | Agents compris ou en sus des 15-25 staff/pays | dimensionne `S2` |
 | **`A-08`** | **« Désactiver un pays » : chez nous, chez eux, ou les deux ?** Le serveur expose `PATCH /countries/deactivate/{id}` — mais config-service est **partagé par toute l'équipe**. *Recommandation : Loader seul par défaut, action serveur explicitement distincte dans l'interface.* | conditionne `CFG-05` |
 
+### 3.5 🟦 Pistes d'enrichissement — relevées le 11/08, **rien à décider maintenant**
+
+Quatre pistes issues du sondage du 11 août. Chacune est adossée à un fait mesuré
+ou à une source citée. **Aucune ne s'écrit avant le module qui la consomme** —
+c'est précisément l'erreur que cette journée a mise au jour : des modules livrés
+et branchés à rien.
+
+| # | Piste | Fait qui la fonde | Sprint |
+|---|---|---|---|
+| `P-01` | **L'index inverse comme service.** Enregistrer le lien inverse à l'écriture (`client → produit`, `client → kiosque`) | Le système ne stocke **jamais** la référence inverse. « Combien de clients par produit ? » = 20 requêtes paginées + comptage local. Même famille que `A-04` | **S4** |
+| `P-02` | **Plafonds KYC.** Invariant « cumul mensuel ≤ plafond du niveau KYC » | *Lexique des Termes Clés* (Confluence 22118403), réglementation BCEAO : KYC0 ≤ 50 000 FCFA/mois · KYC1 ≤ 500 000 · KYC2 ≤ 5 000 000. Nous générons 180 j de mouvements **sans aucune notion de niveau KYC** | **S4** — s'écrit **avec** le module Clients |
+| `P-03` | **Float de l'agent.** Invariant « montant retiré ≤ float disponible » | *Lexique* : l'agent tient une provision qui diminue au retrait, augmente au dépôt. Sans lui, la simulation montrerait des agents décaissant un argent qu'ils n'ont jamais eu | **S5** |
+| `P-04` | **Rapport de recette `CR-01` → `CR-12`.** Étendre le verdict de run | Le verdict `ENF-01` (budget 30 min) est branché depuis le 11/08 — c'est la première brique. Le module `RECETTE` est `NON_LIVRE` | **S6** |
+
+Et un usage du Loader que personne n'avait prévu : `RC-10` note que *« les
+credentials STAFF/COMPANY/CUSTOMER/GUEST n'ont pas été livrés par l'équipe
+Dev »*. **Le RBAC n'a donc jamais été vérifié pour un profil non-ROOT depuis
+mai.** Nos 60 à 100 staff seraient les premiers utilisateurs non-ROOT réellement
+peuplés — le Loader devient l'instrument qui peut clore `INV-RBAC-01`.
+
 ---
 
 ## 4. Les sprints
@@ -146,9 +166,9 @@ CUSTOMER rejeté. **Dépend de `A-05`.**
 |---|---|---|
 | `S3-00` | **Doctrine d'orchestration** — ordre, tempo, concurrence, reprise → `docs/ORCHESTRATION.md` | ✅ **livré** |
 | `S3-01` | **`Orchestrateur`** — enchaîne les 8 modules, plafond 20 workers, reprise sur préfixe | ✅ **livré** |
-| `S3-02` | **`/auth/refresh`** — `ÉCART-38`, jeton access de 4 h | ⬜ |
+| `S3-02` | **`/auth/refresh`** — `ÉCART-38`, jeton access de 4 h | ✅ **livré** — `clients/base.py`, dans la session partagée : repli sur login si refus, refus journalisé |
 | `S3-03` | Organisation en `REAL` — Companies, licences, Admin Users | ⬜ |
-| `S3-04` | **`EF-13`** — les 4 comptes Lender, **jamais exécuté** (dernière hypothèse de `D-01`) | ⬜ |
+| `S3-04` | **`EF-13`** — les 4 comptes Lender | ✅ **livré** — écriture réelle du 09/08 sur `DEMO_QA0808_SARL Tamadou Textile`, `external_id` renseigné sur nos 4, vide sur celui de la cascade |
 | `S3-05` | **`ExecuteurCatalogue`** — 10 créations, 2 réutilisés, 3 refus avant réseau | ✅ **livré** |
 | `S3-06` | Dépositaires en `REAL` — 40-80 nœuds, Agents rattachés (`D-11`) | ⬜ |
 
@@ -168,7 +188,7 @@ nous fournissons la date de naissance**. Re-scoring. **Dépend de `A-07`.**
 
 ### ⬜ Sprint 6 — Pilotage, **paramétrage** et recette
 
-Routes Super-Admin (`EF-50` → `EF-58`), purge par préfixe, verrou d'exécution,
+Routes Super-Admin (`EF-50` → `EF-59`), purge par préfixe, verrou d'exécution,
 `CR-01` → `CR-12`, mesure des 30 minutes. **→ v1.0.0**
 
 **Ajout du 9 août — exigence de paramétrage de la Direction Technique.**

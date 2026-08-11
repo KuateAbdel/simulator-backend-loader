@@ -137,16 +137,6 @@ TYPES_DE_VOIE: Final[tuple[str, ...]] = ("Rue", "Avenue", "Boulevard", "Carrefou
 #: adresses ne doivent atteindre aucune boite aux lettres existante.
 DOMAINE_EMAIL: Final = "demo.fintech4esg.local"
 
-#: Libelles des pays, pour les rapports et les journaux UNIQUEMENT.
-#: `Identity.nationality` n'accepte PAS ces libelles — voir plus bas.
-LIBELLES_PAYS: Final[dict[str, str]] = {
-    "CM": "Cameroun",
-    "CI": "Cote d'Ivoire",
-    "BF": "Burkina Faso",
-    "SN": "Senegal",
-}
-
-
 @dataclass(frozen=True, slots=True)
 class Adresse:
     """`Address` au sens des contrats FinZuu — 2 champs requis, le reste optionnel."""
@@ -224,11 +214,23 @@ class Generateur:
     rend l'ecosysteme strictement reproductible (ENF-15).
     """
 
-    def __init__(self, run_id: UUID) -> None:
+    def __init__(self, run_id: UUID, reference: date | None = None) -> None:
         self._run_id = run_id
         self._alea = random.Random(run_id.int)  # noqa: S311 — reproductibilite, pas de crypto
         self._emails_emis: set[str] = set()
         self._noms_emis: set[str] = set()
+        # `ENF-15` — L'ANCRE TEMPORELLE FAIT PARTIE DE LA REPRODUCTIBILITE.
+        #
+        # Le tirage derivait bien du `run_id`, mais les dates etaient calculees
+        # depuis `date.today()`. Le meme `run_id` rejoue un autre jour produisait
+        # donc d'AUTRES dates de naissance et d'AUTRES dates d'expiration : la
+        # promesse « deux executions de meme run_id produisent exactement les
+        # memes entites » etait fausse, cassee par le calendrier.
+        #
+        # `reference` doit etre la `sim_end_date` du run — celle que `D-10`
+        # persiste dans `loader_runs`. Rejouer un run, c'est rejouer son
+        # `run_id` ET sa fenetre.
+        self._reference = reference or date.today()
 
     # ----------------------------------------------------------------------
     # Unicite des noms — D-12
@@ -496,14 +498,13 @@ class Generateur:
         Faker n'expose aucun filtre d'age et sa famille A ne renvoie meme pas de
         date de naissance — le quota se pilote donc entierement ici.
         """
-        aujourdhui = date.today()
         age = (
             self._alea.randrange(18, AGE_SEUIL_JEUNE)
             if jeune
             else self._alea.randrange(AGE_SEUIL_JEUNE, 66)
         )
         jour = self._alea.randrange(365)
-        return aujourdhui - timedelta(days=age * 365 + jour)
+        return self._reference - timedelta(days=age * 365 + jour)
 
     def _expiration_piece(self) -> date:
         """Toujours dans le futur : une piece expiree serait incoherente pour un

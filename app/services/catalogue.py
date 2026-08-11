@@ -40,9 +40,6 @@ from typing import Any, Final
 from app.clients.contracts import PolicyMeasure, PolicyType, ProductCategory, ProductType
 from app.core.cdc import PREFIXE_DONNEES, TAUX_USURE_MAX_ANNUEL_PCT
 
-#: Les 5 segments de l'Annexe E, dans l'ordre du CDC.
-SEGMENTS: Final[tuple[str, ...]] = ("Very Low", "Low", "Medium", "High", "Very High")
-
 #: Correspondance segment du fichier -> valeur de l'enum serveur.
 SEGMENT_VERS_ENUM: Final[dict[str, str]] = {
     "Very Low": "VERY_LOW",

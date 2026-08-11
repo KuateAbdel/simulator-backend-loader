@@ -34,18 +34,20 @@ from app.core.cdc import FENETRE_JOURS
 from app.core.config import settings
 from app.core.configuration import ConfigurationExecution
 from app.core.database import close, connect, ensure_indexes
-from app.models.enums import RunMode
+from app.models.enums import RunMode, RunStatus
 from app.repositories import (
     AuditTrailRepository,
     LendersRegistryRepository,
+    LoaderRunRepository,
     OrgHierarchyRepository,
 )
 from app.services import organisation
 from app.services.catalogue_execution import ExecuteurCatalogue
-from app.services.depositaires_execution import ExecuteurDepositaires
+from app.services.depositaires_execution import ExecuteurDepositaires, ProduitSouscriptible
 from app.services.generateur import Generateur
 from app.services.geographie import charger_referentiel
-from app.services.orchestrateur import Etape, Orchestrateur
+from app.services.orchestrateur import Etape, Orchestrateur, RapportEtape, Travail
+from app.services.organisation import CompanyPorteuse
 from app.services.organisation_execution import ExecuteurOrganisation
 from app.services.roles_execution import ExecuteurRoles
 from app.services.staff_execution import ExecuteurStaff
@@ -54,7 +56,9 @@ CLASSEUR = Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")
 LOAN_JSON = Path("docs/reference/loan_json.json")
 
 
-async def executer(mode: RunMode, etapes: set[Etape] | None = None) -> int:
+async def executer(
+    mode: RunMode, etapes: set[Etape] | None = None, ignorer_verrou: bool = False
+) -> int:
     # DEFAUT TROUVE LE 09/08 PAR LA PREMIERE ECRITURE REELLE : ce cablage
     # n'ouvrait jamais MongoDB. Le `DRY_RUN` passait — il n'ecrit rien chez
     # nous — et le `REAL` mourait a la premiere ecriture locale, APRES avoir
@@ -68,9 +72,58 @@ async def executer(mode: RunMode, etapes: set[Etape] | None = None) -> int:
     await ensure_indexes()
     run_id = uuid4()
     referentiel = charger_referentiel(CLASSEUR)
-    generateur = Generateur(run_id)
     configuration = ConfigurationExecution.defaut_cdc()
-    plan = organisation.planifier(referentiel, run_id)
+
+    # `ENF-16` — fenetre de 180 jours, calculee ICI : elle fait partie de ce que
+    # le run FIGE, et elle est l'ancre temporelle du generateur (`ENF-15`).
+    fin = settings.sim_end_date or date.today()
+    debut = settings.sim_start_date or (fin - timedelta(days=FENETRE_JOURS))
+
+    # `ENF-15` — le generateur tirait ses dates de naissance depuis
+    # `date.today()`. Le meme `run_id` rejoue un autre jour produisait d'autres
+    # entites. Il s'ancre desormais sur la fin de fenetre du run.
+    generateur = Generateur(run_id, reference=fin)
+    plan = organisation.planifier(referentiel, run_id, configuration=configuration)
+
+    # DEFAUT TROUVE LE 11/08 EN RELISANT CE CABLAGE : `LoaderRunRepository`
+    # n'etait instancie NULLE PART. Les six collections existaient, leurs index
+    # etaient poses, le repository etait teste unitairement — et le chemin reel
+    # ne l'appelait jamais. Consequence mesuree : apres un DRY_RUN complet des
+    # huit modules, `loader_runs` contenait ZERO document.
+    #
+    # Ce n'etait pas une commodite manquante. Quatre exigences etaient muettes :
+    #   `D-10`   la configuration figee au lancement n'etait jamais persistee,
+    #            donc `ENF-15` (reproductibilite) et `CR-04` invérifiables ;
+    #   `EF-64`  le `run_id` mourait avec le process ;
+    #   `EF-55`  le verrou anti-double-execution n'etait jamais interroge ;
+    #   reprise  `Orchestrateur.etapes_acquises()` est ecrit et teste, mais
+    #            aucun run n'ecrivait les checkpoints qui l'alimentent.
+    depot_runs = LoaderRunRepository()
+
+    # `EF-55` — deux generations simultanees sur le meme environnement sont
+    # interdites. Un run interrompu brutalement reste `RUNNING` : l'echappatoire
+    # est explicite, jamais silencieuse.
+    en_cours = await depot_runs.dernier_en_cours()
+    if en_cours is not None and not ignorer_verrou:
+        print(
+            f"REFUS (EF-55) — le run {en_cours.id} est {en_cours.status.value}.\n"
+            f"  Deux generations simultanees sont interdites.\n"
+            f"  S'il s'agit d'un run interrompu, relancer avec --ignorer-verrou."
+        )
+        close()
+        return 2
+
+    run = await depot_runs.creer(
+        sim_start_date=debut,
+        sim_end_date=fin,
+        mode=mode,
+        run_id=run_id,
+        configuration=configuration.empreinte(),
+    )
+    # `PENDING -> RUNNING` : la machine d'etat de `06_state.puml` refuse
+    # `PENDING -> PARTIAL`. Sans cette transition, la cloture du run leverait
+    # `TransitionInterdite` a la derniere ligne d'une campagne de 30 minutes.
+    await depot_runs.changer_statut(run.id, RunStatus.RUNNING)
 
     users = UserServiceClient()
     companies = CompanyServiceClient()
@@ -112,34 +165,36 @@ async def executer(mode: RunMode, etapes: set[Etape] | None = None) -> int:
     )
 
     # Les artefacts circulent d'une etape a l'autre — c'est la seule raison
-    # pour laquelle le cablage vit ici et pas dans l'orchestrateur.
-    porte: dict[str, object] = {}
+    # pour laquelle le cablage vit ici et pas dans l'orchestrateur. Ils sont
+    # TYPES : c'etait un `dict[str, object]` que trois `type: ignore` rendaient
+    # silencieux, alors que ce passage de main est precisement l'endroit ou une
+    # erreur de type couterait une campagne.
+    porteuses: list[CompanyPorteuse] = []
+    produits: list[ProduitSouscriptible] = []
 
-    async def _roles() -> object:
+    async def _roles() -> RapportEtape:
         return await ExecuteurRoles(mode=mode, user_client=users).executer()
 
-    async def _organisation() -> object:
-        # `ENF-16` — fenetre de 180 jours. `sim_start_date` la surcharge si
-        # elle est definie ; sinon elle se termine aujourd'hui.
-        fin = settings.sim_end_date or date.today()
-        debut = settings.sim_start_date or (fin - timedelta(days=FENETRE_JOURS))
+    async def _organisation() -> RapportEtape:
+        # La fenetre vient du run, pas d'un recalcul local : elle est FIGEE au
+        # lancement (`D-10`). Deux sources auraient pu diverger d'un jour a
+        # minuit — un run reproductible ne se permet pas ca.
         rapport = await ex_org.executer(plan, debut, fin)
-        porte["porteuses"] = rapport.porteuses
+        porteuses.extend(rapport.porteuses)
         return rapport
 
-    async def _catalogue() -> object:
+    async def _catalogue() -> RapportEtape:
         rapport = await ex_cat.executer()
-        porte["produits"] = rapport.souscriptibles
+        produits.extend(rapport.souscriptibles)
         return rapport
 
-    async def _depositaires() -> object:
-        porteuses = porte.get("porteuses") or []
-        par_pays: dict[str, list] = {}
-        for p in porteuses:  # type: ignore[union-attr]
-            par_pays.setdefault(p.country_code, []).append(p)
-        return await ex_dep.executer(plan, par_pays, porte.get("produits") or [])  # type: ignore[arg-type]
+    async def _depositaires() -> RapportEtape:
+        par_pays: dict[str, list[CompanyPorteuse]] = {}
+        for porteuse in porteuses:
+            par_pays.setdefault(porteuse.country_code, []).append(porteuse)
+        return await ex_dep.executer(plan, par_pays, produits)
 
-    async def _staff() -> object:
+    async def _staff() -> RapportEtape:
         return await ExecuteurStaff(
             run_id=run_id,
             mode=mode,
@@ -149,22 +204,32 @@ async def executer(mode: RunMode, etapes: set[Etape] | None = None) -> int:
             user_client=users,
         ).executer()
 
-    tous = {
-        Etape.ROLES: _roles,  # type: ignore[dict-item]
-        Etape.ORGANISATION: _organisation,  # type: ignore[dict-item]
-        Etape.CATALOGUE: _catalogue,  # type: ignore[dict-item]
-        Etape.DEPOSITAIRES: _depositaires,  # type: ignore[dict-item]
-        Etape.STAFF: _staff,  # type: ignore[dict-item]
+    tous: dict[Etape, Travail] = {
+        Etape.ROLES: _roles,
+        Etape.ORGANISATION: _organisation,
+        Etape.CATALOGUE: _catalogue,
+        Etape.DEPOSITAIRES: _depositaires,
+        Etape.STAFF: _staff,
     }
     # Deploiement PAR ETAPE — la seule facon responsable d'aborder des services
     # sans `DELETE`. On passe en reel un module a la fois, en commencant par le
     # seul reversible (`ROLES`), et on verifie avant d'aller plus loin.
     travaux = {e: t for e, t in tous.items() if etapes is None or e in etapes}
 
-    orchestrateur = Orchestrateur(run_id=run_id, mode=mode, travaux=travaux)
+    orchestrateur = Orchestrateur(run_id=run_id, mode=mode, travaux=travaux, runs=depot_runs)
 
     try:
         rapport = await orchestrateur.executer()
+    except BaseException:
+        # Une exception qui traverse l'orchestrateur laisserait le run `RUNNING`
+        # pour toujours — et le verrou `EF-55` bloquerait tous les suivants. Le
+        # run est clos en `FAILED` : c'est un etat terminal, et il est VRAI.
+        try:
+            await depot_runs.changer_statut(run_id, RunStatus.FAILED)
+        except Exception:
+            # On ne masque JAMAIS l'erreur d'origine : elle est relancee plus bas.
+            logging.getLogger(__name__).exception("cloture du run %s impossible", run_id)
+        raise
     finally:
         for client in (users, companies, comptes, produits_client, depositaires, identites):
             await client.fermer()
@@ -187,10 +252,22 @@ def main() -> int:
         help="Limite aux etapes nommees, separees par des virgules (ex : ROLES). "
         "Vide = toutes. Sert au deploiement progressif en mode reel.",
     )
+    parser.add_argument(
+        "--ignorer-verrou",
+        action="store_true",
+        help="Passe outre le verrou EF-55. Reserve au cas d'un run interrompu "
+        "reste RUNNING — jamais a deux executions volontairement simultanees.",
+    )
     args = parser.parse_args()
     choisies = {Etape(n.strip().upper()) for n in args.etapes.split(",") if n.strip()} or None
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s : %(message)s")
-    return asyncio.run(executer(RunMode.REAL if args.reel else RunMode.DRY_RUN, choisies))
+    return asyncio.run(
+        executer(
+            RunMode.REAL if args.reel else RunMode.DRY_RUN,
+            choisies,
+            ignorer_verrou=args.ignorer_verrou,
+        )
+    )
 
 
 if __name__ == "__main__":
