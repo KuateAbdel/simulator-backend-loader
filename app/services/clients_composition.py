@@ -99,12 +99,27 @@ CE QUE CE MODULE NE DECIDE PAS
 l'appelant connait l'etat de sa distribution — c'est le moteur de quotas. Ce
 module reste une fonction pure : memes entrees, memes sorties.
 
-La langue est `fr` pour les quatre pays. Consequence a connaitre, mesuree le
-09/08 : `language` est IGNORE a l'onboarding — envoye `fr`, rendu `en`. Chaque
-client francophone coute donc un `PATCH /clients/language/{id}` supplementaire,
-soit 2000 appels de plus sur la campagne. Le cout est assume : un ecosysteme
-ouest-africain entierement en anglais serait une donnee fausse devant un
-bailleur. Mais il doit etre CONNU, pas decouvert dans le budget `ENF-01`.
+**6. La langue suit la REGION, pas le pays.** Le Cameroun est officiellement
+bilingue : le **Nord-Ouest** (Bamenda) et le **Sud-Ouest** (Buea, Limbe) sont
+anglophones — l'ancien Southern Cameroons britannique —, les huit autres regions
+francophones. Poser `fr` sur toute la carte camerounaise serait une donnee FAUSSE
+et visible : un bailleur qui connait le pays verrait un client de Bamenda
+onboarde en francais.
+
+Le referentiel portait deja le signal, et je ne l'avais pas vu : les quartiers de
+Bamenda s'appellent **Commercial Avenue**, Nkwen, Bambili — des noms anglais,
+quand Yaounde porte Bastos, Nlongkak, Mvog-Mbi.
+
+Le cout, MESURE le 11/08 et non suppose : aller-retour median de **976 ms**
+contre l'environnement TEST (min 310, max 1010). `language` etant ignore a
+l'onboarding (mesure du 09/08), chaque client francophone coute un
+`PATCH /clients/language/{id}` — a 20 workers, **97,6 s, soit 5,4 % du budget
+`ENF-01`**. Les anglophones n'en coutent aucun, `en` etant le defaut honore.
+
+L'economie est marginale et ce n'est pas l'argument : l'argument est que la
+donnee devient vraie. Mais le chiffre devait etre pose — ma premiere redaction
+annoncait « 2000 appels de plus » sans diviser par les 20 workers, ce qui le
+faisait paraitre bien plus lourd qu'il n'est.
 """
 
 from __future__ import annotations
@@ -183,8 +198,23 @@ OCCUPATIONS_PAR_SECTEUR: Final[dict[str, tuple[str, ...]]] = {
     ),
 }
 
-#: Les quatre pays cibles sont francophones (le Cameroun officiellement
-#: bilingue, majoritairement francophone). Voir le cout dans l'en-tete.
+#: **Les deux regions ANGLOPHONES du Cameroun** — l'ancien Southern Cameroons
+#: britannique. Le Cameroun est officiellement bilingue, et ces deux regions le
+#: sont en anglais ; les huit autres en francais.
+#:
+#: Le referentiel le savait deja, et je ne l'avais pas vu : les quartiers de
+#: Bamenda s'appellent **Commercial Avenue**, Nkwen, Bambili — des noms anglais,
+#: quand Yaounde porte Bastos, Nlongkak, Mvog-Mbi. Le signal etait dans le
+#: classeur depuis le debut.
+#:
+#: Poser `fr` sur toute la carte camerounaise serait donc une donnee FAUSSE, et
+#: visible : un bailleur qui connait le pays verrait un client de Bamenda
+#: onboarde en francais.
+REGIONS_ANGLOPHONES: Final[dict[str, frozenset[str]]] = {
+    "CM": frozenset({"Nord-Ouest", "Sud-Ouest"}),
+}
+
+#: Le reste des quatre pays cibles est francophone (CI, BF, SN).
 LANGUE_PAR_DEFAUT: Final = Language.FR
 
 
@@ -406,10 +436,48 @@ def composer(
         # La famille A ne porte aucun scoring : il n'y a rien a traduire.
         segment=ClientSegment.ANY,
         canal=_canal(faker),
-        langue=LANGUE_PAR_DEFAUT,
+        langue=langue_de_la_region(pays, ancrage.region),
         ancrage=ancrage,
         secteur_faker=faker.company.secteur_principal if faker.company else None,
         type_juridique_faker=faker.company.type_exploitable if faker.company else None,
+    )
+
+
+def langue_de_la_region(pays: str, region: str) -> Language:
+    """La langue suit la REGION, pas le pays — `en` au Nord-Ouest et au Sud-Ouest
+    du Cameroun, `fr` partout ailleurs.
+
+    Comme tout le reste ici, elle est DERIVEE : la region vient du Kiosque, qui
+    vient du referentiel. Rien n'est tire a part, donc rien ne peut se
+    contredire.
+
+    LE COUT, MESURE PLUTOT QUE SUPPOSE
+    ----------------------------------
+    `language` est IGNORE a l'onboarding (mesure du 09/08 : envoye `fr`, rendu
+    `en`). Seul le `PATCH /clients/language/{id}` dedie fonctionne. Chaque client
+    FRANCOPHONE coute donc un appel de plus ; les anglophones n'en coutent aucun,
+    `en` etant le defaut que le serveur honore.
+
+    Aller-retour median mesure le 11/08 contre l'environnement TEST : **976 ms**
+    (min 310, max 1010). A 20 workers (`H14`/`H15`) :
+
+        2000 clients tous francophones -> 97,6 s, soit 5,4 % du budget ENF-01
+        avec les anglophones du CM      ->  ~94 s, soit 5,2 %
+
+    L'economie est marginale — ce n'est PAS l'argument. L'argument est que la
+    donnee devient vraie. Mais le cout devait etre chiffre : je l'avais d'abord
+    annonce comme « 2000 appels de plus » sans le diviser par les 20 workers,
+    ce qui le faisait paraitre bien plus lourd qu'il n'est.
+
+    ⚠️ `EF-04` — le Sud-Ouest (Buea, Limbe) ne porte AUCUN quartier au
+    referentiel : aucun Kiosque n'y est donc possible, et aucun client
+    anglophone n'en viendra. Seul Bamenda (Nord-Ouest) en produira. C'est un trou
+    de DONNEES, et l'enrichissement du referentiel est la seule vraie reponse.
+    """
+    return (
+        Language.EN
+        if region in REGIONS_ANGLOPHONES.get(pays.upper(), frozenset())
+        else LANGUE_PAR_DEFAUT
     )
 
 

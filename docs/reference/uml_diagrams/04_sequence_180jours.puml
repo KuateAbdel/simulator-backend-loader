@@ -140,14 +140,27 @@ note over LDR, ACC
   Budget `ENF-01` / `OBJ-04` : **30 minutes = 1 800 s**.
   Plafond de concurrence mesuré : **20 workers** (H14/H15).
 
-  Même à 100 ms de latence — optimiste — on obtient
-  540 000 / 20 x 0,1 = **2 700 s, soit 45 min**. Hors budget
-  avant d'avoir écrit une ligne.
+  **CORRECTIF 11/08 — la latence est MESURÉE, plus supposée.**
+  La première version de cette note posait « 100 ms, optimiste »
+  et concluait à 45 min. L'aller-retour médian réel contre
+  l'environnement TEST est de **976 ms** (min 310, max 1010),
+  soit dix fois plus. Le calcul devient :
 
-  Le diagramme ne peut pas rester muet là-dessus. Trois voies :
-  échantillonner les jours actifs par client plutôt que
-  traiter 2000 clients x 180 jours ; grouper les écritures ;
-  ou revoir le budget. **Aucune n'est décidée.**
+      540 000 / 20 x 0,976 = **26 350 s, soit 7 h 20**
+
+  Pas 45 minutes : **plus de sept heures**, pour un budget de
+  trente minutes. L'écart n'est pas d'ajustement, il est
+  d'architecture.
+
+  Le module CLIENTS, lui, tient : ~7 000 appels
+  (2 000 onboardings + langue + soldes + souscriptions)
+  -> 7 000 / 20 x 0,976 = **342 s**, soit 19 % du budget.
+
+  Trois voies pour la boucle de vie, **aucune décidée** :
+  échantillonner les jours actifs par client au lieu de
+  traiter 2 000 x 180 ; grouper les écritures si un endpoint
+  de lot existe ; ou dissocier le budget de peuplement
+  (`OBJ-04`) de celui de la simulation.
 end note
 
 note over LDR, ACC

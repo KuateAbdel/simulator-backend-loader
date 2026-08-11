@@ -43,6 +43,7 @@ from app.services.clients_composition import (
     CompositionImpossible,
     ancrer_sur_kiosque,
     composer,
+    langue_de_la_region,
     occupation_du_secteur,
 )
 from app.services.generateur import Generateur
@@ -270,8 +271,70 @@ class TestLeCanalEtLeSegment:
         applicable tel qu'ecrit a cette population."""
         assert _composer(_faker()).segment is ClientSegment.ANY
 
-    def test_la_langue_est_le_francais(self) -> None:
+    def test_la_langue_est_le_francais_dans_les_regions_francophones(self) -> None:
         assert _composer(_faker()).langue is Language.FR
+
+
+class TestLaLangueSuitLaRegion:
+    """Le Cameroun est officiellement BILINGUE. Poser `fr` sur toute sa carte
+    serait une donnee fausse, et visible pour qui connait le pays."""
+
+    @pytest.mark.parametrize("region", ["Nord-Ouest", "Sud-Ouest"])
+    def test_les_deux_regions_anglophones_du_cameroun_parlent_anglais(
+        self, region: str
+    ) -> None:
+        """L'ancien Southern Cameroons britannique — Bamenda au Nord-Ouest, Buea
+        et Limbe au Sud-Ouest."""
+        assert langue_de_la_region("CM", region) is Language.EN
+
+    @pytest.mark.parametrize(
+        "region", ["Centre", "Littoral", "Ouest", "Nord", "Sud", "Est", "Adamaoua"]
+    )
+    def test_les_huit_autres_regions_camerounaises_parlent_francais(self, region: str) -> None:
+        assert langue_de_la_region("CM", region) is Language.FR
+
+    @pytest.mark.parametrize("pays", ["CI", "BF", "SN"])
+    def test_les_trois_autres_pays_sont_entierement_francophones(self, pays: str) -> None:
+        """Y compris pour une region qui porterait le meme nom : `Nord-Ouest`
+        n'est anglophone qu'AU CAMEROUN."""
+        assert langue_de_la_region(pays, "Nord-Ouest") is Language.FR
+        assert langue_de_la_region(pays, "Centre") is Language.FR
+
+    def test_un_client_de_bamenda_est_onboarde_en_anglais(self) -> None:
+        """Le test qui compte : la langue est DERIVEE du Kiosque, comme le reste.
+        Bamenda est la seule ville anglophone portant des quartiers au
+        referentiel — `Commercial Avenue`, `Nkwen`, `Bambili`."""
+        bamenda = next(
+            v
+            for v in REFERENTIEL.villes_porteuses_de_quartiers("CM")
+            if v.name == "Bamenda"
+        )
+        quartier = REFERENTIEL.quartiers_de_ville(bamenda.city_id)[0]
+        kiosque = _kiosque("CM").model_copy(update={"district_id": quartier.district_id})
+        ancrage = ancrer_sur_kiosque(kiosque, REFERENTIEL)
+
+        assert ancrage.region == "Nord-Ouest"
+        compose = composer(
+            _faker("CM"), ancrage, _generateur(), REFERENTIEL, random.Random(1), jeune=True
+        )
+        assert compose.langue is Language.EN
+
+    def test_le_sud_ouest_ne_porte_aucun_quartier_au_referentiel(self) -> None:
+        """`EF-04` — Buea et Limbe existent comme VILLES mais sans quartier :
+        aucun Kiosque n'y est possible, donc aucun client anglophone n'en
+        viendra. Trou de DONNEES, a documenter plutot qu'a masquer. Si le
+        referentiel s'enrichit, ce test le dira."""
+        sud_ouest = next(r for r in REFERENTIEL.regions_du_pays("CM") if r.name == "Sud-Ouest")
+        villes = REFERENTIEL.villes_de_region(sud_ouest.region_id)
+        assert [v.name for v in villes] == ["Buea", "Limbe"]
+        assert all(not REFERENTIEL.quartiers_de_ville(v.city_id) for v in villes)
+
+    def test_la_langue_anglophone_epargne_le_PATCH(self) -> None:
+        """`language` est ignore a l'onboarding et seul `en` est honore. Un
+        client anglophone ne coute donc AUCUN appel supplementaire — l'economie
+        est marginale, mais elle va dans le bon sens plutot que contre."""
+        assert langue_de_la_region("CM", "Nord-Ouest") is Language.EN
+        assert Language.EN.value == "en", "le defaut honore par le serveur"
 
 
 class TestLOccupationEtLaTaxonomieEF24:
