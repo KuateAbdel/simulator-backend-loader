@@ -20,8 +20,24 @@ package "Loader FinZuu <<notre système>>" {
   FE ..> API_LOADER : consomme\n(contrat Swagger)
   BE -- AUTH
   AUTH -- API_AUTH
-  BE ..> DB : lecture/écriture\n(faker_consumption_ledger,\nlenders_registry, LoaderRun,\naudit_trail, SuperAdminAccount)
+  BE ..> DB : lecture/écriture — **6 collections**\n(faker_consumption_ledger, lenders_registry,\nloader_runs, audit_trail,\nsuper_admin_accounts, org_hierarchy)
 }
+
+note right of SVC_CFG
+  **CORRECTIF 11/08** : la v1 annotait config-service
+  « peuplé par nous ». Formulation dangereuse — le
+  référentiel est **PARTAGÉ par toute l'équipe**, et la
+  doctrine interdit au Loader d'y écrire.
+
+  Il a été peuplé UNE FOIS, manuellement, pendant
+  l'investigation. Le Loader le LIT à chaque run pour
+  valider la cohérence géographique de ce qu'il crée
+  ailleurs. Il ne le repeuple jamais : ces données sont
+  statiques, il n'y a aucune raison qu'elles changent.
+
+  C'est le même correctif que `UC-05`/`UC-06` sur le
+  diagramme 01, qui disaient « injecte » au lieu de « lit ».
+end note
 
 ' ============================================================
 ' DÉPENDANCE EXTERNE 1 — Faker fintech4esg
@@ -45,7 +61,7 @@ package "Écosystème FinZuu <<9 microservices, dépendances externes>>" {
   component [config-service] as SVC_CFG
   interface "Référentiel géo" as API_CFG
   SVC_CFG -- API_CFG
-  BE ..> API_CFG : orchestre\n(peuplé par nous)
+  BE ..> API_CFG : **LIT SEULEMENT**\n(référentiel PARTAGÉ)
 
   component [identity-service] as SVC_IDS
   interface "KYC" as API_IDS

@@ -78,10 +78,30 @@ state "LoaderRun.status <<Loader MongoDB — propriétaire>>" as RunState {
   end note
 
   note bottom of FAILED
-    **Proposition architecte, à valider
-    Super-Admin** — pas encore vérifiée
-    par un test, c'est une DÉCISION
-    de conception, pas un FACT empirique.
+    **CORRECTIF 11/08** : la v1 disait « pas encore
+    vérifiée par un test ». Cette machine d'état est
+    désormais du CODE testé, et elle est CONTRAIGNANTE :
+
+    - `PENDING -> PARTIAL` est REFUSÉ
+      (`TransitionInterdite`) — d'où la transition
+      explicite `PENDING -> RUNNING` au lancement, sans
+      laquelle la clôture d'une campagne de 30 minutes
+      levait à sa dernière ligne ;
+    - toute exception traversant l'orchestrateur clôt le
+      run en `FAILED` : un état terminal, et VRAI. Sans
+      cela le run restait `RUNNING` à jamais et le verrou
+      `EF-55` bloquait tous les suivants ;
+    - `EF-55` est devenu STRUCTUREL — un index unique
+      partiel sur `status == RUNNING` rend le second run
+      impossible au niveau du moteur MongoDB. Un index
+      ne se contourne pas : l'échappatoire `--ignorer-verrou`
+      ne « passe » donc plus outre, elle CLÔT le run bloqué
+      en `FAILED` puis laisse la place.
+
+    `PAUSED` reste une intention de conception : elle
+    dépend de l'interface de pilotage (`EF-50` à `EF-59`,
+    Sprint 6), et `CR-05` est déclaré NON_VÉRIFIABLE pour
+    cette raison.
   end note
 }
 

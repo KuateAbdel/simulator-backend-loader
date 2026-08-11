@@ -28,15 +28,37 @@ partition "Phase 1 — Vérification référentiel (config-service, LECTURE SEUL
 
 partition "Phase 2 — Organisation (company/user-service)" #LightGreen {
   while (pour chaque Company à créer, 12-20 total) is (suivant)
-    :Tirer client Faker Business;
-    if (client_id déjà dans\nfaker_consumption_ledger ?) then (oui)
-      :Re-tirer avec seed différent;
-      stop
-    else (non)
-      :POST /companies/\n(nom Faker, admin_email);
-      note right: Cascade Identity CONFIRMÉE\n(D-CMP-2, empirique)
-      :Marquer client Faker consommé;
-    endif
+    repeat
+      :Tirer client Faker Business\n(seed variable);
+    repeat while (client_id déjà dans\nfaker_consumption_ledger ?) is (oui) not (non)
+    note right
+      **CORRECTIF 11/08 — DÉFAUT DANGEREUX.**
+      La v1 écrivait `stop` dans la branche « déjà
+      consommé ». Dans un diagramme d'activité, `stop`
+      TERMINE LE FLUX : une seule collision tuait le run
+      entier. Or le cache Faker est **déterministe**, donc
+      la collision est garantie d'arriver.
+
+      Le CDC §185 dit ce qu'il faut faire : « le Loader
+      change le paramètre seed et refait un appel jusqu'à
+      obtenir un nouveau client_id unique ». C'est une
+      BOUCLE DE REPRISE, pas un arrêt.
+
+      La v1 se contredisait d'ailleurs : la Phase 5 fait le
+      même contrôle sans `stop`.
+    end note
+    :POST /companies/\n(raison sociale COMPOSÉE, admin_email);
+    note right
+      Cascade Identity CONFIRMÉE (D-CMP-2, empirique).
+
+      **CORRECTIF 11/08** : la v1 disait « nom Faker ».
+      `company_name` de Faker est un placeholder
+      (« Test Business CM 748 »). On COMPOSE la raison
+      sociale à partir de la matière réelle — patronyme
+      + `company_type` (6 valeurs) + secteur — et `D-12`
+      garantit son unicité. On assemble ; on n'invente pas.
+    end note
+    :Marquer client Faker consommé\n(SEULEMENT après création réussie — D-FAKER-1);
     :POST /auth/register (Admin User);
     note right: admin_email NE crée PAS\nle User automatiquement —\nà faire explicitement
     :Flow 3 étapes (register→f-change→login);
@@ -46,9 +68,15 @@ partition "Phase 2 — Organisation (company/user-service)" #LightGreen {
     if (Lender institutionnel ?) then (oui)
       :Nom fixe (Nordic/IFC/AFD/BAD);
     else (non — local)
-      :Nom source Faker Business\n(pays identique — cohérence stricte);
+      :Raison sociale composée depuis un client\nFaker Business du MÊME PAYS\n(règle géographique absolue);
     endif
-    :[HYPOTHÈSE non vérifiée]\nCréer 4 comptes financiers;
+    :Créer les 4 comptes financiers\n(EF-13 — vérifié, voir TROU-2 du 08/08);
+    note right
+      **CORRECTIF 11/08** : la v1 portait
+      « [HYPOTHÈSE non vérifiée] ». L'hypothèse a été
+      levée le 08/08 et `EF-13` est désormais un critère
+      de recette contrôlé à chaque run.
+    end note
     :Insérer lenders_registry;
   endwhile (terminé)
 
@@ -74,8 +102,20 @@ partition "Phase 3 — Catalogue Produits (product-service)" #LightYellow {
     else (non)
       :Créer avec nom réel\n(Dépôt à Terme, Collecte Cacao...);
     endif
-    note right: Résultat : 6 Products COLLECT\n(D-PRD-9, croisement Type×Category)
+    note right: Résultat : 6 au catalogue COLLECT,\ndont 4 CRÉÉS et 2 RÉUTILISÉS\n(D-PRD-9, croisement Type×Category)
   end fork
+}
+
+partition "Phase 7 — Recette (verdict du run, aucune écriture serveur)" #Wheat {
+  :Contrôler les 12 critères CR-01 à CR-12;
+  note right
+    **Phase absente de la v1.** L'orchestrateur compte
+    8 étapes depuis le 11/08, dont RECETTE. Chaque critère
+    rend TENU, VIOLÉ ou **NON_VÉRIFIABLE avec son motif** —
+    un critère qu'on ne peut pas encore mesurer n'est ni un
+    succès ni un échec, et le prétendre serait mentir au
+    rapport de recette.
+  end note
 }
 
 partition "Phase 4 — Dépositaires (depositary-service)" #LightPink {
@@ -111,24 +151,64 @@ partition "Phase 5 — Clients (client-service, Faker)" #LightCyan {
 }
 
 partition "Phase 6 — Vie commune 180 jours (collect/account-service)" #Lavender {
-  :sim_day = SIM_START_DATE;
-  while (sim_day <= SIM_END_DATE ?) is (oui — 180 itérations)
-    :_wall_from_sim_day(sim_day);
+  :sim_day = 0;
+  while (sim_day <= 180 ?) is (oui — 181 itérations)
+    :_wall_time_for_sim_day(sim_day)\n= ancre + (sim_day x seconds_per_day);
+    note right
+      **CORRECTIF 11/08, deux fois.**
+      1. La v1 écrivait « sim_day = SIM_START_DATE » puis
+         « sim_day += 1 » : `sim_day` est un NOMBRE de 0 à
+         180, la date en est dérivée.
+      2. Le facteur de compression manquait. Annexe D.3 :
+         instantané 86 400 s/j, accéléré 0,2 à 60 s/j,
+         réaliste 226,49 s/j. Sans lui, tout serait
+         horodaté à la même seconde — graphique plat.
+    end note
+
     while (pour chaque Client actif) is (suivant)
-      switch (Type de vie ?)
-      case (Type 1 — 100% clients)
-        :Collecte périodique (collect-service);
-        :Paiements/P2P (account-service);
-      case (Type 2 — APPROVED)
-        :Historique crédit (Faker);
-        note right: Hors périmètre —\nloan-service non développé
-      case (Type 3 — DECLINED/NOT SCORED)
-        :Vie commune SEULEMENT;
-        note right: JAMAIS d'événement crédit (EF-78)
-      endswitch
+      :SOCLE — vie commune, TOUS les clients (EF-77)\nCollecte périodique + Paiements/P2P;
+      note right
+        **CORRECTIF 11/08 — ERREUR DE MODÉLISATION.**
+        La v1 mettait les 3 types dans un `switch/case`,
+        exclusif par construction : un client APPROVED
+        n'avait alors AUCUNE vie commune.
+
+        Le CDC écrit l'inverse pour le Type 2 : « **En plus
+        de la vie commune de Type 1**, ces clients entrent
+        dans la couche cycle crédit. »
+
+        Le socle est pour tous ; le crédit est une COUCHE.
+      end note
+
+      if (Type 2 — client APPROVED ?) then (oui)
+        :COUCHE crédit — décaissement / remboursement;
+        note right
+          **CT-02 / A-04** : aucun hôte à ce jour,
+          loan-service n'est pas livré.
+          Et JAMAIS d'appel `loan-history` ici : cet
+          endpoint est de la famille B, nos clients sont
+          de la famille A, et croiser les deux rend un
+          **TIMEOUT** — jamais un 404 (mesuré le 08/08).
+        end note
+      else (non — Type 3, DECLINED ou NOT SCORED)
+        :Aucune opération de crédit;
+        note right: JAMAIS d'événement crédit (EF-78).\nLe socle ci-dessus s'applique déjà,\ncomme pour tous les autres.
+      endif
     endwhile (terminé)
-    if (sim_day % 30/60/90 == 0 ?) then (oui)
-      :Re-scoring DECLINED (EF-79);
+
+    if (sim_day % délai_re_scoring == 0 ?) then (oui)
+      :Ré-évaluer le payload déjà consommé (EF-79);
+      note right
+        La famille A ne porte AUCUNE décision de scoring :
+        il n'y a pas de `decision_status` à rafraîchir, et
+        ce n'est pas un champ de réponse mais un **filtre**.
+        Le CDC §278 prévoit la voie viable : « ou en
+        ré-évaluant le payload existant ».
+
+        Trois durées à ne jamais confondre : fenêtre 180 j
+        (ENF-16), cycle de crédit = les 90 DERNIERS jours
+        (UC-03 pt 4), re-scoring 30/60/90 j (EF-79).
+      end note
     endif
     :sim_day += 1;
   endwhile (non — terminé)

@@ -13,9 +13,9 @@ node "Poste Super-Admin\n<<navigateur>>" as CLIENT {
 ' ============================================================
 ' SERVEUR LOADER — coordonnées exactes confirmées
 ' ============================================================
-node "Serveur Loader\n152.53.118.110\nUbuntu 24.04.4 LTS — ARM64 — 10 vCPU" as SERVER {
+node "Serveur Loader — NetCup\n152.53.53.139\nDebian 13 Trixie — ARM64 — 6 vCPU / 8 Go / 256 Go\n<<PAS ENCORE PROVISIONNÉ>>" as SERVER {
 
-  node "Nginx\n<<reverse proxy, déjà en place>>" as NGINX {
+  node "Traefik\n<<reverse proxy — ADR-02>>" as NGINX {
   }
 
   node "Docker\n<<images multi-arch ARM64 obligatoire>>" as DOCKER {
@@ -32,30 +32,33 @@ NGINX -down-> BE_ART : proxy_pass\nsimul.api.fintech4esg.com\n(REST + Swagger /d
 BE_ART -down-> DB_ART : mongodb://\n(motor async driver)
 
 note right of SERVER
-  **⚠ ARM64 obligatoire** : toute image
-  Docker doit être multi-architecture,
-  sinon échec silencieux au déploiement
-  uniquement (jamais visible en dev
-  local x86).
+  **⚠ CORRECTIF 11/08 — TROIS FAITS FAUX CORRIGÉS.**
+  La v1 annonçait `152.53.118.110`, Ubuntu 24.04.4
+  et **Nginx « déjà en place »**. `docs/CONTEXT.md`
+  l'écrit noir sur blanc :
 
-  **⚠ Nginx jamais dupliqué** : déjà en
-  place, le Backend s'y intègre, ne le
-  remplace pas.
+  > « Ni cette IP ni Nginx n'existent dans la
+  > documentation d'infrastructure : le reverse proxy
+  > retenu est Traefik, l'IP est 152.53.53.139, et le
+  > serveur n'est pas encore provisionné. »
 
-  **État vérifié le 08/08/2026** : le DNS
-  résout pour les DEUX sous-domaines. Le
-  vhost FRONTEND existe déjà, avec son
-  certificat valide jusqu'au 18/10/2026
-  (HTTP 503 = Next.js pas encore déployé).
-  Seul le vhost simul.api manque : le SNI
-  retombe sur le vhost par défaut
-  (CN=collabora.finzuu.com), d'où HTTP 000.
-  Action A3 réduite à : créer le vhost API
-  + son certificat.
+  Ce qui rend ce défaut instructif : la correction
+  avait été appliquée dans `CONTEXT.md` **et** dans
+  `app/main.py` — et pas ici. Trois endroits portaient
+  le même fait faux, deux ont été corrigés. Un
+  diagramme de déploiement non propagé aurait conduit
+  à configurer un proxy qui n'existe pas.
 
-  Historique : configuré 19/07/2026 après
-  panne SSH serveur netcup initial
-  (152.53.53.139).
+  **⚠ ARM64 obligatoire** : toute image Docker doit
+  être multi-architecture, sinon échec silencieux au
+  déploiement uniquement (jamais visible en dev local
+  x86). NetCup est ARM64.
+
+  **⚠ Traefik, pas Nginx** — ADR-02, Nginx
+  explicitement rejeté. Le routage se déclare par
+  labels, pas par vhost : les constats de vhost et de
+  SNI de la v1 (HTTP 503, HTTP 000, CN=collabora)
+  portaient sur une machine qui n'est pas la nôtre.
 end note
 
 ' ============================================================
@@ -64,14 +67,26 @@ end note
 node "GitHub\n<<finzuu-score-platform/simul-ussd>>" as GITHUB {
   artifact "Code source\n(Admin: Yaniv+Zidane)" as CODE
 }
-GITHUB .down.> SERVER : déploiement\n(⚠ AUCUN commit à ce jour)
+GITHUB .down.> SERVER : déploiement\n(⚠ jamais déployé — mais 100+ commits locaux)
 
 ' ============================================================
 ' DÉPENDANCE EXTERNE 1 — Faker fintech4esg
 ' ============================================================
 node "Serveur Faker\nfaker.fintech4esg.com\n<<propriété équipe ReadyScore/Oti>>" as FAKER_SRV {
-  artifact "API Faker\n(15 endpoints, x-api-key,\nrun_id unique 20260620123721)" as FAKER_ART
+  artifact "API Faker\n(15 endpoints, AUCUNE clé requise,\nrun_id unique 20260620123721)" as FAKER_ART
 }
+note bottom of FAKER_SRV
+  **CORRECTIF 11/08** : la v1 annonçait `x-api-key`.
+  Mesuré le 08/08 — `security: null`,
+  `securitySchemes: {}`, et aucun appel refusé sans
+  en-tête. La question ouverte `Q-02` de la
+  Cartographie (« obtenir une clé auprès d'Oti »)
+  est **sans objet**.
+
+  ⚠ Lecture seule stricte : `POST /cache/clear`
+  n'est JAMAIS appelé — il réinitialiserait le cache
+  Redis partagé par toute l'équipe.
+end note
 BE_ART -right-> FAKER_ART : HTTPS\n(clients, historique, scoring)
 
 ' ============================================================
