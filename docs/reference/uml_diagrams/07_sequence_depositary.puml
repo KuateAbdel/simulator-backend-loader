@@ -10,10 +10,41 @@ participant "account-service" as ACC
 
 LDR -> LDR : Company déjà créée\n(cascade Identity confirmée — D-CMP-2)
 
-LDR -> DEP : POST /depositaries/create\n{name (source Faker), currency, company_id}
+LDR -> DEP : POST /depositaries/create\n{name (QUARTIER, pas Faker), currency (du PAYS), company_id}
 activate DEP
 DEP --> LDR : HTTP 201 — Dépositaire créé\n(total_saving=0.0)
 deactivate DEP
+
+note right of LDR
+  **CORRECTIF 11/08 — la v1 écrivait « name (source Faker) ».
+  Faux sur deux points.**
+
+  1. `company_name` de Faker est un **placeholder** :
+     « Test Business CM 748 » sur 15 tirages / 3 pays.
+     `DEMO_Test Business CM 748` à côté d'`IFC` en démo,
+     c'est non (UC-08 : « nom métier crédible »).
+  2. Le nom retenu est le **QUARTIER** — `DEMO_Kiosque Bonabéri`.
+     depositary-service n'a **aucun champ géographique** :
+     le nom est le SEUL ancrage visible dans l'interface.
+     C'est aussi ce qu'on lit sur une devanture réelle.
+
+  De Faker on garde `company_type` et `sector_assignments`,
+  qui sont exploitables — jamais `company_name`.
+end note
+
+note right of LDR
+  **⚠ D-12, et c'est ICI le cas grave.**
+  `Plateau` est un quartier de DEUX pays : deux
+  « DEMO_Kiosque Plateau » strictement indiscernables,
+  sans aucun champ géo pour les départager (mesuré le 09/08).
+
+  Levée en trois temps : le nom tel quel (95 % des cas)
+  -> le **code pays**, discriminant porteur de sens
+  -> le rang numérique, en dernier recours seulement.
+
+  `currency` suit le PAYS, jamais Faker : XAF (CM),
+  XOF (CI, BF, SN). Contrôlé par `valider_devise_pays()`.
+end note
 
 note right of LDR
   **CORRECTIF** : PATCH status/true retiré —

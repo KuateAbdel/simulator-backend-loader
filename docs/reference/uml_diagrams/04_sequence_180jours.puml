@@ -3,71 +3,128 @@
 title Séquence — Boucle de vie commune sur 180 jours (EF-76 à EF-80)
 
 participant "Loader\n(orchestrateur)" as LDR
-participant "Fonctions Duhamel\n(_wall_from_sim_day...)" as DTF
+participant "TempsSimulation\n(_wall_time_for_sim_day...)" as DTF
 participant "Faker\nfintech4esg" as FAKER
 participant "collect-service" as COL
 participant "account-service" as ACC
 
-LDR -> LDR : sim_day = SIM_START_DATE
-loop pour chaque sim_day jusqu'à SIM_END_DATE (180 itérations)
+note over LDR, DTF
+  **CORRECTIF 11/08 — `sim_day` est un NOMBRE, pas une date.**
+  La v1 de ce diagramme écrivait « sim_day = SIM_START_DATE »
+  puis « sim_day += 1 » : les deux lignes se contredisaient.
+  `sim_day` va de 0 à 180 ; la date en est *dérivée*.
+end note
 
-  LDR -> DTF : _wall_from_sim_day(sim_day)
+LDR -> LDR : sim_day = 0
+loop pour chaque sim_day de 0 à 180 (ENF-16)
+
+  LDR -> DTF : _wall_time_for_sim_day(sim_day)
   activate DTF
-  DTF --> LDR : wall_date (horodatage réel)
+  DTF --> LDR : ancre + (sim_day x seconds_per_day)
   deactivate DTF
+
+  note right of DTF
+    **CORRECTIF 11/08 — la compression manquait.**
+    Un jour de SIMULATION n'est pas un jour RÉEL.
+    Annexe D.3, trois régimes :
+      INSTANTANÉ  86 400 s/j -> rétro-datage sur 180 vrais jours
+      ACCÉLÉRÉ    0,2 à 60 s/j -> à 10 s/j, tout tient en 30 min
+      RÉALISTE    226,49 s/j -> les 180 jours en 11 h 19
+    Sans ce facteur, les 1 400+ transactions seraient
+    horodatées à la même seconde : **le graphique serait plat.**
+    C'est la raison d'être du paramètre.
+  end note
 
   loop pour chaque Client actif (2000 au total)
 
-    alt Type 1 — Vie commune (100% des clients, UC-15)
+    == Vie commune — TOUS les clients, sans exception (EF-77) ==
+
+    note right of LDR
+      **CORRECTIF 11/08, défaut de LOGIQUE MÉTIER.**
+      La v1 plaçait la vie commune dans un `alt` avec
+      les Types 2 et 3 — un `alt` est EXCLUSIF, donc un
+      client APPROVED n'avait aucune vie commune.
+
+      Le CDC dit l'inverse, mot pour mot, pour le Type 2 :
+      *« **En plus de la vie commune de Type 1**, ces clients
+      entrent dans la couche cycle crédit. »*
+
+      La vie commune est un SOCLE (100 % des clients) ;
+      le crédit est une COUCHE qui s'y ajoute. Jamais
+      un remplacement.
+    end note
+
+    note right of LDR
+      collect-service gère EXCLUSIVEMENT l'épargne (Collecte).
+      Les mouvements P2P / paiements / mobile money relèvent
+      d'account-service — flux distinct, jamais fusionné
+      (EF-77 : « comptes, épargne, paiements, P2P, Collecte »
+      = 4 flux séparés).
+    end note
+
+    opt Souscription Collecte active (1 à 3 par client)
+      LDR -> COL : POST /collects/collect\n(contribution périodique, horodatage réel)
+      activate COL
+      COL --> LDR : HTTP 201
+      deactivate COL
+    end
+
+    LDR -> ACC : transfer / credit / debit\n(P2P, paiement marchand, mobile money)
+    activate ACC
+    ACC --> LDR : HTTP 201
+    deactivate ACC
+
+    == Couche crédit — surcouche du socle ci-dessus ==
+
+    alt Type 2 — client APPROVED
+      LDR -> LDR : décaissement / remboursement du jour\n(profils comportementaux — A-07)
       note right of LDR
-        **CORRECTIF** : collect-service gère
-        EXCLUSIVEMENT l'épargne (Collecte).
-        Les mouvements P2P/paiements/mobile money
-        relèvent d'account-service — flux distinct,
-        jamais fusionné (EF-77 : "comptes, épargne,
-        paiements, P2P, Collecte" = 4 flux séparés).
+        **CT-02 / A-04 — AUCUN HÔTE À CE JOUR.**
+        `loan-service` n'est pas livré ; aucun des 9 services
+        FinZuu ne peut héberger un prêt.
+
+        La v1 dessinait ici `GET /loan-history/{client_id}`
+        vers Faker. **Cet appel ne peut pas fonctionner** :
+        `loan-history` est de la famille B, nos 2000 clients
+        sont de la famille A, et croiser les deux familles
+        ne rend pas un 404 — ça rend un **TIMEOUT** (mesuré
+        le 08/08). Dans une boucle 180 x 2000, le run ne
+        terminerait jamais.
       end note
 
-      opt Sous-population avec souscription Collecte active
-        LDR -> COL : POST /collects/collect\n(contribution périodique, wall_date)
-        activate COL
-        COL --> LDR : HTTP 201
-        deactivate COL
-      end
-
-      LDR -> ACC : transfer/credit/debit\n(P2P, paiement marchand, mobile money)
-      activate ACC
-      ACC --> LDR : HTTP 201
-      deactivate ACC
-
-    else Type 2 — Client APPROVED (sous-population crédit)
-      LDR -> FAKER : GET /loan-history/{client_id}
-      activate FAKER
-      FAKER --> LDR : décaissement/remboursement du jour
-      deactivate FAKER
-      note right : Hors périmètre Séquence —\nvoir module loan-service (non développé)
-
-    else Type 3 — DECLINED/NOT SCORED (UC-16)
-      LDR -> COL : POST /collects/collect\n(vie commune SEULEMENT)
-      COL --> LDR : HTTP 201
-      note right
+    else Type 3 — DECLINED ou NOT SCORED
+      LDR -> LDR : aucune opération de crédit
+      note right of LDR
         **EF-78** : JAMAIS d'événement crédit
         (CREATE_LOAN, REPAY_LOAN, SET_DPD)
-        pour cette sous-population
+        pour cette sous-population.
+        Le socle de vie commune, lui, s'applique
+        déjà ci-dessus — comme pour tous les autres.
       end note
     end
 
   end
 
-  alt sim_day % 30 == 0 (ou 60, ou 90 — paramétrable)
-    LDR -> FAKER : GET /real-scoring-payload/{client_id}\n(re-scoring DECLINED)
-    activate FAKER
-    FAKER --> LDR : nouveau decision_status
-    deactivate FAKER
-    note right
-      **EF-79** : re-scoring périodique
-      (30/60/90j — jamais confondre
-      avec la fenêtre globale 180j)
+  opt sim_day % délai_re_scoring == 0 (30, 60 ou 90 — paramétrable)
+    LDR -> LDR : ré-évaluer le payload déjà consommé\n(EF-79)
+    note right of LDR
+      **CORRECTIF 11/08.** La v1 appelait ici
+      `GET /real-scoring-payload/{client_id}` — même défaut
+      de famille que ci-dessus, et deux impossibilités de plus :
+
+      1. la famille A ne porte **aucune** décision de scoring,
+         il n'y a donc pas de `decision_status` à rafraîchir ;
+      2. `decision_status` n'est pas un champ de réponse de
+         cet endpoint — c'est un **filtre de requête** (mesuré).
+
+      Le CDC prévoit la voie viable, §278 : *« en tirant un
+      nouveau payload Faker pour le même client_id **ou en
+      ré-évaluant le payload existant** »*. C'est la seconde.
+
+      **EF-79** : ne jamais confondre le délai de re-scoring
+      (30/60/90 j) avec la fenêtre globale (180 j), ni avec
+      le cycle de crédit (les 90 DERNIERS jours, UC-03 pt 4).
+      Trois durées distinctes.
     end note
   end
 
@@ -75,9 +132,29 @@ loop pour chaque sim_day jusqu'à SIM_END_DATE (180 itérations)
 end
 
 note over LDR, ACC
+  **⚠ CONTRADICTION DE CAPACITÉ À TRANCHER AVANT S5.**
+  Cette boucle est en O(180 x 2000) = **360 000 itérations**,
+  chacune portant au moins un appel HTTP (souvent deux).
+  Soit ~540 000 appels.
+
+  Budget `ENF-01` / `OBJ-04` : **30 minutes = 1 800 s**.
+  Plafond de concurrence mesuré : **20 workers** (H14/H15).
+
+  Même à 100 ms de latence — optimiste — on obtient
+  540 000 / 20 x 0,1 = **2 700 s, soit 45 min**. Hors budget
+  avant d'avoir écrit une ligne.
+
+  Le diagramme ne peut pas rester muet là-dessus. Trois voies :
+  échantillonner les jours actifs par client plutôt que
+  traiter 2000 clients x 180 jours ; grouper les écritures ;
+  ou revoir le budget. **Aucune n'est décidée.**
+end note
+
+note over LDR, ACC
   **ENF-15** : deux exécutions avec mêmes paramètres
-  et même run_id DOIVENT produire le même écosystème
-  (reproductibilité stricte).
+  et même run_id DOIVENT produire le même écosystème.
+  La fenêtre fait partie des paramètres figés (D-10) —
+  rejouer un run, c'est rejouer son run_id ET sa fenêtre.
 end note
 
 @enduml

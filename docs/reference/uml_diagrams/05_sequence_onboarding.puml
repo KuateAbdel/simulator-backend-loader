@@ -14,11 +14,26 @@ activate FAKER
 FAKER --> LDR : payload client\n(identity, msisdn, id_expire_on...)
 deactivate FAKER
 
-LDR -> DB : find_one(faker_consumption_ledger, client_id)
-activate DB
-DB --> LDR : non trouvé
-deactivate DB
-note right of LDR : **D-FAKER-1** vérifié
+loop tant que le client_id est déjà consommé (CDC §185)
+  LDR -> DB : find_one(faker_consumption_ledger, client_id)
+  activate DB
+  DB --> LDR : trouvé -> on change le **seed** et on rappelle Faker
+  deactivate DB
+end
+note right of LDR
+  **D-FAKER-1** vérifié. **CORRECTIF 11/08** : la v1 ne
+  dessinait aucune reprise sur collision, alors que le cache
+  Redis de Faker est déterministe — le CDC §185 l'exige :
+  « le Loader change le paramètre seed et refait un appel
+  jusqu'à obtenir un nouveau client_id unique ».
+
+  Le `seed` est le SEUL moyen d'itérer : le cache est clé sur
+  le **jeu de paramètres complet**.
+
+  ⚠ `country_code=SN` rend **HTTP 422** (enum BF/CI/CM).
+  Les 500 clients sénégalais passent par le générateur
+  interne — arbitrage `A-01`, provenance visible au rapport.
+end note
 
 LDR -> LDR : product_id déjà choisi\n(Products créés en amont — D-CLI-1)
 
@@ -28,8 +43,20 @@ note right of LDR
   channel ∈ {USSD, MOBILE, OFFICE}
   segment ∈ {ANY, VERY_LOW…VERY_HIGH}
   language ∈ {en, fr} (défaut "en")
-  **segment** est le point de jonction avec
-  metadata.behavior_segment de Faker (EF-80).
+  **CORRECTIF 11/08 — la v1 annonçait ici que `segment`
+  est « le point de jonction avec metadata.behavior_segment
+  de Faker (EF-80) ». Cette jonction n'existe pas.**
+
+  Mesuré : `metadata.behavior_segment` vaut **0.0 dans 14 cas
+  sur 15**, et il n'appartient qu'à la **famille B**. Le vrai
+  segment est `features.__precomputed_scores.segment` (les 5
+  valeurs de l'Annexe E) — famille B également.
+
+  Nos 2000 clients viennent nécessairement de la famille A,
+  qui ne porte **aucune** donnée de scoring. `EF-80` n'est
+  donc pas applicable tel qu'écrit à cette population.
+  `segment` prend `ANY`, valeur légitime de l'enum, jusqu'à
+  ce qu'une dérivation interne soit tranchée.
 end note
 activate CLI
 
@@ -64,6 +91,33 @@ alt Client possède 2 ou 3 produits (CDC : 1 à 3)
   CLI --> LDR : HTTP 200
   deactivate CLI
 end
+
+LDR -> ACC : créditer le solde initial du compte (UC-13 pt 2-3)
+activate ACC
+ACC --> LDR : HTTP 201 — solde déposé
+deactivate ACC
+
+note right of LDR
+  **CORRECTIF 11/08 — étape absente de la v1**, qui s'arrêtait
+  à « balance=0.0 ». `UC-13` exige un solde initial, et un
+  client à zéro n'a aucune vie financière à simuler ensuite.
+
+  ⚠ **Arbitrage `A-09` ouvert.** `UC-13` pt 2 fait lire ce
+  montant dans `MOB_MONEY_ACCOUNT_AMOUNT` — mesuré le 11/08 :
+  **absent de la famille A** ; en famille B, nul dans 4 tirages
+  sur 7. Le CDC interdit par ailleurs « l'invention arbitraire
+  de montants ». Recommandation : fonction déterministe des
+  11 champs `quick_win` réellement portés par la famille A,
+  bornée par les strates de l'Annexe E.
+end note
+
+LDR -> LDR : rattacher le client à un Kiosque du pays\n(EF-26, via org_hierarchy)
+note right of LDR
+  **Étape absente de la v1.** `EF-26` exige le rattachement à
+  un Kiosque existant du pays cible, mais client-service
+  n'expose aucun champ pour cela **à la création** : le lien
+  se pose en deux temps, dans notre `org_hierarchy`.
+end note
 
 LDR -> LDR : Client prêt pour\nUC-15 (vie commune 180j)
 

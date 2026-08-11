@@ -27,14 +27,23 @@ loop pour chaque Produit du catalogue (Nano, Macro, BNPL, ReadyToGo)
     activate PRD
     PRD --> LDR : HTTP 201 (exemplaire 1/2)
     deactivate PRD
-    LDR -> PRD : POST /products/\n{name (identique), category: CORPORATE, policy: {...}}
+    LDR -> PRD : POST /products/\n{name DISTINCT (« ... Corporate »), category: CORPORATE, policy: {...}}
     activate PRD
     PRD --> LDR : HTTP 201 (exemplaire 2/2)
     deactivate PRD
     note right
-      Rendu possible sans conflit :
-      ANO-PRD-UNIQ-01 confirme l'absence
-      de contrainte d'unicité sur `name`.
+      **CORRECTIF 11/08.** La v1 écrivait « name (identique) »
+      au motif qu'`ANO-PRD-UNIQ-01` confirme l'absence de
+      contrainte serveur sur `name`. C'était confondre
+      **le permis et le juste**.
+
+      `D-12` l'interdit, et la mesure du 11/08 montre pourquoi :
+      deux « Cotisation 20000/mois » coexistent en base, chacune
+      avec ses abonnés — le dry-run le signale à chaque passage.
+
+      Les deux exemplaires portent donc des noms distincts :
+      `DEMO_BNPL Individual` et `DEMO_BNPL Corporate`.
+      Nano et Macro, non dédoublés, gardent leur nom nu.
     end note
   end
 
@@ -114,17 +123,19 @@ loop pour chaque produit MANQUANT du catalogue cible (4 nouveaux, 2 réutilisés
 end
 
 note over LDR, PRD
-  **Résultat final catalogue COLLECT** : 6 produits
-  au total, dont 2 RÉUTILISÉS (jamais dupliqués) et
-  4 nouveaux à noms réels — variété complète
-  PolicyType×Category, sans aucune duplication.
-end note
+  **Résultat final catalogue COLLECT** : 6 produits au
+  catalogue, dont 2 RÉUTILISÉS et **4 seulement créés** —
+  croisement complet PolicyType×Category, garantissant la
+  variété des 1 à 3 souscriptions par client (UC-13).
 
-note over LDR, PRD
-  **Résultat final catalogue COLLECT** : 6 Products
-  minimum créés, croisement complet PolicyType×Category,
-  garantissant une vraie variété pour les 1-3
-  souscriptions par client (UC-13).
+  **CORRECTIF 11/08** : la v1 portait ici DEUX notes finales
+  contradictoires, la seconde annonçant « 6 Products minimum
+  créés ». Créés et réutilisés ne sont pas la même chose, et
+  la confusion pousse à dupliquer ce qui existe déjà.
+
+  **Total des créations réelles du module : 10** —
+  6 LENDING (Nano×1, Macro×1, BNPL×2, ReadyToGo×2)
+  + 4 COLLECT. Le dry-run affiche « 10 / 10 attendus ».
 end note
 
 @enduml
