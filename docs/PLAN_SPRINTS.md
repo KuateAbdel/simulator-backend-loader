@@ -107,6 +107,7 @@ Rien n'est masqué. Chaque ligne porte sa preuve et son sprint.
 | **`A-05`** | Permissions exactes des 11 rôles | bloque la finition de `S2` |
 | **`A-04`** | Persistance des ~700 prêts simulés | bloque `CR-10` en `S6` |
 | — | Agents compris ou en sus des 15-25 staff/pays | dimensionne `S2` |
+| **`A-09`** | **Le solde initial des comptes clients.** `UC-13` pt 2 le fait lire dans `MOB_MONEY_ACCOUNT_AMOUNT` — mesuré le 11/08 : **absent de la famille A**, la seule population capable de fournir 2000 clients ; présent en famille B mais **nul dans 4 tirages sur 7**. Le CDC interdit par ailleurs « l'invention arbitraire de montants ». *Recommandation : fonction déterministe et documentée des 11 champs `quick_win` que la famille A porte vraiment, bornée par les strates de l'Annexe E — l'intention du CDC est tenue là où son champ littéral est hors d'atteinte. Voir `docs/empirical/2026-08-11_faker_solde_initial.md`.* | bloque `UC-13` en `S4` |
 | **`A-08`** | **« Désactiver un pays » : chez nous, chez eux, ou les deux ?** Le serveur expose `PATCH /countries/deactivate/{id}` — mais config-service est **partagé par toute l'équipe**. *Recommandation : Loader seul par défaut, action serveur explicitement distincte dans l'interface.* | conditionne `CFG-05` |
 
 ### 3.5 🟦 Pistes d'enrichissement — relevées le 11/08, **rien à décider maintenant**
