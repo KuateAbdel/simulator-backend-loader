@@ -48,6 +48,23 @@ class Settings(BaseSettings):
     sim_start_date: date | None = None
     sim_end_date: date | None = None
 
+    # -- Compression temporelle (Annexe D.3, EF-76) ------------------------
+    # Un jour de SIMULATION n'est pas un jour REEL. Ces deux reglages sont
+    # l'unique endroit ou le rapport entre les deux se decide.
+    #
+    #   INSTANTANE  86 400 s/jour — retro-datage. Les 180 jours restent etales
+    #               sur 180 VRAIS jours dans le passe : c'est le mode de
+    #               peuplement (`OBJ-04`, moins de 30 minutes d'ecriture).
+    #   ACCELERE    0,2 a 60 s/jour — demonstration commerciale. A 10 s/jour,
+    #               le cycle complet tient en une demi-heure de reunion.
+    #   REALISTE    226,49 s/jour — le repli du script Duhamel.
+    #
+    # Le defaut est INSTANTANE : le Loader peuple, il n'anime pas.
+    sim_mode_compression: str = "INSTANTANE"
+    #: Lu UNIQUEMENT en mode ACCELERE. Les bornes de l'Annexe D.3 sont
+    #: appliquees par `TempsSimulation`, pas ici.
+    sim_secondes_par_jour: float = 1.0
+
     # -- Cibles externes : environnement TEST exclusivement (ENF-16, R-06) -
     faker_base_url: str = "https://faker.fintech4esg.com"
     faker_api_key: str | None = None

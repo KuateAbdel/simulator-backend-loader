@@ -34,6 +34,7 @@ from app.core.cdc import FENETRE_JOURS
 from app.core.config import settings
 from app.core.configuration import ConfigurationExecution
 from app.core.database import close, connect, ensure_indexes
+from app.core.temps import ModeCompression, TempsSimulation
 from app.models.enums import RunMode, RunStatus
 from app.repositories import (
     AuditTrailRepository,
@@ -79,6 +80,24 @@ async def executer(
     # le run FIGE, et elle est l'ancre temporelle du generateur (`ENF-15`).
     fin = settings.sim_end_date or date.today()
     debut = settings.sim_start_date or (fin - timedelta(days=FENETRE_JOURS))
+
+    # `EF-76` — la fenetre cesse d'etre deux dates nues. `TempsSimulation` porte
+    # la conversion jour de simulation <-> horodatage reel, et il REFUSE au
+    # lancement ce qui n'a pas de sens : fenetre inversee, compression hors des
+    # bornes de l'Annexe D.3. Mieux vaut echouer ici qu'a la 1 400e transaction.
+    #
+    # Il est construit maintenant, avant toute ecriture, pour deux raisons :
+    #   1. son `resume()` entre dans le rapport d'essai a blanc — `D-01` fait de
+    #      ce rapport « la derniere occasion de dire non », et un operateur ne
+    #      peut pas dire non a une fenetre qu'on ne lui montre pas ;
+    #   2. un ecart a `ENF-16` (fenetre != 180 jours) devient VISIBLE au lieu
+    #      d'etre decouvert dans les graphiques du bailleur.
+    temps = TempsSimulation(
+        debut=debut,
+        fin=fin,
+        mode=ModeCompression(settings.sim_mode_compression),
+        secondes_par_jour_accelere=settings.sim_secondes_par_jour,
+    )
 
     # `ENF-15` — le generateur tirait ses dates de naissance depuis
     # `date.today()`. Le meme `run_id` rejoue un autre jour produisait d'autres
@@ -280,6 +299,8 @@ async def executer(
             await client.fermer()
         close()
 
+    print(temps.resume())
+    print()
     print(rapport.resume())
     print()
     print(verdict.resume())
