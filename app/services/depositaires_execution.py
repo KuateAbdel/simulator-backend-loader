@@ -73,6 +73,17 @@ class ProduitSouscriptible:
     product_id: UUID
     nom: str
     type_produit: ProductType
+    #: AJOUT DU 11/08 — `valider_produit_client()` en a besoin, et sans elle la
+    #: coherence Client/Produit n'est pas verifiable. `OBS-CLI-CROSSCHECK-01`,
+    #: mesure du 09/08 : un Client CORPORATE souscrit a un produit INDIVIDUAL
+    #: sans le moindre rejet serveur. « Devant un bailleur qui connait le metier,
+    #: c'est une incoherence visible a l'oeil nu. » La coherence est donc
+    #: entierement a notre charge, EN AMONT, dans la selection du produit —
+    #: ce qui exige de connaitre sa categorie ici.
+    #:
+    #: `""` quand le serveur ne la declare pas : `valider_produit_client` traite
+    #: la chaine vide comme « pas de contrainte », au meme titre qu'`ANY`.
+    categorie: str = ""
 
 
 @dataclass(slots=True)

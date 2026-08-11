@@ -25,8 +25,10 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from app.clients.account_service import AccountServiceClient
+from app.clients.client_service import ClientServiceClient
 from app.clients.company_service import CompanyServiceClient
 from app.clients.depositary_service import DepositaryServiceClient
+from app.clients.faker_service import FakerClient
 from app.clients.identity_service import IdentityServiceClient
 from app.clients.product_service import ProductServiceClient
 from app.clients.user_service import UserServiceClient
@@ -45,6 +47,7 @@ from app.repositories import (
 )
 from app.services import organisation
 from app.services.catalogue_execution import ExecuteurCatalogue
+from app.services.clients_execution import ExecuteurClients, RapportClients
 from app.services.depositaires_execution import ExecuteurDepositaires, ProduitSouscriptible
 from app.services.generateur import Generateur
 from app.services.geographie import charger_referentiel
@@ -162,6 +165,10 @@ async def executer(
     await depot_runs.changer_statut(run.id, RunStatus.RUNNING)
 
     users = UserServiceClient()
+    # Faker est en LECTURE SEULE et sans authentification : il n'entre pas dans
+    # la session ROOT partagee des neuf services FinZuu.
+    faker = FakerClient()
+    clients_finaux = ClientServiceClient()
     companies = CompanyServiceClient()
     comptes = AccountServiceClient()
     produits_client = ProductServiceClient()
@@ -207,6 +214,10 @@ async def executer(
     # erreur de type couterait une campagne.
     porteuses: list[CompanyPorteuse] = []
     produits: list[ProduitSouscriptible] = []
+    # Le rapport CLIENTS est conserve pour etre rendu EN ENTIER : l'orchestrateur
+    # n'en garde qu'une ligne, et la table des quotas (`EF-22`, `EF-23`, `EF-24`)
+    # est precisement ce qu'un operateur doit lire avant de dire oui (`D-01`).
+    rapports_clients: list[RapportClients] = []
 
     async def _roles() -> RapportEtape:
         return await ExecuteurRoles(mode=mode, user_client=users).executer()
@@ -229,6 +240,29 @@ async def executer(
         for porteuse in porteuses:
             par_pays.setdefault(porteuse.country_code, []).append(porteuse)
         return await ex_dep.executer(plan, par_pays, produits)
+
+    async def _clients() -> RapportEtape:
+        """L'etape qui FERME la chaine Faker.
+
+        `FakerClient` et `clients_composition` etaient ecrits, testes, et
+        appeles par personne : c'est ici que la chaine termine. Le rapport
+        d'essai a blanc annonce desormais ce que le REEL ecrirait — 2000
+        clients, leurs comptes CHECKING et leur dotation.
+        """
+        rapport_clients = await ExecuteurClients(
+            run_id=run_id,
+            mode=mode,
+            configuration=configuration,
+            referentiel=referentiel,
+            generateur=generateur,
+            faker=faker,
+            client_service=clients_finaux,
+            hierarchie=hierarchie,
+            ledger=ledger_faker,
+            produits=produits,
+        ).executer()
+        rapports_clients.append(rapport_clients)
+        return rapport_clients
 
     async def _recette() -> RapportEtape:
         """MODULE 8 — le verdict sur ce que ce run vient de construire.
@@ -265,6 +299,7 @@ async def executer(
         Etape.CATALOGUE: _catalogue,
         Etape.DEPOSITAIRES: _depositaires,
         Etape.STAFF: _staff,
+        Etape.CLIENTS: _clients,
         Etape.RECETTE: _recette,
     }
     # Deploiement PAR ETAPE — la seule facon responsable d'aborder des services
@@ -301,13 +336,20 @@ async def executer(
             run_id=run_id, hierarchie=hierarchie, registre=registre, audit=audit
         ).executer()
     finally:
-        for client in (users, companies, comptes, produits_client, depositaires, identites):
+        for client in (
+            users, companies, comptes, produits_client, depositaires, identites,
+            clients_finaux, faker,
+        ):
             await client.fermer()
         close()
 
     print(temps.resume())
     print()
     print(rapport.resume())
+    print()
+    for rapport_clients in rapports_clients:
+        print()
+        print(rapport_clients.resume())
     print()
     print(verdict.resume())
     print(reconciliation)

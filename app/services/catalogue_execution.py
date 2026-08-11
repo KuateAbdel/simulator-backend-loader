@@ -210,12 +210,45 @@ class ExecuteurCatalogue:
             rapport.reutilises.append(nom)
             if identifiant:
                 rapport.souscriptibles.append(
-                    ProduitSouscriptible(UUID(str(identifiant)), nom, type_produit)
+                    ProduitSouscriptible(
+                        UUID(str(identifiant)),
+                        nom,
+                        type_produit,
+                        # La categorie vient de la FICHE SERVEUR : c'est elle qui
+                        # fait foi sur un produit qu'on n'a pas cree.
+                        str(existant.get("category") or "").upper(),
+                    )
                 )
             return
 
         if not self.ecriture_reelle:
             rapport.crees.append(f"{nom} [prevu]")
+            # DEFAUT TROUVE LE 11/08 PAR LE PREMIER ESSAI A BLANC DU MODULE
+            # CLIENTS : le produit prevu n'entrait PAS dans `souscriptibles`. A
+            # blanc, seuls les 2 produits preexistants etaient donc visibles en
+            # aval — et tous deux sont `INDIVIDUAL`.
+            #
+            # Consequence mesuree : les 400 clients CORPORATE etaient TOUS
+            # refuses (« aucun produit COLLECT compatible »), `EF-23` affichait
+            # `Corp 0/100`, et la boucle abandonnait a ~405/500 par epuisement.
+            # Trois symptomes, une cause : un essai a blanc qui montrait un
+            # catalogue plus pauvre que le reel.
+            #
+            # C'est la meme famille que le defaut Kiosque du 11/08 (« Comptes
+            # attendus : 0 » a blanc, 354 en reel). `D-01` fait du rapport a
+            # blanc « la derniere occasion de dire non » : il doit montrer le
+            # catalogue que le REEL produirait, pas un sous-ensemble.
+            #
+            # L'identifiant est local et ne quitte jamais le processus — a blanc,
+            # aucune ecriture ne part.
+            rapport.souscriptibles.append(
+                ProduitSouscriptible(
+                    uuid4(),
+                    nom,
+                    type_produit,
+                    str(payload.get("category") or "").upper(),
+                )
+            )
             return
 
         # Journal d'intention : `POST /products` cree Product ET Policy. Sans
@@ -252,7 +285,12 @@ class ExecuteurCatalogue:
 
         rapport.crees.append(nom)
         rapport.souscriptibles.append(
-            ProduitSouscriptible(UUID(str(identifiant)), nom, type_produit)
+            ProduitSouscriptible(
+                UUID(str(identifiant)),
+                nom,
+                type_produit,
+                str(payload.get("category") or "").upper(),
+            )
         )
 
     async def _retrouver_preexistant(self, nom: str, rapport: RapportCatalogue) -> None:
@@ -275,7 +313,12 @@ class ExecuteurCatalogue:
         if identifiant:
             rapport.reutilises.append(nom)
             rapport.souscriptibles.append(
-                ProduitSouscriptible(UUID(str(identifiant)), nom, ProductType.COLLECT)
+                ProduitSouscriptible(
+                    UUID(str(identifiant)),
+                    nom,
+                    ProductType.COLLECT,
+                    str(existant.get("category") or "").upper(),
+                )
             )
 
     # ------------------------------------------------------------------
