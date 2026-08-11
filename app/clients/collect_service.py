@@ -22,6 +22,17 @@ Les autres disciplines portees ici :
   D-COL-4   Ne JAMAIS s'attendre a voir le compte CHECKING bouger lors d'une
             collecte. Epargne et compte courant sont deux flux distincts —
             collect-service gere l'epargne, account-service les paiements.
+
+            **OU VA L'ARGENT, formule positivement** (mesure du 11/08, preuve
+            avant/apres sur notre propre mutation) : il credite **UNIQUEMENT le
+            compte `CLASSIC` du Depositaire** — l'institution partenaire. Jamais
+            le compte du client.
+
+            Dire ou l'argent NE VA PAS ne suffit pas : pour verifier qu'une
+            collecte a reellement abouti (`CR-12`), il faut relire le `CLASSIC`
+            du Depositaire. La forme de la transaction est un `DEPOSIT` ou
+            **`src_account == dest_account`** : le compte du Depositaire
+            s'auto-credite.
   D-COL-10  Respecter `amount_min` de la Policy. Le message de plafond est
             trompeur (`FRA-198`), on se fie a la Policy, jamais au message.
   D-COL-11  Ne JAMAIS simuler de cloture : elle est bloquee (`FRA-196`) et
@@ -29,12 +40,39 @@ Les autres disciplines portees ici :
   D-COL-12  `collect_quantity` obligatoire pour un produit PRODUCT (`FRA-197`).
   D-COL-13  Ne PAS simuler de collectes PRODUCT tant que `FRA-197` n'est pas
             corrige — le garde-fou est dans `valider_collecte()`.
-  D-COL-14  L'atomicite du Retrait est confirmee FIABLE (preuve par le grand
-            livre : 2 legs, meme montant, SUCCESS les deux). C'est l'un des
-            rares comportements sur lesquels on peut s'appuyer.
+  D-COL-14  ⚠️ **DECLASSEE LE 11/08.** Cette discipline affirmait que
+            l'atomicite du Retrait etait « confirmee FIABLE » et « l'un des
+            rares comportements sur lesquels on peut s'appuyer ».
+
+            **Aucune mesure de retrait n'existe dans nos documents
+            empiriques** — verifie le 11/08. Le grand livre invoque est
+            probablement la transaction du 31/07 que nous avons convenu de
+            mettre de cote.
+
+            Ce que le contrat garantit, et rien de plus : `WithdrawalSchema`
+            exige `amount` + `collect_id`.
+
+            Le simuler au Sprint 5 sans le mesurer d'abord ferait echouer
+            `CR-12` — « solde = initial + decaissements - remboursements » —
+            sans qu'on sache pourquoi. **Une certitude emprunte est plus
+            dangereuse qu'une inconnue declaree.**
   D-COL-16  Les Produits doivent etre corrects AVANT toute Collecte : le Product
             embarque dans une Collecte est une **copie figee**, jamais
             resynchronisee. Une correction ulterieure ne se repercute pas.
+QUI A LE DROIT DE COLLECTER — ET NOUS N'EN FAISONS PAS PARTIE
+-------------------------------------------------------------
+La matrice RBAC du Document Fonctionnel est nette : **`COMPANY` et `CUSTOMER`**
+collectent. **Jamais `ROOT`, jamais `STAFF`.** Le Staff **confirme** un depot au
+Dashboard apres remise du cash physique ; il ne l'initie pas.
+
+Or le Loader ecrit **exclusivement en ROOT** (`D-DEP-7`, `FRA-205`). Chaque
+collecte que nous simulerons sera donc **hors matrice**, exactement comme nos
+ecritures sur depositary-service.
+
+**Ce n'est pas un contournement, c'est un ecart ASSUME et DECLARE.** `EF-77`
+nous impose de simuler l'epargne des 2 000 clients ; aucun autre jeton ne nous
+est disponible. L'ecart doit figurer dans le rapport de run, jamais etre tu —
+sinon nous affirmerions une conformite RBAC que nous n'avons pas.
 """
 
 from __future__ import annotations

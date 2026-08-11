@@ -131,6 +131,16 @@ moins.
 
 | # | Discipline | Le fait mesuré |
 |---|---|---|
+> ⚠️ **Statut de certitude — relevé le 11/08.** Les `D-COL-*` viennent de la
+> page Anatomy collect-service. **Toutes n'ont pas la même force.** `D-COL-9`
+> (écriture fantôme) est adossée à une mutation constatée ; `D-COL-14` (atomicité
+> du retrait) ne l'est à **rien que nous ayons mesuré**. Confondre les deux, c'est
+> s'appuyer sur du vide en croyant marcher sur du solide.
+>
+> **Le retrait n'a jamais été testé par nous.** Le simuler au Sprint 5 sans le
+> mesurer d'abord ferait échouer `CR-12` — « solde = initial + décaissements −
+> remboursements » — sans qu'on sache pourquoi.
+
 | `D-COL-1` | Souscription Dépositaire ↔ Produit **avant** toute collecte | — |
 | `D-COL-2` | Ouverture : `client_id` + `product_id` + `depositary_id` **ensemble** | les trois références partent en même temps |
 | `D-COL-3` | Contribution suivante : `collect_id` + `amount` **seuls** | — |
@@ -140,7 +150,7 @@ moins.
 | `D-COL-11` | **Ne jamais simuler de clôture** | bloquée (`FRA-196`), aucun bouton côté UI — **aucune méthode n'existe dans le client** |
 | `D-COL-12` | `collect_quantity` obligatoire pour un produit PRODUCT | `FRA-197` |
 | `D-COL-13` | **Ne pas simuler de collectes PRODUCT** tant que `FRA-197` n'est pas corrigé | garde-fou dans `valider_collecte()` |
-| `D-COL-14` | L'atomicité du **Retrait est fiable** — prouvée | 2 legs, même montant, `SUCCESS` les deux, vérifié au grand livre. **L'un des rares comportements solides** |
+| `D-COL-14` ⚠️ | L'atomicité du Retrait serait fiable — **JAMAIS RE-VÉRIFIÉE PAR NOUS** | vient de la page Anatomy collect-service. **Aucune mesure de retrait n'existe dans nos documents empiriques** (vérifié le 11/08). Le grand livre invoqué est probablement la transaction du **31/07 mise de côté**. `WithdrawalSchema` exige `amount` + `collect_id` — c'est tout ce que le contrat garantit |
 | `D-COL-16` | Les Produits doivent être **corrects avant** toute Collecte | le Product embarqué dans une Collecte est une **copie figée**, jamais resynchronisée |
 
 > **`D-COL-16` est celle qui coûterait le plus cher.** Un produit corrigé après
@@ -166,7 +176,7 @@ moins.
 | `D-DEP-5` | `id_expire_on` toujours renseigné | `FRA-200` |
 | `D-DEP-6` | **Ne jamais présumer** la cohérence de devise Company ↔ Dépositaire | `currency` accepte n'importe quelle chaîne (`FRA-201`) |
 | `D-DEP-7` | Token ROOT en écriture | `FRA-205` |
-| `D-DEP-8` | Désactiver un Dépositaire **n'arrête ni les collectes ni les retraits** | `FRA-203`/`204` |
+| `D-DEP-8` | Désactiver un Dépositaire **n'arrête ni les collectes ni les retraits** | `FRA-203`/`204` — et c'est **logiquement inévitable** : créer une souscription EXIGE un Dépositaire actif (`400` sinon), donc « inactif avec souscription » ne peut être atteint que par actif → souscrit → désactivé. Il n'existe aucun autre chemin. **Ce n'est pas une observation, c'est une déduction** |
 | `D-DEP-9` 🔸 | Un Dépositaire ne souscrit **qu'à** des produits `COLLECT` | le serveur accepte un LENDING (`FRA-223`) |
 
 ---
