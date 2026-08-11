@@ -123,12 +123,6 @@ et branchés à rien.
 | `P-03` | **Float de l'agent.** Invariant « montant retiré ≤ float disponible » | *Lexique* : l'agent tient une provision qui diminue au retrait, augmente au dépôt. Sans lui, la simulation montrerait des agents décaissant un argent qu'ils n'ont jamais eu | **S5** |
 | `P-04` | **Rapport de recette `CR-01` → `CR-12`.** Étendre le verdict de run | Le verdict `ENF-01` (budget 30 min) est branché depuis le 11/08 — c'est la première brique. Le module `RECETTE` est `NON_LIVRE` | **S6** |
 
-Et un usage du Loader que personne n'avait prévu : `RC-10` note que *« les
-credentials STAFF/COMPANY/CUSTOMER/GUEST n'ont pas été livrés par l'équipe
-Dev »*. **Le RBAC n'a donc jamais été vérifié pour un profil non-ROOT depuis
-mai.** Nos 60 à 100 staff seraient les premiers utilisateurs non-ROOT réellement
-peuplés — le Loader devient l'instrument qui peut clore `INV-RBAC-01`.
-
 ---
 
 ## 4. Les sprints
