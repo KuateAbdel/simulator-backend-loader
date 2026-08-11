@@ -43,13 +43,30 @@ from app.core.invariants import (
     valider_coherence_ville_pays,
 )
 
-#: Formes juridiques reellement observees chez Faker (24 tirages, 08/08).
-#: On les reutilise telles quelles — c'est de la matiere reelle.
+#: Formes juridiques reellement observees chez Faker, et leur frequence.
+#:
+#: CORRECTION DU 11/08 — cette table portait `Etablissement`, que Faker ne
+#: produit PAS, et il lui MANQUAIT `Entreprise Individuelle` : **la forme la plus
+#: frequente, 24 % selon l'Annexe B du CDC**. Nous avions donc invente une forme
+#: et perdu la principale.
+#:
+#: Recampagne du 11/08, 18 tirages sur CM/CI/BF, 6 seeds par pays :
+#:   Entreprise Individuelle 5 · SARL 4 · SAS 3 · SA 3 · Fondation 3
+#: `Association` n'est pas ressortie sur cet echantillon — le CDC la donne a 7 %,
+#: la plus rare des six. Elle est conservee.
+#:
+#: Distribution du CDC (Annexe B, mesure Faker du 17/07) :
+#:   Entreprise Individuelle 24 % · SA 21 % · SARL 19 % · SAS 16 %
+#:   Fondation 13 % · Association 7 %
+#:
+#: C'est de la matiere REELLE, rejouee telle quelle. Ce que nous ne reprenons
+#: pas, c'est la RAISON SOCIALE — « Test Business CM 748 » (mesure du 11/08,
+#: inchangee depuis le 08/08) ne passe pas devant un bailleur (`A-03`).
 FORMES_JURIDIQUES: Final[tuple[str, ...]] = (
+    "Entreprise Individuelle",
     "SA",
     "SARL",
     "SAS",
-    "Etablissement",
     "Fondation",
     "Association",
 )
