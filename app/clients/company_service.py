@@ -11,8 +11,14 @@ Disciplines portees ici, toutes issues de mesures ou de la page Service Anatomy 
       decouvre pas un doublon en HTTP 400, on l'evite.
   D6  `GET /companies/{company_name}` est du CODE MORT — la route est interceptee
       par `{company_id}` (`ANO-CPY-ROUTE-01`). Elle n'est pas exposee ici.
-  D10 `self_sharing` n'est pas documente au contrat et porte des valeurs
-      incoherentes (0 vs null) — ignore.
+  D10 `self_sharing` est ignore — mais pas pour la raison qu'on croyait. Il est
+      absent de l'OpenAPI, PAS de la documentation : le document technique le
+      definit (II.3.3.1) comme « le taux de sharing qui revient a la compagnie,
+      uniquement destine a la compagnie MERE, le haut de la pyramide ». Nous
+      n'avons pas de pyramide mere/filiale — `D-05` a tranche que Branche et
+      Agence restent logiques — donc ce taux n'a aucun objet chez nous. Ses
+      valeurs incoherentes en base (0 vs null) confirment qu'il n'est pas
+      exploite cote serveur non plus.
   D-CMP-2  `owner` declenche une VRAIE cascade vers identity-service.
       `admin_email` n'en declenche AUCUNE : l'Admin User se cree explicitement,
       via `user_service.creer_utilisateur_applicatif()`.

@@ -102,8 +102,8 @@ UC15 --> FAKER : consomme (comportement)
 UC16 --> FAKER : consomme (comportement)
 UC17 --> FAKER : consomme (re-scoring)
 
-UC05 --> SVC : injecte (config-service)
-UC06 --> SVC : injecte (config-service)
+UC05 --> SVC : LIT (config-service)
+UC06 --> SVC : LIT (config-service)
 UC07 --> SVC : injecte (company-service)
 UC08 --> SVC : injecte (company-service)
 UC09 --> SVC : injecte (company-service + user-service)
@@ -138,6 +138,16 @@ note bottom of UC08
   Porté par une Company (via lenders_registry,
   propriété du Loader — company-service ne
   connaît PAS ce concept nativement).
+end note
+
+note bottom of UC05
+  **CORRECTIF 11/08.** Ces deux cas disaient « injecte
+  (config-service) ». C'est FAUX et c'etait dangereux :
+  UC-05 et UC-06 sont en **LECTURE SEULE**. Le Loader
+  CHARGE le referentiel geographique, les devises et les
+  operateurs ; il n'ecrit rien dans config-service, qui
+  est PARTAGE par toute l'equipe. Toute ecriture y est
+  l'arbitrage ouvert `A-08`, jamais un acquis.
 end note
 
 @enduml

@@ -223,7 +223,7 @@ package "Domaine Loader <<propriétaire — MongoDB via motor>>" {
   class LenderRegistryEntry <<Loader MongoDB>> {
     +company_id: UUID {réf. Company}
     +lender_type: LenderType
-    +country_code: string
+    +country_code: string {0..1}
     +capital_account_id: UUID
     +interest_account_id: UUID
     +penalty_account_id: UUID
@@ -231,6 +231,15 @@ package "Domaine Loader <<propriétaire — MongoDB via motor>>" {
     ..
     ⚠ Lender = RÔLE porté par Company.\ncompany-service NE connaît PAS ce concept\nnativement (0 occurrence "lender").
     Le Loader porte cette logique lui-même.
+    ..
+    ⚠ CORRECTIF 11/08 (EF-12) : country_code devient
+    OPTIONNEL. EF-12 qualifie les 4 Lenders
+    institutionnels de GLOBAUX — ils n'ont aucun pays
+    d'intervention. Les 12 locaux le portent toujours.
+    Inventer un code fictif aurait contredit EF-05,
+    qui borne le perimetre aux 4 pays cibles.
+    La Company du bailleur, elle, garde une adresse
+    reelle : c'est son bureau regional, pas son siege.
   }
 
   class FakerConsumptionLedger <<Loader MongoDB>> {

@@ -15,7 +15,19 @@ activate LDR
 
 LDR -> FAKER : GET /client/business?country_code=CM&seed=<X>
 activate FAKER
-FAKER --> LDR : payload client Business\n(company.company_name, company.company_type)
+FAKER --> LDR : payload client Business\n(patronymes, formes juridiques, secteurs)
+
+note right of LDR
+  **CORRECTIF 11/08 (A-03)** : le nom de la Company
+  ne vient PAS de `company.company_name`. Faker rend
+  « Test Business CM 748 » (mesure 08/08, 15 tirages),
+  et UC-08 exige « un nom metier credible ». Le Loader
+  COMPOSE la raison sociale a partir de la matiere
+  reelle de Faker — patronyme, forme juridique,
+  secteur. Il assemble, il n'invente pas.
+  Le groupe de l'Admin est notre role **Admin** (D-09),
+  jamais le groupe technique COMPANY.
+end note
 deactivate FAKER
 
 LDR -> DB : find_one(faker_consumption_ledger, client_id)
@@ -28,7 +40,7 @@ note right of LDR
   Si trouvé → re-tirer avec seed différent.
 end note
 
-LDR -> CMP : POST /companies/\n{name: company_name Faker, type: BANK,\nowner (Identity), admin_email, currency: XAF}
+LDR -> CMP : POST /companies/\n{name: raison sociale COMPOSEE, type: IMF|BANK,\nowner (Identity), admin_email, currency: XAF}
 activate CMP
 CMP -> CMP : créer Identity (owner)\nen cascade INTERNE
 note right : **D-CMP-2, CONFIRMÉ empiriquement**\n(compteur identity-service 10→11,\nHTTP 200 sur l'Identity exacte)
@@ -44,7 +56,7 @@ note right of LDR
   lui-même, explicitement.
 end note
 
-LDR -> USR : POST /auth/register\n(email=admin_email, company_id, groupes=[COMPANY])
+LDR -> USR : POST /auth/register\n(email=admin_email, company_id, groupes=[Admin])
 activate USR
 USR --> LDR : HTTP 201 — auth_token (10min)
 LDR -> USR : PUT /auth/password/f/change

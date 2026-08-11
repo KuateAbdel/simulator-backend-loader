@@ -70,6 +70,28 @@ from app.services.organisation import CompanyPorteuse, PlanOrganisation
 
 logger = logging.getLogger(__name__)
 
+#: LE ROLE de l'Admin d'une Company — `D-09`, et non le groupe generique.
+#:
+#: LE DEFAUT, TROUVE LE 11/08 EN LISANT LE DOCUMENT TECHNIQUE
+#: ----------------------------------------------------------
+#: Le code passait `groupes=["COMPANY"]` : le groupe TECHNIQUE de la plateforme,
+#: 13 permissions, seme par le serveur le 31/07. Or nous avons cree 11 roles
+#: metier (`D-09`), dont **`Admin`** — « Administration d'une institution :
+#: utilisateurs, roles, parametrage », 38 permissions, tag COMPANY.
+#:
+#: Consequence mesuree le 11/08 sur les 55 users de l'environnement : **AUCUN
+#: utilisateur ne portait l'un de nos 11 roles.** Nous fabriquions des roles
+#: riches et nous assignions le pauvre.
+#:
+#: C'est aussi la raison d'etre de l'ordre topologique de l'orchestrateur —
+#: « un Admin User exige un `group_id` (module 1) ». L'ordre existait POUR ca,
+#: et le module 2 codait une constante en dur.
+#:
+#: `II.3.2.3` du document technique (UC0021) exige que « l'utilisateur ADMIN de
+#: la compagnie soit cree » ; il ne prescrit aucun groupe. Le TYPE reste
+#: `COMPANY` (`TYPE_ADMIN`), comme la regle de gestion `II.3.1` le demande.
+ROLE_ADMIN_COMPANY: str = "Admin"
+
 # SOURCE UNIQUE DES PATRONYMES — `app/services/generateur.py`.
 #
 # Cette table vivait ici en double de celle de l'executeur Staff. Deux tables
@@ -390,7 +412,7 @@ class ExecuteurOrganisation:
                 nouveau_mot_de_passe=durable,
                 identity_id=identity_id,
                 type_user=self.TYPE_ADMIN,
-                groupes=["COMPANY"],
+                groupes=[ROLE_ADMIN_COMPANY],
                 company_id=company_id,
             )
         except ErreurService as exc:

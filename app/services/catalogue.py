@@ -8,8 +8,17 @@ Deux catalogues, deux logiques distinctes :
 **LENDING** — source `loan_json.json` (Annexe E du CDC). 4 produits au fichier,
 **6 creations reelles** : `BNPL` et `ReadyToGo` portent `Category: Any`, valeur
 que l'enum serveur refuse (`INV-PRD-04`, HTTP 422). Chacun est donc dedouble en
-INDIVIDUAL + CORPORATE (`D-PRD-4`). Rendu possible sans conflit puisque le
-serveur n'impose aucune unicite de `name`.
+INDIVIDUAL + CORPORATE (`D-PRD-4`).
+
+Les deux copies portent des noms DISTINCTS — `DEMO_BNPL Individual` et
+`DEMO_BNPL Corporate`. Elles portaient le meme jusqu'au 11/08, au motif que « le
+serveur n'impose aucune unicite de `name` » : c'etait confondre le permis et le
+juste. `D-12` l'interdit, et la mesure du 11/08 montre pourquoi — deux
+« Cotisation 20000/mois » coexistent en base avec des abonnes sur chacune.
+
+Les noms officiels de l'Annexe E — **Nano, Macro, BNPL, ReadyToGo** — sont
+respectes a la lettre : `CO-02` a ete tranche par le CDC v1.2, et « Macro » n'est
+pas « Micro ». Nano et Macro n'etant pas dedoubles, ils gardent leur nom nu.
 
 **COLLECT** — 6 produits croisant `PolicyType` x `Category`, **dont 2 deja
 presents en base** : « Cotisation 20000/mois » et « plastique ». Ils sont
@@ -296,6 +305,37 @@ def policy_collect(produit: ProduitCollecte) -> dict[str, Any]:
     }
 
 
+def nom_lending(produit: ProduitCredit, categorie: ProductCategory) -> str:
+    """Le nom emis pour un produit de credit — `D-PRD-4` croise `D-12`.
+
+    LE DEFAUT, TROUVE LE 11/08
+    --------------------------
+    Le split `D-PRD-4` dedouble `BNPL` et `ReadyToGo` (`Category: Any` refuse par
+    l'enum serveur). Les deux creations portaient **le meme nom** : deux
+    `DEMO_BNPL` en base, ne differant que par un `category` INVISIBLE dans une
+    interface. Le docstring du module s'en justifiait ainsi : « rendu possible
+    sans conflit puisque le serveur n'impose aucune unicite de `name` ».
+
+    **Possible n'est pas juste.** `D-12` dit l'inverse, et pour la raison exacte
+    que nous avons mesuree le 11/08 : « Cotisation 20000/mois » existe deux fois
+    en base, avec des abonnes SUR LES DEUX COPIES (3 et 2 clients). Deux produits
+    homonymes sont strictement indiscernables a l'ecran — le defaut meme que nous
+    reprochons a config-service.
+
+    La Policy, elle, etait DEJA desambiguisee (`policy_lending` suffixe la
+    categorie). Le Produit ne l'etait pas : c'est cette asymetrie qui trahissait
+    l'oubli.
+
+    La strategie de levee est celle de `D-12` : le nom tel quel quand il est
+    libre — Nano et Macro ne sont pas dedoubles, ils gardent leur nom officiel
+    de l'Annexe E — et un discriminant PORTEUR DE SENS la ou l'ambiguite existe.
+    """
+    base = f"{PREFIXE_DONNEES}{produit.nom}"
+    if len(produit.categories_cibles) == 1:
+        return base
+    return f"{base} {categorie.value.capitalize()}"
+
+
 def payloads_lending(produits: list[ProduitCredit]) -> list[dict[str, Any]]:
     """Applique le split D-PRD-4 : 4 produits sources -> 6 creations."""
     payloads: list[dict[str, Any]] = []
@@ -304,7 +344,7 @@ def payloads_lending(produits: list[ProduitCredit]) -> list[dict[str, Any]]:
             payloads.append(
                 {
                     "type": ProductType.LENDING.value,
-                    "name": f"{PREFIXE_DONNEES}{produit.nom}",
+                    "name": nom_lending(produit, categorie),
                     "category": categorie.value,
                     "segment": "ANY",
                     "description": (
