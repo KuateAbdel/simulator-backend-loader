@@ -38,7 +38,10 @@ from typing import Final
 from uuid import UUID, uuid4
 
 from app.core.cdc import AGE_SEUIL_JEUNE, PREFIXE_DONNEES
-from app.core.invariants import valider_coherence_territoriale
+from app.core.invariants import (
+    valider_coherence_territoriale,
+    valider_coherence_ville_pays,
+)
 
 #: Formes juridiques reellement observees chez Faker (24 tirages, 08/08).
 #: On les reutilise telles quelles — c'est de la matiere reelle.
@@ -374,7 +377,10 @@ class Generateur:
         country_code: str,
         ville: str,
         region: str,
-        quartier: str,
+        #: `None` quand la ville ne porte aucun quartier au referentiel. L'adresse
+        #: s'ancre alors sur la ville — `EF-11` n'en demande pas plus pour une
+        #: Company, et le contrat `Address` ne porte aucun champ quartier.
+        quartier: str | None,
         telephone: str,
         *,
         jeune: bool,
@@ -439,7 +445,7 @@ class Generateur:
 
     def adresse(
         self,
-        quartier: str,
+        quartier: str | None,
         ville: str,
         region: str,
         country_code: str,
@@ -447,24 +453,42 @@ class Generateur:
         longitude: float | None = None,
         referentiel: object | None = None,
     ) -> Adresse:
-        """L'adresse est ancree sur un quartier REEL du referentiel.
+        """L'adresse est ancree sur du reel — a la granularite de l'entite.
 
-        **Et sur un quartier DU PAYS** — controle ajoute le 10/08 (`D-13`).
-        Sans lui, une Senegalaise domiciliee a Douala franchissait tous les
-        invariants : chaque champ etait correct, leur combinaison n'avait aucun
-        sens. `referentiel` reste optionnel pour ne pas casser les appelants qui
-        composent une adresse hors contexte geographique, mais tout chemin de
-        generation reelle doit le fournir.
+        **Quartier fourni** : chaine complete `quartier -> ville -> region ->
+        pays` (`D-13`, controle du 10/08). Sans lui, une Senegalaise domiciliee a
+        Douala franchissait tous les invariants : chaque champ correct, la
+        combinaison absurde. C'est le cas du Kiosque, que `EF-16` ancre sur un
+        District.
+
+        **Quartier `None`** : chaine `ville -> region -> pays`. C'est le cas de la
+        **Company**, que `EF-11` ancre sur une **Region** — et le contrat
+        `Address` ne porte aucun champ quartier de toute facon. Exiger un quartier
+        a cet etage confinait les Companies aux 12 villes qui en portent, sur les
+        50 du referentiel : 2 regions sur 13 au Burkina (mesure du 11/08).
+
+        `referentiel` reste optionnel pour les appelants qui composent une adresse
+        hors contexte, mais tout chemin de generation reelle le fournit.
         """
         if referentiel is not None:
-            valider_coherence_territoriale(
-                pays=country_code,
-                region=region,
-                ville=ville,
-                quartier=quartier,
-                referentiel=referentiel,
-            )
-        voie = f"{self._alea.choice(TYPES_DE_VOIE)} {_sans_accents(quartier).title()}"
+            if quartier:
+                valider_coherence_territoriale(
+                    pays=country_code,
+                    region=region,
+                    ville=ville,
+                    quartier=quartier,
+                    referentiel=referentiel,
+                )
+            else:
+                valider_coherence_ville_pays(
+                    pays=country_code,
+                    region=region,
+                    ville=ville,
+                    referentiel=referentiel,
+                )
+        # Le nom de voie s'appuie sur l'ancrage le plus fin disponible.
+        ancrage = quartier or ville
+        voie = f"{self._alea.choice(TYPES_DE_VOIE)} {_sans_accents(ancrage).title()}"
         return Adresse(
             address_line_1=f"{self._alea.randrange(1, 300)} {voie}",
             street_name=voie,

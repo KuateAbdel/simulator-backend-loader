@@ -424,6 +424,87 @@ def valider_coherence_territoriale(
     )
 
 
+def valider_coherence_ville_pays(
+    *,
+    pays: str,
+    region: str,
+    ville: str,
+    referentiel: object,
+) -> None:
+    """La meme exigence de coherence, mais **au niveau de la VILLE**.
+
+    POURQUOI DEUX GRANULARITES, ET NON UNE
+    --------------------------------------
+    `valider_coherence_territoriale` exige la chaine complete
+    `quartier -> ville -> region -> pays`. C'est juste pour un **Kiosque** :
+    `EF-16` l'ancre sur *« un District de la Ville »*.
+
+    Ce n'est pas juste pour une **Company**. `EF-11` dit *« rattacher chaque
+    Company a une **Region** existante de son pays »* — pas a un quartier. Et le
+    contrat `Address` ne porte AUCUN champ quartier : `city`, `region`, `country`,
+    et les coordonnees. Le quartier ne servait qu'a composer le nom de voie.
+
+    LE DEFAUT QUE CETTE DISTINCTION REPARE — mesure du 11/08
+    --------------------------------------------------------
+    Faute de cette fonction, les Companies etaient placees sur les seules villes
+    **porteuses de quartiers** — 3 au Cameroun, 3 en Cote d'Ivoire, **2 au
+    Burkina**, 4 au Senegal. Resultat mesure :
+
+        BF : 5 Companies -> 2 regions sur 13
+        CM : 5 Companies -> 3 regions sur 10
+        CI : 5 Companies -> 3 regions sur 14
+        SN : 5 Companies -> 3 regions sur 14
+
+    « Cinq Companies au Burkina » ne veut rien dire si trois sont a Ouagadougou
+    et deux a Bobo. Devant un bailleur, une couverture nationale annoncee et
+    concentree sur deux villes se voit au premier graphique.
+
+    La contrainte des quartiers appartient au niveau Kiosque. L'appliquer a la
+    Company etait une contrainte au mauvais etage.
+    """
+    attendu = pays.strip().upper()
+    trouver_r = getattr(referentiel, "region", None)
+    villes_index = getattr(referentiel, "villes", None)
+    if trouver_r is None or villes_index is None:
+        raise InvariantViole("referentiel incomplet — coherence ville/pays inverifiable")
+
+    cible_v = _sans_accents_min(ville)
+    cible_r = _sans_accents_min(region)
+
+    # Meme raisonnement que pour le quartier : on ne resout pas par nom, on
+    # verifie qu'une chaine COHERENTE existe. Deux villes homonymes dans deux
+    # pays ne prouvent rien l'une contre l'autre.
+    candidates = [v for v in villes_index.values() if _sans_accents_min(v.name) == cible_v]
+    if not candidates:
+        raise InvariantViole(
+            f"ville '{ville}' absente du referentiel — `EF-02`. Le Loader n'invente "
+            "aucune geographie."
+        )
+
+    regions_vues: list[str] = []
+    pays_vus: list[str] = []
+    for v in candidates:
+        rg = trouver_r(v.region_id)
+        if rg is None:
+            continue
+        regions_vues.append(rg.name)
+        if _sans_accents_min(rg.name) != cible_r:
+            continue
+        pays_vus.append(rg.country_iso2)
+        if rg.country_iso2.strip().upper() == attendu:
+            return
+
+    if pays_vus:
+        raise InvariantViole(
+            f"adresse incoherente : '{ville}, {region}' est en "
+            f"{', '.join(sorted(set(pays_vus)))}, l'entite est declaree {attendu}."
+        )
+    raise InvariantViole(
+        f"la ville '{ville}' n'est pas dans la region '{region}' mais dans "
+        f"'{', '.join(sorted(set(regions_vues))) or '?'}' — adresse incoherente."
+    )
+
+
 def _sans_accents_min(texte: str) -> str:
     """Comparaison tolerante aux accents et a la casse — « Yaounde » = « Yaoundé »."""
     normalise = unicodedata.normalize("NFKD", texte or "")

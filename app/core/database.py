@@ -164,23 +164,34 @@ async def ensure_indexes() -> None:
     # LES DEUX NIVEAUX LOGIQUES MERITENT LA MEME GARANTIE — 11/08.
     #
     # Seul le KIOSQUE etait protege structurellement. Or le modele est aussi
-    # strict au-dessus : **une Branche par Region distincte, une Agence par
-    # Ville**. C'etait garanti par la seule construction du plan — donc par
-    # convention, pas par le moteur. Une reprise, un rejeu partiel ou un futur
-    # executeur concurrent auraient pu produire deux Branches sur la meme Region
-    # sans que rien ne s'y oppose.
+    # strict au-dessus. Mais la PORTEE de cette unicite n'est pas celle qu'on
+    # croit, et c'est le reel qui la dicte :
     #
-    # Un DBA ne laisse pas un invariant de modele reposer sur la discipline de
-    # l'appelant quand un index peut le rendre infranchissable.
+    #   une IMF n'a pas DEUX directions regionales dans la meme Region
+    #   une IMF n'a pas DEUX agences dans la meme Ville
+    #   ... mais DEUX IMF CONCURRENTES ont chacune la leur a Douala.
+    #
+    # La concurrence existe. Baobab et SoliMFI ont toutes deux une agence a
+    # Douala, et c'est normal. La cle porte donc `company_id` : **le proprietaire
+    # de la contrainte est l'institution, pas l'execution.**
+    #
+    # `run_id` reste dans la cle parce qu'il PARTITIONNE : chaque execution a son
+    # arbre (`EF-64`), et un rejeu ne doit pas etre BLOQUE par l'arbre du run
+    # precedent — il doit produire le sien.
+    #
+    # Premiere version de ces index, posee une heure plus tot : `(run_id,
+    # region_id)`. Elle interdisait a la deuxieme IMF d'un pays d'avoir une
+    # branche dans une region deja servie — une regle qui n'existe nulle part
+    # dans la vraie vie.
     await db[COLLECTION_ORG_HIERARCHY].create_index(
-        [("run_id", 1), ("region_id", 1)],
-        name="uniq_branche_par_region_et_run",
+        [("run_id", 1), ("company_id", 1), ("region_id", 1)],
+        name="uniq_branche_par_company_region_run",
         unique=True,
         partialFilterExpression={"niveau": NiveauOrganisation.BRANCHE.value},
     )
     await db[COLLECTION_ORG_HIERARCHY].create_index(
-        [("run_id", 1), ("city_id", 1)],
-        name="uniq_agence_par_ville_et_run",
+        [("run_id", 1), ("company_id", 1), ("city_id", 1)],
+        name="uniq_agence_par_company_ville_run",
         unique=True,
         partialFilterExpression={"niveau": NiveauOrganisation.AGENCE.value},
     )

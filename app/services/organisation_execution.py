@@ -248,7 +248,10 @@ class ExecuteurOrganisation:
         type_company: CompanyType,
         region: str,
         ville: str,
-        quartier: str,
+        #: `None` quand la ville ne porte aucun quartier au referentiel. `EF-11`
+        #: ancre la Company sur une REGION, pas sur un District — exiger un
+        #: quartier ici confinait les Companies aux 12 villes qui en portent.
+        quartier: str | None,
         telephone: str,
         rapport: RapportOrganisation,
         est_imf: bool = False,
@@ -561,19 +564,58 @@ class ExecuteurOrganisation:
                 # reel de regions du pays.
                 #
                 # La ville commande desormais sa region, comme dans la realite.
-                villes = self._referentiel.villes_porteuses_de_quartiers(pays)
-                ville = villes[index % len(villes)]
-                region = self._referentiel.region(ville.region_id)
-                if region is None:
+                # DISPERSION — DEFAUT D'ARCHITECTURE TROUVE LE 11/08
+                # ---------------------------------------------------
+                # Le placement se faisait sur `villes_porteuses_de_quartiers()` :
+                # 3 villes au Cameroun, 3 en Cote d'Ivoire, **2 au Burkina**,
+                # 4 au Senegal. Mesure :
+                #
+                #     BF : 5 Companies -> 2 regions sur 13
+                #     CM : 5 Companies -> 3 regions sur 10
+                #
+                # « Cinq Companies au Burkina » ne veut rien dire si trois sont a
+                # Ouagadougou et deux a Bobo. Une couverture nationale annoncee
+                # et concentree sur deux villes se voit au premier graphique.
+                #
+                # La contrainte etait au MAUVAIS ETAGE. `EF-11` ancre la Company
+                # sur une **Region** ; le quartier est l'affaire du Kiosque
+                # (`EF-16`). Une Company par region DISTINCTE, dans l'ordre du
+                # referentiel — donc reproductible (`ENF-15`) — et on ne revient
+                # sur une region deja servie que s'il y a plus de Companies que
+                # de regions, ce que le CDC ne produit jamais (3-5 contre 10-14).
+                # On ne tire QUE parmi les regions qui portent au moins une ville.
+                # Une Company a besoin d'une ville pour son adresse ; une region
+                # vide au referentiel ne peut pas l'accueillir.
+                #
+                # Cinq regions senegalaises, deux ivoiriennes et une burkinabe
+                # n'ont aucune ville au classeur (mesure du 11/08). Les inclure
+                # dans la rotation faisait echouer des Companies sur un trou de
+                # DONNEES, pas sur une regle metier — `EF-04` prevoit d'enrichir
+                # le referentiel, c'est la seule vraie reponse.
+                #
+                # Potentiel de dispersion apres filtrage : CM 10 · CI 12 · BF 12
+                # · SN 9 regions, contre 3 · 3 · 2 · 4 avant la correction.
+                regions_pays = [
+                    r
+                    for r in self._referentiel.regions_du_pays(pays)
+                    if self._referentiel.villes_de_region(r.region_id)
+                ]
+                if not regions_pays:
                     rapport.companies_echouees.append(
                         (
                             f"{pays}-{index}",
-                            f"ville {ville.name} sans region — referentiel incoherent",
+                            f"{pays} : aucune region portant une ville — EF-11 inapplicable",
                         )
                     )
                     continue
+                region = regions_pays[index % len(regions_pays)]
+                villes_region = self._referentiel.villes_de_region(region.region_id)
+                ville = villes_region[index % len(villes_region)]
+                # Le quartier n'est renseigne que s'il existe reellement. Sinon
+                # l'adresse s'ancre sur la ville — `EF-11` n'en demande pas plus,
+                # et le contrat `Address` ne porte aucun champ quartier.
                 quartiers = self._referentiel.quartiers_de_ville(ville.city_id)
-                quartier = quartiers[index % len(quartiers)].name
+                quartier = quartiers[index % len(quartiers)].name if quartiers else None
 
                 est_imf = index < plan_pays.nb_imf
                 patronyme = (
