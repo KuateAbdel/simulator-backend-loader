@@ -244,12 +244,40 @@ package "Domaine Loader <<propriétaire — MongoDB via motor>>" {
 
   class FakerConsumptionLedger <<Loader MongoDB>> {
     +client_id: string {clé, = client_id Faker}
-    +consumed_at: timestamp
     +consumed_for: FakerConsumptionType
-    +resulting_entity_id: UUID
     +country_code: string
+    +run_id: UUID
+    +state: EtatConsommationFaker
+    +reserved_at: timestamp
+    +seed: int {0..1}
+    +resulting_entity_id: UUID {0..1}
+    +consumed_at: timestamp {0..1}
     ..
-    D-FAKER-1 : vérifié AVANT chaque\ntirage Faker, jamais réutilisé
+    **CORRECTIF 11/08 — DEUX TEMPS.**
+    La v1 n'écrivait l'entrée qu'APRÈS la création
+    de l'entité, `resulting_entity_id` étant requis.
+    La séquence réelle était donc :
+      1. tirer -> client_id
+      2. est_consomme() ? -> non
+      3. CRÉER L'ENTITÉ  <- irréversible
+      4. marquer_consomme() -> False, déjà pris
+    À l'étape 4 il est trop tard : l'entité existe
+    pour toujours. La fenêtre 2->4 couvre un appel
+    réseau, avec 20 workers (H14/H15). L'index unique
+    protégeait le REGISTRE, pas l'ÉCOSYSTÈME.
+    ..
+    `RESERVE` est désormais écrit AVANT le réseau,
+    `CONSOMME` après — patron write-ahead d'audit_trail.
+    Un client écarté pour QUOTA est libéré : il n'a rien
+    produit, donc il n'est pas consommé.
+    ..
+    D-FAKER-1 : tranché par `reserver()` seul.
+    `est_consomme()` sert aux journaux, JAMAIS à décider.
+  }
+
+  enum EtatConsommationFaker {
+    RESERVE
+    CONSOMME
   }
 
   class LoaderRun <<Loader MongoDB>> {

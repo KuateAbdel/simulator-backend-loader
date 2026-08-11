@@ -31,6 +31,39 @@ class FakerConsumptionType(StrEnum):
     COLLECT_CLIENT = "COLLECT_CLIENT"
 
 
+class EtatConsommationFaker(StrEnum):
+    """Les deux temps d'une consommation Faker.
+
+    POURQUOI DEUX ETATS ET NON UN SEUL
+    ----------------------------------
+    La v1 du registre n'en avait qu'un : on ecrivait l'entree APRES la creation
+    de l'entite, parce que `resulting_entity_id` etait obligatoire. La sequence
+    reelle etait donc :
+
+        1. tirer chez Faker            -> client_id
+        2. `est_consomme(client_id)` ? -> non, on continue
+        3. CREER L'ENTITE SUR LE SERVEUR   <- IRREVERSIBLE, aucun DELETE
+        4. `marquer_consomme(...)`     -> False : deja consomme !
+
+    A l'etape 4, il est trop tard. L'entite existe, definitivement, et elle est
+    nee d'un client Faker deja employe ailleurs : `D-FAKER-1` est viole et rien
+    ne peut le reparer. La fenetre entre 2 et 4 s'etend sur un appel reseau, et
+    le plafond de concurrence est de 20 workers.
+
+    L'index unique sur `_id` protegeait donc le REGISTRE, pas l'ECOSYSTEME.
+
+    La reservation est ecrite AVANT l'appel reseau — c'est le meme patron
+    write-ahead que le journal d'intention (`audit_trail`), la seule atomicite
+    dont nous disposions face a des services sans transaction ni rollback.
+    """
+
+    #: Revendique, aucune entite encore creee. Une reservation qui survit a la
+    #: fin du run est ORPHELINE : le client a ete revendique sans rien produire.
+    RESERVE = "RESERVE"
+    #: L'entite existe sur le serveur. Etat definitif — jamais libere.
+    CONSOMME = "CONSOMME"
+
+
 class NiveauOrganisation(StrEnum):
     """Niveaux 3 a 6 de l'arbre operationnel (CDC §6.2), cote Loader.
 

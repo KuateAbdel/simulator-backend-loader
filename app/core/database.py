@@ -100,6 +100,16 @@ async def ensure_indexes() -> None:
         [("consumed_for", 1), ("country_code", 1)],
         name="idx_consumed_for_country",
     )
+    # La reconciliation cherche les reservations orphelines d'UN run — le seul
+    # acces chaud de cette collection en fin d'execution. L'index est PARTIEL sur
+    # `RESERVE` parce qu'au repos cet ensemble doit etre VIDE : une reservation
+    # qui survit est un incident, et l'index reste minuscule tant que tout va
+    # bien. Indexer les `CONSOMME` aurait coute 2000 entrees pour rien.
+    await db[COLLECTION_FAKER_CONSUMPTION_LEDGER].create_index(
+        [("run_id", 1), ("reserved_at", 1)],
+        name="idx_reservations_en_vol",
+        partialFilterExpression={"state": "RESERVE"},
+    )
     await db[COLLECTION_LENDERS_REGISTRY].create_index(
         [("company_id", 1), ("lender_type", 1)],
         name="uniq_company_lender_type",

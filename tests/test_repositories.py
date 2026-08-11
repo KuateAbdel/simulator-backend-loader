@@ -15,7 +15,13 @@ import pytest
 from app.core.configuration import ConfigurationExecution
 from app.core.security import hacher, verifier
 from app.models.domain import FakerConsumptionLedger, LoaderRun, OrgHierarchyNode
-from app.models.enums import FakerConsumptionType, NiveauOrganisation, RunMode, RunStatus
+from app.models.enums import (
+    EtatConsommationFaker,
+    FakerConsumptionType,
+    NiveauOrganisation,
+    RunMode,
+    RunStatus,
+)
 from app.repositories.audit_trail import (
     ACTION_INTENTION,
     ACTION_RESULTAT,
@@ -55,14 +61,30 @@ class TestSerialisation:
     def test_l_alias_id_est_ecrit(self) -> None:
         entree = FakerConsumptionLedger(
             id="RC-CM-IND-CMC1",
-            consumed_at=datetime.now(UTC),
             consumed_for=FakerConsumptionType.COLLECT_CLIENT,
-            resulting_entity_id=uuid4(),
             country_code="CM",
+            run_id=uuid4(),
+            reserved_at=datetime.now(UTC),
         )
         document = en_document(entree)
         assert "_id" in document and "id" not in document
         assert document["_id"] == "RC-CM-IND-CMC1"
+
+    def test_une_reservation_neuve_ne_porte_ni_entite_ni_date_de_consommation(self) -> None:
+        """Le premier temps du registre (correctif du 11/08) : la reservation est
+        ecrite AVANT l'appel reseau, donc avant qu'aucune entite n'existe. C'est
+        `resulting_entity_id` a `None` qui distingue un client revendique d'un
+        client reellement employe."""
+        entree = FakerConsumptionLedger(
+            id="RC-CM-IND-CMC2",
+            consumed_for=FakerConsumptionType.COLLECT_CLIENT,
+            country_code="CM",
+            run_id=uuid4(),
+            reserved_at=datetime.now(UTC),
+        )
+        assert entree.state is EtatConsommationFaker.RESERVE
+        assert entree.resulting_entity_id is None
+        assert entree.consumed_at is None
 
     def test_les_dates_deviennent_des_chaines_iso(self) -> None:
         """BSON ne sait pas encoder datetime.date — d'ou la regle JSON-native."""

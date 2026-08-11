@@ -30,7 +30,7 @@ from app.clients.depositary_service import DepositaryServiceClient
 from app.clients.identity_service import IdentityServiceClient
 from app.clients.product_service import ProductServiceClient
 from app.clients.user_service import UserServiceClient
-from app.core.cdc import FENETRE_JOURS
+from app.core.cdc import FENETRE_JOURS, PAYS_CIBLES
 from app.core.config import settings
 from app.core.configuration import ConfigurationExecution
 from app.core.database import close, connect, ensure_indexes
@@ -38,6 +38,7 @@ from app.core.temps import ModeCompression, TempsSimulation
 from app.models.enums import RunMode, RunStatus
 from app.repositories import (
     AuditTrailRepository,
+    FakerLedgerRepository,
     LendersRegistryRepository,
     LoaderRunRepository,
     OrgHierarchyRepository,
@@ -119,6 +120,10 @@ async def executer(
     #   reprise  `Orchestrateur.etapes_acquises()` est ecrit et teste, mais
     #            aucun run n'ecrivait les checkpoints qui l'alimentent.
     depot_runs = LoaderRunRepository()
+    # Le registre Faker : instancie ICI parce que la reconciliation de fin de
+    # run doit le lire. Un `reserver()` sans lecture des orphelines refait le
+    # defaut que ce module vient de corriger.
+    ledger_faker = FakerLedgerRepository()
 
     # `EF-55` — deux generations simultanees sont interdites, et depuis le 11/08
     # l'interdit est STRUCTUREL : un index unique partiel sur `status ==
@@ -287,6 +292,7 @@ async def executer(
         # initialise » — le journal d'intention restait muet au moment precis ou
         # il sert.
         reconciliation = await _reconcilier(audit, run_id)
+        registre_faker = await _reconcilier_faker(ledger_faker, run_id)
         # Le resume de l'orchestrateur tronque le detail de chaque etape a une
         # ligne — utile pour lire huit modules d'un coup, inutilisable pour un
         # rapport de recette. Il est donc rendu EN ENTIER, parce que c'est lui
@@ -305,6 +311,7 @@ async def executer(
     print()
     print(verdict.resume())
     print(reconciliation)
+    print(registre_faker)
     return 0 if rapport.statut.value != "FAILED" else 1
 
 
@@ -345,6 +352,64 @@ async def _reconcilier(audit: AuditTrailRepository, run_id: UUID) -> str:
         lignes.append(f"    {entree.entity_type:<12} {entree.entity_id} -> {cible}")
     if len(orphelines) > 20:
         lignes.append(f"    … et {len(orphelines) - 20} autres (journal complet : exporter_run)")
+    return "\n".join(lignes)
+
+
+async def _reconcilier_faker(ledger: FakerLedgerRepository, run_id: UUID) -> str:
+    """Le second write-ahead a reconcilier — le registre de consommation Faker.
+
+    Meme forme, meme raison que les intentions orphelines ci-dessus, sur un objet
+    different : une RESERVATION qui survit a la fin du run dit qu'un client Faker
+    a ete revendique sans rien produire.
+
+    Deux causes, et il faut les distinguer a la main :
+
+      - un worker est mort entre la reservation et la creation. Le client est
+        perdu pour `D-FAKER-1`, mais rien d'irreversible n'a ete ecrit ;
+      - un chemin de code oublie d'appeler `confirmer()`. Alors une entite
+        IRREVERSIBLE existe sans que le registre la relie a son client Faker, et
+        c'est le cas grave.
+
+    Ecrire `reserver()` sans lire ce rapport, ce serait refaire exactement le
+    defaut que ce module vient de corriger : la moitie d'un write-ahead log ne
+    vaut rien.
+    """
+    try:
+        orphelines = await ledger.reservations_orphelines(run_id)
+        par_pays = await ledger.compter_par_pays(run_id)
+    except Exception as erreur:  # pragma: no cover — defense d'exploitation
+        return f"\nREGISTRE FAKER : reconciliation impossible — {type(erreur).__name__} : {erreur}"
+
+    total = sum(par_pays.values())
+    lignes = [f"\nREGISTRE FAKER : {total} client(s) consomme(s) sur ce run."]
+    if par_pays:
+        # `OBJ-01` exige les 4 pays. `SN` restera absent tant que ses clients
+        # viennent du generateur interne (Faker rend 422 — arbitrage `A-01`), et
+        # cette absence doit se VOIR plutot que se deviner.
+        detail = " · ".join(f"{pays} {n}" for pays, n in sorted(par_pays.items()))
+        lignes.append(f"  Repartition : {detail}")
+        for pays in PAYS_CIBLES:
+            if pays not in par_pays:
+                lignes.append(f"  ⚠ {pays} : aucun client consomme chez Faker sur ce run.")
+
+    if not orphelines:
+        lignes.append("  Aucune reservation orpheline — le registre est clos.")
+        return "\n".join(lignes)
+
+    lignes.append(
+        f"  ⚠ {len(orphelines)} RESERVATION(S) ORPHELINE(S) — client revendique, rien produit."
+    )
+    for entree in orphelines[:20]:
+        lignes.append(
+            f"    {entree.id:<24} {entree.country_code} {entree.consumed_for.value:<14}"
+            f" seed={entree.seed}"
+        )
+    if len(orphelines) > 20:
+        lignes.append(f"    … et {len(orphelines) - 20} autres.")
+    lignes.append(
+        "  Si une entite existe pour l'une d'elles, `confirmer()` a ete oublie : "
+        "l'entite est irreversible et son origine Faker n'est pas tracee."
+    )
     return "\n".join(lignes)
 
 

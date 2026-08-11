@@ -27,6 +27,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import (
+    EtatConsommationFaker,
     FakerConsumptionType,
     LenderType,
     NiveauOrganisation,
@@ -49,18 +50,39 @@ class FakerConsumptionLedger(LoaderDocument):
     """Collection `faker_consumption_ledger` -- support technique de D-FAKER-1.
 
     `_id` EST le client_id Faker : c'est l'unicite MongoDB elle-meme qui
-    garantit qu'un client Faker ne peut pas etre consomme deux fois. La
-    verification applicative (find_one avant tirage) et cette contrainte
-    d'unicite sont redondantes VOLONTAIREMENT -- la premiere donne un message
-    lisible, la seconde rend la violation structurellement impossible en cas
-    de concurrence.
+    garantit qu'un client Faker ne peut pas etre revendique deux fois.
+
+    DEUX TEMPS, ET LE PREMIER EST AVANT LE RESEAU
+    ---------------------------------------------
+    `state` porte la correction du 11/08. La v1 n'ecrivait l'entree qu'APRES la
+    creation de l'entite, `resulting_entity_id` etant obligatoire : la fenetre
+    entre le `find_one` de controle et l'`insert_one` s'etendait donc sur un
+    appel reseau IRREVERSIBLE, avec 20 workers concurrents. L'index unique
+    protegeait le registre ; il ne protegeait pas l'ecosysteme.
+
+    Desormais `RESERVE` est ecrit AVANT l'appel reseau, et `CONSOMME` apres —
+    le meme patron write-ahead que `audit_trail`. Voir `EtatConsommationFaker`.
+
+    `run_id` etait absent, et son absence rendait la reconciliation aveugle :
+    une reservation orpheline laissee par un run mort etait indistinguable des
+    notres. `D-FAKER-1` reste GLOBAL — un client consomme le demeure d'un run a
+    l'autre — mais on doit savoir QUI l'a consomme.
     """
 
     id: str = Field(alias="_id", description="client_id Faker -- cle naturelle")
-    consumed_at: datetime
     consumed_for: FakerConsumptionType
-    resulting_entity_id: UUID
     country_code: str = Field(min_length=2, max_length=2)
+    run_id: UUID = Field(description="Le run qui a revendique ce client Faker")
+    state: EtatConsommationFaker = EtatConsommationFaker.RESERVE
+    reserved_at: datetime
+    #: Le `seed` qui a produit ce client. Sans lui, `ENF-15` n'est pas verifiable :
+    #: rejouer un run exige de rejouer ses tirages.
+    seed: int | None = None
+    #: `None` tant que l'entite n'existe pas. C'est la PREUVE qu'un client
+    #: revendique a reellement produit quelque chose — un client ecarte pour
+    #: raison de quota n'en a pas, et sa reservation est liberee.
+    resulting_entity_id: UUID | None = None
+    consumed_at: datetime | None = None
 
 
 class LenderRegistryEntry(LoaderDocument):
