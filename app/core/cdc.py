@@ -75,6 +75,44 @@ LENDERS_INSTITUTIONNELS: Final[tuple[str, ...]] = (
 #: les produit — le Loader les cree explicitement (sondage Trou #2, 08/08).
 COMPTES_LENDER: Final[tuple[str, ...]] = ("CAPITAL", "INTEREST", "PENALTY", "TAXE")
 
+# --------------------------------------------------------------------------
+# Dotation du capital des Lenders — UC-10, point 2 du scenario nominal
+# --------------------------------------------------------------------------
+#
+# CE QUE LE CDC EXIGE, MOT POUR MOT :
+#   « Il alimente le compte CAPITAL avec un montant initial DEPENDANT DU TYPE DE
+#     LENDER (institutionnels plus dotes que locaux). Il initialise les 3 autres
+#     comptes a zero. »
+#
+# Nous creions les quatre a zero. Un Lender a capital nul ne peut rien financer,
+# et l'IFC affichant 0 franc devant un bailleur se voit au premier ecran.
+#
+# LE CDC NE DONNE AUCUN CHIFFRE — il impose une dotation DIFFERENCIEE et laisse
+# le montant ouvert. Le choisir n'est donc pas un ecart, c'est executer
+# l'exigence. Mais il doit etre RAISONNE, pas invente. Voici le raisonnement :
+#
+#   `EF-46`  « au moins un pret par jour »
+#   `ENF-16` fenetre de 180 jours
+#   Annexe E montants par segment, de 5 000 (Nano Very Low) a 1 000 000 FCFA
+#            (ReadyToGo Very High) — moyenne de catalogue autour de 275 000
+#
+#   180 jours x 1 pret x ~275 000 FCFA  ->  ~50 000 000 FCFA par pays
+#   reparti sur 3 Lenders locaux         ->  ~17 000 000 chacun au minimum
+#
+# On retient 50 millions par Lender local : la marge couvre une cadence
+# superieure au plancher d'`EF-46`, et l'ordre de grandeur correspond au
+# portefeuille reel d'une IMF de taille moyenne en zone CEMAC/UEMOA.
+#
+# L'institutionnel REFINANCE les locaux — il est en amont dans la chaine. Un
+# ordre de grandeur au-dessus est donc la lecture juste de « plus dotes » :
+# 500 millions, soit de quoi refinancer les trois locaux d'un pays entier.
+#
+# Les 3 autres comptes restent a ZERO : ils se rempliront par les interets, les
+# penalites et les taxes des remboursements simules (Sprint 5). Les doter
+# d'avance serait inventer des revenus jamais percus.
+DOTATION_CAPITAL_LOCAL: Final = 50_000_000.0
+DOTATION_CAPITAL_INSTITUTIONNEL: Final = 500_000_000.0
+
 #: UC-09, point 3 : « Il genere entre 10 et 20 Kiosques par pays ». 40 a 80 au
 #: total. Kiosque = Depositaire (glossaire CDC).
 KIOSQUES_PAR_PAYS: Final[tuple[int, int]] = (10, 20)
@@ -148,6 +186,26 @@ ENTREES_PAR_JOUR: Final = 10
 
 #: EF-67 : « poids empiriques 50/25/13/12 » — bon payeur, retard puis paiement,
 #: defaut partiel, defaut total.
+#:
+#: ⚠️ **LE PIEGE DE VOCABULAIRE DE L'ANNEXE D.2 — a lire AVANT d'ecrire le
+#: Sprint 5.** L'Annexe D.2 du CDC pondere ces poids selon 9 variables du client,
+#: et deux lignes sont contre-intuitives :
+#:
+#:     « Segment de risque **Very High** -> renforce le profil BON PAYEUR »
+#:     « Segment de risque **Very Low**  -> renforce le DEFAUT TOTAL »
+#:
+#: La note metier finale du CDC l'explique : « la logique de segmentation associe
+#: les segments Very High a des montants PLUS IMPORTANTS. Cette pratique, courante
+#: en microfinance et conforme aux standards CGAP, permet de compenser les pertes
+#: attendues sur ces populations par une marge d'interet plus elevee. »
+#:
+#: Donc dans ce CDC, **`Very High` designe la QUALITE du client, pas son risque de
+#: defaut.** Un client Very High emprunte davantage parce qu'on lui fait
+#: davantage confiance.
+#:
+#: Inverser ce sens produirait une population ou les MEILLEURS clients font
+#: defaut — l'exact inverse de la realite, et un bailleur qui connait le metier
+#: le verrait au premier tableau de bord.
 PROFILS_COMPORTEMENTAUX: Final[dict[str, int]] = {
     "BON_PAYEUR": 50,
     "RETARD_PUIS_PAIEMENT": 25,
@@ -159,8 +217,25 @@ PROFILS_COMPORTEMENTAUX: Final[dict[str, int]] = {
 TOLERANCE_DISTRIBUTION_POINTS: Final = 3
 
 # --------------------------------------------------------------------------
-# Conformite — ENF-14, EF-35, CR-01
+# Conformite — ENF-14, EF-35, CR-01 **REGLEMENTAIRE**
 # --------------------------------------------------------------------------
+#
+# ⚠️ **COLLISION DE NUMEROTATION DANS LE CDC — relevee le 11/08.** Le CDC utilise
+# `CR-01`, `CR-02` et `CR-03` DEUX FOIS, avec deux sens differents :
+#
+#     §9.3 Contraintes REGLEMENTAIRES     §12 Criteres de RECETTE
+#     CR-01 taux <= 24 % (usure)          CR-01 geographie complete
+#     CR-02 identites fictives            CR-02 coherence geo-organisationnelle
+#     CR-03 MSISDN conformes au           CR-03 idempotence, aucun doublon
+#           regulateur (ART, ARTCI,
+#           ARCEP-BF, ARTP)
+#
+# **Les deux series vivent dans notre code.** Ici, `CR-01` designe la contrainte
+# REGLEMENTAIRE (le plafond d'usure). Dans `app/services/recette.py`, `CR-01`
+# designe le critere de RECETTE (la geographie).
+#
+# Ce n'est pas notre erreur, mais elle nous traverse : toute citation de `CR-01`,
+# `CR-02` ou `CR-03` doit dire de QUELLE serie elle parle.
 
 #: EF-35 / CR-01 : plafond d'usure BEAC/COBAC, meme en environnement de test.
 TAUX_USURE_MAX_ANNUEL_PCT: Final = 24.0

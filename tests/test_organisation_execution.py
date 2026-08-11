@@ -18,7 +18,14 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.clients.base import ErreurService
-from app.core.cdc import COMPTES_LENDER, LENDERS_INSTITUTIONNELS
+from app.core.cdc import (
+    COMPTES_LENDER,
+    DOTATION_CAPITAL_INSTITUTIONNEL,
+    DOTATION_CAPITAL_LOCAL,
+    LENDERS_INSTITUTIONNELS,
+    LENDERS_LOCAUX_PAR_PAYS,
+    PAYS_CIBLES,
+)
 from app.models.enums import RunMode, RunStatus
 from app.services.generateur import Generateur
 from app.services.geographie import ReferentielGeo, charger_referentiel
@@ -107,6 +114,26 @@ class AccountClientMuet:
         self, company_id: Any, owner_name: str, currency: str
     ) -> dict[str, dict[str, Any]]:
         return {nom.lower(): {"type": nom, "currency": currency} for nom in COMPTES_LENDER}
+
+    #: `UC-10` point 2 — la dotation. `solde_rendu` permet de simuler `FRA-218`,
+    #: ou le solde relu differe du montant demande.
+    solde_rendu: float | None = None
+    dotations: list[float] = []  # noqa: RUF012 — doublure de test, pas un modele
+
+    def payload_dotation_capital(
+        self, *, compte_capital_id: Any, montant: float, nom_lender: str
+    ) -> dict[str, Any]:
+        return {"amount": montant, "dest_account_id": str(compte_capital_id)}
+
+    async def crediter(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.ecritures += 1
+        self.dotations.append(float(payload["amount"]))
+        return {"_id": str(uuid4())}
+
+    async def solde(self, account_id: Any) -> float | None:
+        if self.solde_rendu is not None:
+            return self.solde_rendu
+        return self.dotations[-1] if self.dotations else 0.0
 
     @staticmethod
     def identifiant(compte: dict[str, Any]) -> str | None:
@@ -276,3 +303,65 @@ def test_le_telephone_suit_le_plan_de_numerotation_du_pays() -> None:
         assert numero.startswith(indicatif), f"{pays} : indicatif errone"
         assert operateur.country_iso2 == pays
         assert referentiel.operateur_du_msisdn(numero, pays) is not None
+
+
+class TestDotationDuCapital:
+    """`UC-10` point 2 — « il alimente le compte CAPITAL avec un montant initial
+    dependant du type de Lender (institutionnels plus dotes que locaux) ».
+
+    Ce que ces tests protegent : que le CAPITAL ne reste JAMAIS a zero. Un Lender
+    a capital nul ne peut rien financer, et l'IFC affichant 0 franc devant un
+    bailleur se voit au premier ecran.
+    """
+
+    async def test_l_institutionnel_est_plus_dote_que_le_local(self) -> None:
+        """La seule contrainte CHIFFREE du CDC sur ce point."""
+        assert DOTATION_CAPITAL_INSTITUTIONNEL > DOTATION_CAPITAL_LOCAL
+
+    async def test_le_dry_run_annonce_la_dotation_qu_il_n_ecrit_pas(
+        self, referentiel: ReferentielGeo
+    ) -> None:
+        """`D-01`, lecon du 11/08 : l'essai a blanc annonce TOUT ce que le reel
+        ecrira. Un rapport qui tait une ecriture fait dire oui a l'aveugle."""
+        executeur, doublures = _executeur(RunMode.DRY_RUN, referentiel)
+
+        rapport = await executeur.executer(planifier(referentiel, RUN_ID), SIM_START, SIM_END)
+
+        attendu = (
+            LENDERS_LOCAUX_PAR_PAYS * len(PAYS_CIBLES) * DOTATION_CAPITAL_LOCAL
+            + len(LENDERS_INSTITUTIONNELS) * DOTATION_CAPITAL_INSTITUTIONNEL
+        )
+        assert rapport.capital_dote == attendu
+        assert doublures["account"].ecritures == 0, "le DRY_RUN n'ecrit rien"
+
+    async def test_le_reel_credite_et_RELIT_le_solde(self, referentiel: ReferentielGeo) -> None:
+        """`FRA-218` — les frais sont retranches et credites nulle part. Le solde
+        se RELIT, il ne se deduit pas."""
+        executeur, doublures = _executeur(RunMode.REAL, referentiel)
+        compte = doublures["account"]
+        compte.dotations = []
+        compte.solde_rendu = None
+
+        rapport = await executeur.executer(planifier(referentiel, RUN_ID), SIM_START, SIM_END)
+
+        assert compte.dotations, "aucune dotation emise"
+        assert DOTATION_CAPITAL_INSTITUTIONNEL in compte.dotations
+        assert DOTATION_CAPITAL_LOCAL in compte.dotations
+        assert rapport.capital_dote > 0
+
+    async def test_un_solde_relu_different_ne_fait_pas_echouer_le_lender(
+        self, referentiel: ReferentielGeo
+    ) -> None:
+        """`FRA-218` en action : le rapport porte le solde REEL, pas le demande —
+        et l'ecart ne casse pas le run."""
+        executeur, doublures = _executeur(RunMode.REAL, referentiel)
+        compte = doublures["account"]
+        compte.dotations = []
+        compte.solde_rendu = 1.0  # le serveur a mange le montant
+
+        rapport = await executeur.executer(planifier(referentiel, RUN_ID), SIM_START, SIM_END)
+
+        assert rapport.capital_dote == float(len(compte.dotations)), (
+            "le rapport doit porter le solde RELU, jamais la somme demandee"
+        )
+        assert rapport.companies_creees, "un ecart de solde n'annule aucune Company"

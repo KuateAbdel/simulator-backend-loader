@@ -67,7 +67,13 @@ from typing import Any
 from uuid import UUID
 
 from app.clients.base import ClientFinZuu, JournalRequetes, normaliser_id
-from app.clients.contracts import AccountType, OwnerType
+from app.clients.contracts import (
+    AccountType,
+    OwnerType,
+    ProviderSource,
+    TransactionTag,
+    TransactionType,
+)
 from app.core.cdc import COMPTES_LENDER
 from app.core.config import settings
 
@@ -121,6 +127,64 @@ class AccountServiceClient:
     async def creer_compte(self, payload: dict[str, Any]) -> dict[str, Any]:
         reponse = await self._client.requete("POST", "/api/v1/accounts/", json_body=payload)
         return reponse.data if isinstance(reponse.data, dict) else {}
+
+    def payload_dotation_capital(
+        self, *, compte_capital_id: UUID | str, montant: float, nom_lender: str
+    ) -> dict[str, Any]:
+        """`UC-10` point 2 — la dotation initiale du compte CAPITAL d'un Lender.
+
+        POURQUOI `src == dest`
+        ----------------------
+        `CreditAccountSchema` exige **les deux** identifiants, meme pour un
+        credit. Or cet argent vient de l'EXTERIEUR du systeme : c'est
+        l'apport du bailleur, il ne sort d'aucun compte FinZuu. Le motif est
+        celui que nous avons mesure sur une collecte — un `DEPOSIT` ou
+        `src_account == dest_account`, le compte s'auto-credite — et
+        `provider_src` porte l'origine reelle.
+
+        LES TROIS VALEURS D'ENUM, ET POURQUOI CELLES-LA
+        -----------------------------------------------
+        `provider_src=BANK` : le capital d'un Lender arrive par virement
+        bancaire. Ni `CASH` (ce n'est pas du liquide de guichet), ni `MOMO`
+        (ce n'est pas du mobile money), ni `ACCOUNT` (aucun compte FinZuu
+        source).
+
+        `tag=LENDER` : **c'est le champ fait pour ca.** `TransactionTag.LENDER`
+        est la SEULE occurrence du concept « lender » dans tout l'ecosysteme
+        FinZuu — account-service sait TAGUER une transaction de bailleur sans
+        connaitre l'entite. Ne pas l'utiliser ici serait laisser vide le seul
+        endroit ou le serveur reconnait ce metier.
+
+        `type=INVESTMENT` : le Manuel de Reference attribue au profil CO
+        « l'initiation et la validation des investissements ». Doter un Lender
+        EST un investissement — pas un depot, pas un transfert.
+        """
+        return {
+            "amount": montant,
+            "label": f"Dotation capital initial — {nom_lender}",
+            "src_account_id": str(compte_capital_id),
+            "dest_account_id": str(compte_capital_id),
+            "provider_src": ProviderSource.BANK.value,
+            "tag": TransactionTag.LENDER.value,
+            "type": TransactionType.INVESTMENT.value,
+        }
+
+    async def crediter(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """`POST /accounts/credit`.
+
+        **On ne deduit jamais le solde resultant** — `FRA-218` : les frais sont
+        retranches du montant et credites nulle part. Le solde se RELIT, il ne se
+        calcule pas.
+        """
+        reponse = await self._client.requete("POST", "/api/v1/accounts/credit", json_body=payload)
+        return reponse.data if isinstance(reponse.data, dict) else {}
+
+    async def solde(self, account_id: UUID | str) -> float | None:
+        """Relit le solde reel. La seule facon honnete de le connaitre (`FRA-218`)."""
+        reponse = await self._client.get(f"/api/v1/accounts/{account_id}", vide_si_404=True)
+        donnees = reponse.data if isinstance(reponse.data, dict) else {}
+        valeur = donnees.get("balance")
+        return float(valeur) if isinstance(valeur, int | float) else None
 
     def payloads_des_4_comptes_lender(
         self, company_id: UUID | str, owner_name: str, currency: str

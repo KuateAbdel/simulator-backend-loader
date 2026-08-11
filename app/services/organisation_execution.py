@@ -55,6 +55,8 @@ from app.clients.contracts import CompanyType, PackageName, UserType
 from app.clients.user_service import UserServiceClient
 from app.core.cdc import (
     COMPTES_LENDER,
+    DOTATION_CAPITAL_INSTITUTIONNEL,
+    DOTATION_CAPITAL_LOCAL,
     LENDERS_INSTITUTIONNELS,
     LENDERS_LOCAUX_PAR_PAYS,
     LICENCE_MARGE_FUTURE_JOURS,
@@ -117,6 +119,9 @@ class RapportOrganisation:
     admins_echoues: list[tuple[str, str]] = field(default_factory=list)
     lenders_enregistres: list[str] = field(default_factory=list)
     comptes_crees: int = 0
+    #: `UC-10` point 2 — le capital REELLEMENT dote, relu compte par compte.
+    #: Jamais la somme des montants demandes : `FRA-218` les fait diverger.
+    capital_dote: float = 0.0
     comptes_echoues: list[tuple[str, str]] = field(default_factory=list)
     cascades_identity_verifiees: int = 0
     cascades_identity_manquantes: list[str] = field(default_factory=list)
@@ -155,6 +160,7 @@ class RapportOrganisation:
             f"Admin Users: {len(self.admins_crees)} crees, {len(self.admins_echoues)} en echec",
             f"Lenders    : {len(self.lenders_enregistres)} enregistres",
             f"Comptes    : {self.comptes_crees} crees, {len(self.comptes_echoues)} en echec",
+            f"Capital dote: {self.capital_dote:,.0f}".replace(",", " ") + " (UC-10 pt 2)",
             f"Cascade Identity verifiee : {self.cascades_identity_verifiees}",
             f"STATUT : {self.statut.value}",
         ]
@@ -437,6 +443,46 @@ class ExecuteurOrganisation:
             return
         rapport.admins_crees.append(email)
 
+    async def _doter_capital(
+        self, capital_id: UUID, montant: float, nom: str, rapport: RapportOrganisation
+    ) -> None:
+        """Credite le compte CAPITAL, puis RELIT le solde.
+
+        On ne deduit jamais le solde attendu : `FRA-218` retranche les frais du
+        montant et ne les credite nulle part. Le seul solde vrai est celui qu'on
+        relit.
+
+        Un echec de dotation ne fait pas echouer le Lender — `UC-10`, cas
+        d'exception : « le Lender concerne est marque comme partiellement
+        initialise ». On le SIGNALE, on ne l'efface pas.
+        """
+        payload = self._comptes.payload_dotation_capital(
+            compte_capital_id=capital_id, montant=montant, nom_lender=nom
+        )
+        try:
+            await self._comptes.crediter(payload)
+        except ErreurService as exc:
+            rapport.comptes_echoues.append((f"{nom}/dotation CAPITAL", exc.detail[:160]))
+            logger.warning("Dotation CAPITAL de %s en echec : %s", nom, exc.detail[:160])
+            return
+
+        reel = await self._comptes.solde(capital_id)
+        if reel is None:
+            rapport.comptes_echoues.append(
+                (f"{nom}/dotation CAPITAL", "solde illisible apres credit")
+            )
+            return
+        rapport.capital_dote += reel
+        if reel != montant:
+            # Ecart signale, jamais corrige : c'est exactement le symptome de
+            # `FRA-218`, et le rapport doit le porter.
+            logger.warning(
+                "Dotation de %s : demande %s, solde relu %s — ecart signale (FRA-218)",
+                nom,
+                montant,
+                reel,
+            )
+
     async def creer_licence(
         self,
         company_id: str,
@@ -489,10 +535,22 @@ class ExecuteurOrganisation:
         payloads = self._comptes.payloads_des_4_comptes_lender(company_id, nom, devise)
         comptes: dict[str, UUID] = {}
 
+        dotation = _dotation_capital(lender_type)
+
         if not self.ecriture_reelle:
             rapport.comptes_crees += len(payloads)
             rapport.lenders_enregistres.append(f"{nom} [{lender_type.value}]")
-            logger.info("[DRY_RUN] %s — %d comptes prets : %s", nom, len(payloads), COMPTES_LENDER)
+            # `D-01`, lecon du 11/08 : l'essai a blanc ANNONCE tout ce que le reel
+            # ecrira, dotation comprise. Un rapport qui tait une ecriture fait
+            # dire oui a ce qu'on n'a pas vu.
+            rapport.capital_dote += dotation
+            logger.info(
+                "[DRY_RUN] %s — %d comptes prets : %s | CAPITAL dote de %s (UC-10 pt 2)",
+                nom,
+                len(payloads),
+                COMPTES_LENDER,
+                f"{dotation:,.0f}".replace(",", " "),
+            )
             return
 
         # Aucun DELETE sur account-service : on ne recree jamais un compte
@@ -511,6 +569,16 @@ class ExecuteurOrganisation:
             if identifiant:
                 comptes[role] = UUID(identifiant)
                 rapport.comptes_crees += 1
+
+        # `UC-10` POINT 2 — « il alimente le compte CAPITAL avec un montant initial
+        # dependant du type de Lender ». Les 3 autres restent a ZERO : ils se
+        # rempliront par les interets, penalites et taxes des remboursements
+        # simules. Les doter d'avance serait inventer des revenus jamais percus.
+        #
+        # L'ordre est impose : on ne peut crediter qu'un compte qui existe.
+        capital_id = comptes.get("capital")
+        if capital_id is not None:
+            await self._doter_capital(capital_id, dotation, nom, rapport)
 
         entree = await self._registre.enregistrer(
             company_id=UUID(company_id),
@@ -774,6 +842,20 @@ class ExecuteurOrganisation:
     # Le type_user des Admin Users est expose ici pour que l'appelant n'ait pas
     # a connaitre l'enum serveur : un Admin de Company est de type COMPANY.
     TYPE_ADMIN: UserType = UserType.COMPANY
+
+
+def _dotation_capital(lender_type: LenderType) -> float:
+    """`UC-10` point 2 — « institutionnels plus dotes que locaux ».
+
+    Le CDC impose une dotation DIFFERENCIEE et ne fixe aucun chiffre. Le
+    raisonnement qui produit ces deux valeurs vit dans `app/core/cdc.py`, a cote
+    des constantes : il se resume a `EF-46` (au moins un pret par jour) sur la
+    fenetre de 180 jours, aux montants de l'Annexe E, et au fait qu'un
+    institutionnel REFINANCE les locaux — donc un ordre de grandeur au-dessus.
+    """
+    if lender_type is LenderType.INSTITUTIONNEL:
+        return DOTATION_CAPITAL_INSTITUTIONNEL
+    return DOTATION_CAPITAL_LOCAL
 
 
 def _profil_company(est_imf: bool, index: int) -> tuple[CompanyType, str, str]:
