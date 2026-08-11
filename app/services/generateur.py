@@ -34,11 +34,13 @@ import random
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Final
+from hashlib import sha256
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 from app.core.cdc import AGE_SEUIL_JEUNE, PREFIXE_DONNEES
 from app.core.invariants import (
+    InvariantViole,
     valider_coherence_territoriale,
     valider_coherence_ville_pays,
 )
@@ -171,6 +173,60 @@ CLES_PROFIL_INTERNE: Final[tuple[str, ...]] = (
     "IS_SMARTPHONE_USER",
 )
 
+#: Longueur minimale d'un corps de numero exploitable. Faker en fournit huit
+#: (mesure du 11/08, uniformement sur les trois pays qu'il sert). En-dessous, la
+#: matiere est trop courte pour etaler quoi que ce soit — un `client_id` comme
+#: `INTERNE-SN-IND-42` ne porte que deux chiffres, repetes cycliquement ils
+#: donneraient `4242424...` et collisionneraient d'emblee. On derive alors par
+#: hachage de la chaine ENTIERE, qui reste propre au client.
+#: Pas d'escalade quand le registre refuse un numero. Premier avec 10^8 (impair,
+#: non divisible par 5), donc l'addition modulaire fait varier les HUIT chiffres
+#: du corps — pas seulement ceux de poids faible, qui sont precisement ceux que
+#: `composer_msisdn` tronque.
+PAS_ESCALADE_MSISDN: Final = 7_777_777
+
+#: Plafond de tentatives pour obtenir un MSISDN inedit (`EF-25`). Genereux :
+#: l'espace utile d'un operateur dominant tourne autour de 10^7, et l'escalade
+#: est deterministe — atteindre ce plafond signale un vivier reellement epuise,
+#: pas un tirage malheureux.
+TENTATIVES_MSISDN_MAX: Final = 24
+
+
+def _corps_msisdn(ancre: str, tentative: int) -> str:
+    """Huit chiffres ou les HUIT varient avec l'ancre. Deterministe.
+
+    Deux proprietes de `composer_msisdn` rendent obligatoire cette dispersion,
+    et `staff_execution._reserver_identifiants` les avait deja documentees le
+    10/08 — je ne les avais pas reportees ici :
+
+    1. Le composeur consomme le corps **depuis la position 0** et le plan
+       tronque a la place disponible. Le Senegal n'offre que sept chiffres apres
+       son prefixe : le huitieme saute. Un corps qui ne varie qu'en position
+       basse produit donc des numeros identiques.
+    2. Une classe restreinte replie dix chiffres sur deux — `0[56]` mappe tout
+       chiffre source sur `5` ou `6`. Une seule position variable ne suffit
+       jamais.
+
+    Mesure du 11/08 sur 2000 clients, avec le corps pris litteralement chez
+    Faker : echec au HUITIEME client, « 24 tentatives sans MSISDN inedit — 7
+    deja emis ». La cause : `sim_number` depouille commence par l'indicatif
+    pays, et le Cameroun consommant sept chiffres, le composeur brulait
+    `2373810` sans jamais atteindre la partie distinctive.
+    """
+    empreinte = int(sha256(ancre.encode()).hexdigest()[:16], 16)
+    return f"{(empreinte + tentative * PAS_ESCALADE_MSISDN) % 100_000_000:08d}"
+
+
+def _chiffres_de(graine: str) -> str:
+    """Un corps de numero derive d'une chaine, par CALCUL et non par tirage.
+
+    Sert quand le client n'a pas de `sim_number` — la source interne. Le meme
+    client rend toujours le meme corps : `ENF-15` tient, et le numero reste une
+    fonction du client plutot que du hasard.
+    """
+    return f"{int(sha256(graine.encode()).hexdigest()[:12], 16):012d}"
+
+
 #: Voies types. Le nom precis de la voie n'a aucune portee metier — seul compte
 #: le rattachement au quartier, qui lui vient du referentiel reel.
 TYPES_DE_VOIE: Final[tuple[str, ...]] = ("Rue", "Avenue", "Boulevard", "Carrefour")
@@ -261,6 +317,16 @@ class Generateur:
         self._alea = random.Random(run_id.int)  # noqa: S311 — reproductibilite, pas de crypto
         self._emails_emis: set[str] = set()
         self._noms_emis: set[str] = set()
+        # `INV-09` parle d'unicite TRIPLE — msisdn, id_number, email. Seul
+        # l'email l'avait. Les deux registres manquants sont ici, au meme
+        # endroit et avec la meme portee : UN run (`EF-25` dit « au sein d'une
+        # meme execution »), ce qui est exactement la duree de vie de cet objet.
+        self._msisdns_emis: set[str] = set()
+        self._numeros_piece_emis: set[str] = set()
+        # Graine de secours pour le corps d'un MSISDN quand le client n'a pas de
+        # `sim_number` — la source interne senegalaise. Derivee du `run_id`, donc
+        # reproductible, et distincte par run.
+        self._graine_secours = f"{run_id.int:039d}"
         # `ENF-15` — L'ANCRE TEMPORELLE FAIT PARTIE DE LA REPRODUCTIBILITE.
         #
         # Le tirage derivait bien du `run_id`, mais les dates etaient calculees
@@ -458,13 +524,94 @@ class Generateur:
         )
 
     def numero_piece(self, country_code: str) -> str:
-        """D-CLI-3 : alphanumerique MAJUSCULES strict.
+        """D-CLI-3 : alphanumerique MAJUSCULES strict, et UNIQUE (`INV-09`).
 
         Un underscore ou un tiret provoque un HTTP 400 « id_number format
         invalid (expected alphanumeric uppercase only) ».
+
+        L'UNICITE EST LA NOTRE. `INV-09` parle d'unicite TRIPLE — `msisdn`,
+        `id_number`, `email` — et le serveur l'impose sur les trois. Deux
+        personnes ne partagent pas un numero de piece d'identite : dans la vraie
+        vie c'est l'objet meme du document. Une collision ne produirait donc pas
+        un doublon, elle produirait un HTTP 400, donc un client PERDU.
+
+        L'espace est vaste (10^9 par pays) et le registre ne coute rien. Le seul
+        cout reel serait de s'en passer et de perdre un client sur un tirage
+        malheureux — un cout asymetrique.
         """
-        chiffres = "".join(str(self._alea.randrange(10)) for _ in range(9))
-        return f"{country_code.upper()}{chiffres}"
+        prefixe = country_code.upper()
+        while True:
+            candidat = f"{prefixe}{self._alea.randrange(10**8, 10**9)}"
+            if candidat not in self._numeros_piece_emis:
+                self._numeros_piece_emis.add(candidat)
+                return candidat
+
+    def msisdn(
+        self, pays: str, referentiel: Any, matiere: str | None = None
+    ) -> tuple[str, Any]:
+        """`EF-27` + `EF-25` — un numero conforme au plan reel, et UNIQUE au run.
+
+        DEUX EXIGENCES DISTINCTES, LONGTEMPS CONFONDUES
+        -----------------------------------------------
+        `EF-27` demande que le numero respecte le regex de l'operateur telco du
+        pays. C'est fait depuis le 09/08 : `composer_msisdn()` porte les 12 plans
+        de numerotation reels, ponderes par les parts de marche (MTN CM 46 %,
+        Orange CM 43 %, Camtel 3 %) — un echantillon ou chaque operateur pese un
+        tiers ne ressemble a aucun marche africain.
+
+        `EF-25` demande « l'unicite des MSISDN generes AU SEIN D'UNE MEME
+        EXECUTION ». C'est une exigence SEPAREE, et elle etait absente : aucun
+        registre n'existait. Le calcul du 11/08 : pour un operateur dominant,
+        l'espace utile tourne autour de 10^7 ; a 500 clients par pays, la
+        probabilite de collision est d'environ 1,25 % par pays, soit ~5 % sur une
+        campagne de quatre pays. Une chance sur vingt de perdre un client par
+        campagne — pas negligeable, et le serveur ne pardonne pas : `INV-CLI-01`
+        rend un HTTP 400 « Client already exists ».
+
+        CE QUI RESTE DE FAKER, EXACTEMENT
+        ---------------------------------
+        `matiere` est le `sim_number` de Faker, et le numero produit en est une
+        FONCTION DETERMINISTE — meme client, meme numero — sans en etre une
+        reprise chiffre pour chiffre. La nuance n'est pas cosmetique, et j'ai mis
+        deux versions a l'admettre : `composer_msisdn` reecrit de toute facon le
+        numero dans le plan de l'operateur (`237` + `67` + sept chiffres), donc
+        les chiffres de Faker ne survivent JAMAIS litteralement. Pretendre le
+        contraire m'a fait passer un corps prefixe par l'indicatif pays, que le
+        composeur tronquait avant d'atteindre la partie distinctive.
+
+        L'ancrage qui compte est la reproductibilite par client (`ENF-15`), et
+        elle est preservee. Ce qui se perd est une fidelite qui n'existait pas.
+
+        Quand la matiere manque — la source interne senegalaise n'a pas de
+        `sim_number`, et fabriquer un faux serait l'invention arbitraire que le
+        CDC interdit — l'ancre est le `client_id`, transmis par l'appelant. Le
+        numero reste une fonction du client, jamais d'un hasard.
+
+        Ce qui vient d'`alea` (donc du `run_id`) : le choix de l'operateur et,
+        quand le plan en offre plusieurs, la variante de prefixe. Reproductible
+        par run, comme `ENF-15` l'exige.
+        """
+        # DEFAUT DE MA PREMIERE VERSION, attrape par les tests dans la minute :
+        # le repli derivait du RUN (`_graine_secours`) et non du CLIENT. Les 500
+        # Senegalais — la source interne n'a pas de `sim_number` — partageaient
+        # donc la MEME base, et le registre les rejetait tous : `SN 4/25`,
+        # « quota sature : 62 ». Un repli doit rester une fonction du client,
+        # sinon il n'ancre rien et il collisionne par construction.
+        ancre = str(matiere or self._graine_secours)
+        for tentative in range(TENTATIVES_MSISDN_MAX):
+            # Escalade DETERMINISTE : le meme client au meme rang de tentative
+            # rend toujours le meme corps. Pas un nouveau tirage au hasard.
+            numero, operateur = referentiel.composer_msisdn(
+                pays, _corps_msisdn(ancre, tentative), self._alea
+            )
+            if numero not in self._msisdns_emis:
+                self._msisdns_emis.add(numero)
+                return numero, operateur
+        raise InvariantViole(
+            f"{pays} : {TENTATIVES_MSISDN_MAX} tentatives sans MSISDN inedit — "
+            f"{len(self._msisdns_emis)} deja emis. EF-25 exige l'unicite au sein de "
+            "l'execution ; emettre un doublon rendrait un HTTP 400 et perdrait le client."
+        )
 
     def email(self, first_name: str, last_name: str) -> str:
         """Adresse unique par run, sur un domaine qui n'existe pas.

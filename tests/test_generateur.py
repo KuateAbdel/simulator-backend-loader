@@ -191,3 +191,66 @@ class TestAucunRepliSilencieux:
         from app.services.generateur import prenom
 
         assert prenom("MALE", 0) != prenom("FEMALE", 0)
+
+
+class TestMsisdnUnicite:
+    """`EF-25` — « unicite des MSISDN generes au sein d'une meme execution ».
+
+    Ces trois tests scellent un defaut que **la suite n'avait pas attrape** : je
+    l'ai trouve en mesurant 2000 clients a la main. Le corps etait pris
+    litteralement chez Faker, or un `sim_number` depouille commence par
+    l'indicatif pays et `composer_msisdn` consomme le corps depuis la position 0
+    — le Cameroun brulait ses sept chiffres sur `2373810` sans jamais atteindre
+    la partie distinctive. Echec au HUITIEME client.
+
+    Le premier test rejoue exactement cette matiere : des numeros qui ne
+    divergent que dans leurs chiffres de poids faible, c'est-a-dire le cas que
+    le plan de numerotation tronque.
+    """
+
+    @pytest.fixture
+    def referentiel(self):  # type: ignore[no-untyped-def]
+        from pathlib import Path
+
+        from app.services.geographie import charger_referentiel
+
+        return charger_referentiel(Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx"))
+
+    @pytest.mark.parametrize("pays", ["CM", "CI", "BF", "SN"])
+    def test_cinq_cents_numeros_a_suffixe_variable_restent_distincts(
+        self, generateur: Generateur, referentiel, pays: str  # type: ignore[no-untyped-def]
+    ) -> None:
+        indicatif = referentiel.indicatif(pays)
+        emis = {
+            generateur.msisdn(pays, referentiel, f"+{indicatif}{38000000 + rang}")[0]
+            for rang in range(500)
+        }
+        assert len(emis) == 500, f"{pays} : {500 - len(emis)} collisions"
+
+    def test_tous_conformes_au_plan_de_numerotation(
+        self, generateur: Generateur, referentiel  # type: ignore[no-untyped-def]
+    ) -> None:
+        """`EF-27` — l'unicite ne doit pas s'acheter en sortant du plan reel."""
+        for rang in range(200):
+            numero, operateur = generateur.msisdn(
+                "CM", referentiel, f"+237{38000000 + rang}"
+            )
+            assert referentiel.operateur_du_msisdn(numero, "CM") is not None
+            assert operateur is not None
+
+    def test_le_meme_client_rend_le_meme_numero(self, referentiel) -> None:  # type: ignore[no-untyped-def]
+        """`ENF-15` — l'ancrage au client survit a la dispersion. Deux
+        generateurs du meme run, meme matiere, meme numero."""
+        a = Generateur(RUN_ID).msisdn("CM", referentiel, "+23738101955")[0]
+        b = Generateur(RUN_ID).msisdn("CM", referentiel, "+23738101955")[0]
+        assert a == b
+
+    def test_le_registre_refuse_de_rendre_un_doublon(
+        self, generateur: Generateur, referentiel  # type: ignore[no-untyped-def]
+    ) -> None:
+        """Deux clients DIFFERENTS ne partagent jamais un numero, meme si la
+        matiere de l'un est identique a celle de l'autre — cas reel : deux
+        Senegalais sans `sim_number` retombent sur le meme repli."""
+        premier = generateur.msisdn("CM", referentiel, "meme-matiere")[0]
+        second = generateur.msisdn("CM", referentiel, "meme-matiere")[0]
+        assert premier != second

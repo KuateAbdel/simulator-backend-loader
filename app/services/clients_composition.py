@@ -395,13 +395,29 @@ def composer(
         )
     devise = valider_devise_pays(devise_ref.code, pays, referentiel)
 
-    # Le MSISDN est le NOTRE (`D-CFG-1`). `composer_msisdn` respecte les 12 regex
-    # du referentiel et les parts de marche reelles.
-    chiffres = "".join(str(alea.randrange(10)) for _ in range(12))
-    msisdn, telco = referentiel.composer_msisdn(pays, chiffres, alea)
-    # `EF-27` — et cette fonction n'avait AUCUN appelant jusqu'ici. Elle porte
-    # l'exigence ; la laisser muette, c'est ne pas l'appliquer. Composer un
-    # numero et ne pas le revalider suppose que `composer_msisdn` est sans
+    # Le MSISDN est le NOTRE (`D-CFG-1`), et il passe par le GENERATEUR — pas
+    # par le referentiel en direct.
+    #
+    # DEUX CORRECTIONS DU 11/08, dans le meme geste :
+    #
+    # `EF-25` — l'unicite au sein de l'execution n'etait garantie par RIEN.
+    # Aucun registre n'existait, alors que `INV-09` parle d'unicite TRIPLE
+    # (msisdn, id_number, email) et que seul l'email l'avait. Le registre vit
+    # dans le generateur, dont la duree de vie EST celle du run : c'est
+    # exactement la portee que `EF-25` demande.
+    #
+    # L'ANCRAGE AU CLIENT, que j'avais perdu. `composer_msisdn` est concu pour
+    # que « le corps vienne de Faker, donc deux executions sur le meme client
+    # produisent le meme numero » — et je lui passais des chiffres tires au
+    # hasard. Le `sim_number` de Faker redevient la matiere ; il est inutilisable
+    # tel quel (aucun numero Faker n'est attribuable a un operateur, mesure du
+    # 09/08) mais il reste une matiere premiere legitime, comme le patronyme.
+    # Le `sim_number` quand il existe, le `client_id` sinon (source interne) —
+    # les DEUX identifient le client. Jamais une graine globale : le repli
+    # doit ancrer autant que la matiere qu'il remplace.
+    msisdn, telco = generateur.msisdn(pays, referentiel, faker.msisdn or faker.client_id)
+    # `EF-27` — cette fonction portait l'exigence et n'avait AUCUN appelant.
+    # Composer un numero sans le revalider supposerait `composer_msisdn` sans
     # defaut : on ne se croit pas sur parole a l'echelle de 2000 clients.
     valider_msisdn_operateur(msisdn, pays, referentiel)
 
