@@ -113,9 +113,6 @@ class ProduitCollecte:
     montant_min: float
     montant_max: float
     taux: float
-    #: True pour les 2 produits deja presents en base : ils sont RETROUVES,
-    #: jamais recrees, et gardent donc leur nom d'origine sans prefixe.
-    preexistant: bool = False
     #: LE TERME D'UN DEPOT A TERME — ajoute le 12/08 sur remarque de Yaniv.
     #:
     #: « CASH_DAT il faut une duree qu'il faut attribuer. » C'est juste, et le
@@ -147,23 +144,31 @@ class ProduitCollecte:
 
     @property
     def nom_recherche(self) -> str:
-        """Le nom sous lequel chercher en base (GET-avant-POST)."""
-        return self.nom if self.preexistant else f"{PREFIXE_DONNEES}{self.nom}"
+        """Le nom sous lequel chercher en base (`GET`-avant-`POST`).
+
+        TOUJOURS prefixe depuis le 12/08. Le drapeau `preexistant` qui rendait ce
+        nom parfois nu a disparu avec les deux produits qu'il servait : nous ne
+        consommons plus les produits de l'environnement, donc plus aucun produit
+        de notre catalogue ne porte un nom non prefixe. `CR-07`/`EF-63` — chaque
+        entite generee est identifiable, sans exception."""
+        return f"{PREFIXE_DONNEES}{self.nom}"
 
 
 #: Catalogue COLLECT cible — croisement complet PolicyType x Category (D-PRD-9).
 #: Les noms sont REELS : « Collecte Cacao » est un produit d'export camerounais,
 #: coherent avec « plastique » deja en base. Jamais « Produit Test 1 ».
 CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
+    # NOTRE produit d'entree, et non celui de l'environnement — decision de
+    # Yaniv du 12/08 : « on ne peut pas batir un truc pourri comme le service
+    # le fait ». Voir `PRODUITS_ENVIRONNEMENT` plus bas pour ce qu'on refuse.
     ProduitCollecte(
-        "Cotisation 20000/mois",
+        "Cotisation Individuelle 20000/mois",
         PolicyType.CASH,
         ProductCategory.INDIVIDUAL,
         PolicyMeasure.KILOGRAM,
         1000.0,
         1000000.0,
         5.0,
-        preexistant=True,
     ),
     ProduitCollecte(
         "Cotisation Commercants",
@@ -195,14 +200,16 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         duree_mois=12,
     ),
     ProduitCollecte(
-        "plastique",
+        "Collecte Plastique",
         PolicyType.PRODUCT,
+        # `LITER` et non `KILOGRAM` : le plastique de recuperation se mesure au
+        # volume, et c'est aussi ce que porte le produit de l'environnement.
+        # `D-PRD-8` — la mesure est un choix metier, jamais un defaut.
         ProductCategory.INDIVIDUAL,
-        PolicyMeasure.KILOGRAM,
+        PolicyMeasure.LITER,
         100.0,
         500000.0,
         0.0,
-        preexistant=True,
     ),
     # D-PRD-8 : `measure` toujours choisi explicitement. Le cacao se pese —
     # KILOGRAM est un choix metier, pas la valeur que la WebApp injecte en dur.
@@ -238,6 +245,34 @@ def duree_mois_du_produit(nom: str) -> int | None:
     un terme dans FinZuu — le produit n'a pas de champ pour le porter.
     """
     return DUREE_MOIS_PAR_NOM.get(nom)
+
+
+#: LES DEUX PRODUITS DE L'ENVIRONNEMENT QUE NOUS N'UTILISONS PLUS — 12/08.
+#:
+#: `D-PRD-9` les faisait RETROUVER plutot que recreer : ils existaient deja avec
+#: des abonnes, et product-service n'a ni unicite ni `DELETE`. La regle etait
+#: bonne ; ce qu'elle ignorait, c'est ce qu'ils CONTIENNENT.
+#:
+#: MESURE DU 12/08 sur le serveur TEST :
+#:
+#:   « Cotisation 20000/mois »   interest_rate = 99,0 %   amount 1 000 -> 100 000
+#:   « plastique »               interest_rate = 22,0 %   amount 3,0 -> 3,0
+#:
+#: Le produit d'ENTREE de nos 1600 clients INDIVIDUAL portait donc 99 % d'interet
+#: mensuel, et « plastique » n'acceptait qu'une quantite de EXACTEMENT 3. Aucun
+#: des deux ne porte le prefixe `DEMO_`, et « Cotisation 20000/mois » est deja en
+#: DOUBLE en base (`ANO-PRD-UNIQ-01`).
+#:
+#: Trois raisons de ne plus s'en servir, et la troisieme suffit :
+#:   1. Presenter 99 % d'interet mensuel a un bailleur decredibilise la demo.
+#:   2. Attacher 1600 clients `DEMO_` a un produit NON prefixe casse `CR-07` :
+#:      une purge ne les retrouverait pas.
+#:   3. Ce sont des entites PARTAGEES. La regle du Loader est de ne jamais
+#:      ecrire sur le partage — et une souscription ecrit.
+#:
+#: Ils restent SIGNALES au rapport, jamais consommes : l'environnement est un
+#: fait qu'on constate, pas une dependance qu'on subit.
+PRODUITS_ENVIRONNEMENT: Final[tuple[str, ...]] = ("Cotisation 20000/mois", "plastique")
 
 
 def charger_loan_json(chemin: Path) -> list[ProduitCredit]:
@@ -411,7 +446,12 @@ def payloads_lending(produits: list[ProduitCredit]) -> list[dict[str, Any]]:
 
 
 def payloads_collect() -> list[dict[str, Any]]:
-    """Les 4 produits COLLECT a creer. Les 2 preexistants sont exclus."""
+    """Les SIX produits COLLECT a creer — croisement complet PolicyType x Category.
+
+    Ils etaient quatre jusqu'au 12/08 : deux venaient de l'environnement
+    (`D-PRD-9`). Mesure du jour : ces deux-la portent 99 % d'interet mensuel et
+    une fourchette de 3 a 3. Voir `PRODUITS_ENVIRONNEMENT`.
+    """
     return [
         {
             "type": ProductType.COLLECT.value,
@@ -423,5 +463,4 @@ def payloads_collect() -> list[dict[str, Any]]:
             "subscription_fees": 0.0,
         }
         for produit in CATALOGUE_COLLECT
-        if not produit.preexistant
     ]

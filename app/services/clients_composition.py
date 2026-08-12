@@ -268,6 +268,9 @@ class ClientCompose:
     devise: str
     categorie: ClientCategory
     segment: ClientSegment
+    #: `EF-67` — l'un des quatre profils de l'Annexe D.1. `None` seulement sur un
+    #: chemin de composition qui ne le fournit pas ; jamais en exploitation.
+    profil_comportemental: str | None
     canal: SubscriptionChannel
     langue: Language
     ancrage: AncrageGeographique
@@ -343,6 +346,7 @@ def composer(
     jeune: bool,
     occupation_imposee: str | None = None,
     segment: ClientSegment | None = None,
+    profil_comportemental: str | None = None,
 ) -> ClientCompose:
     """Traduit un client Faker en client onboardable. **Aucun appel reseau.**
 
@@ -426,6 +430,8 @@ def composer(
         ClientCategory.CORPORATE if faker.est_business else ClientCategory.INDIVIDUAL
     )
     identite = generateur.identite(
+        # `CR-03` — l'identite est fonction du CLIENT, jamais du run.
+        ancre_client=faker.client_id,
         first_name=faker.prenom,
         last_name=faker.nom,
         gender=genre.value,
@@ -450,6 +456,12 @@ def composer(
         telco=telco.short_name,
         devise=devise,
         categorie=categorie,
+        # `EF-67` / `UC-01` — le profil est une propriete du CLIENT, attribuee a
+        # sa CREATION. Decide par l'appelant, comme `segment`, parce que
+        # `ajuster_poids_profil()` vit dans l'executeur avec les autres regles de
+        # distribution. `D-PRET-0` : aucun pret n'est cree — le profil dit
+        # comment ce client REMBOURSERAIT, il ne rembourse rien.
+        profil_comportemental=profil_comportemental,
         # `A-02` — DECIDE PAR L'APPELANT, comme `jeune` et `occupation_imposee`.
         #
         # La famille A ne porte aucun champ de scoring : les deux segments de

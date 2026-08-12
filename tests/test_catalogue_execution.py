@@ -24,7 +24,7 @@ from app.clients.contracts import ProductType
 from app.core.cdc import TAUX_USURE_MAX_ANNUEL_PCT
 from app.models.enums import RunMode, RunStatus
 from app.services.catalogue import (
-    CATALOGUE_COLLECT,
+    PRODUITS_ENVIRONNEMENT,
     charger_loan_json,
     payloads_collect,
     payloads_lending,
@@ -46,20 +46,26 @@ def _tous_les_payloads() -> list[dict[str, Any]]:
 class TestLeCompteDuCdc:
     """`UC-11` : 12 produits au total, dont 10 crees par le Loader."""
 
-    def test_dix_creations_exactement(self) -> None:
-        """6 LENDING (dedoublement `D-PRD-4`) + 4 COLLECT."""
+    def test_douze_creations_exactement(self) -> None:
+        """6 LENDING (dedoublement `D-PRD-4`) + 6 COLLECT.
+
+        Elles etaient DIX jusqu'au 12/08 : deux produits COLLECT venaient de
+        l'environnement (`D-PRD-9`). Mesure du jour : ils portent 99 % d'interet
+        mensuel et une fourchette de 3 a 3 — voir `PRODUITS_ENVIRONNEMENT`.
+        """
         payloads = _tous_les_payloads()
-        assert len(payloads) == CREATIONS_ATTENDUES == 10
+        assert len(payloads) == CREATIONS_ATTENDUES == 12
 
-    def test_les_deux_preexistants_ne_sont_jamais_dans_les_payloads(self) -> None:
-        """`D-PRD-9` — « Cotisation 20000/mois » et « plastique » sont en base."""
-        preexistants = {p.nom_recherche for p in CATALOGUE_COLLECT if p.preexistant}
-        assert len(preexistants) == 2
+    def test_les_douze_du_CDC_sont_desormais_TOUTES_les_notres(self) -> None:
+        """`UC-11` annonce douze produits au catalogue. Ils sont maintenant douze
+        CREATIONS : le catalogue vu par nos clients est entierement le notre,
+        entierement prefixe, donc entierement reversible (`CR-07`)."""
+        assert CREATIONS_ATTENDUES == PRODUITS_ATTENDUS == 12
+
+    def test_aucun_produit_de_l_environnement_dans_les_payloads(self) -> None:
         noms_emis = {str(p["name"]) for p in payloads_collect()}
-        assert not (noms_emis & preexistants)
-
-    def test_dix_plus_deux_font_les_douze_du_cdc(self) -> None:
-        assert CREATIONS_ATTENDUES + 2 == PRODUITS_ATTENDUS == 12
+        for refuse in PRODUITS_ENVIRONNEMENT:
+            assert refuse not in noms_emis
 
     def test_le_split_D_PRD_4_produit_six_lending_a_partir_de_quatre(self) -> None:
         """`BNPL` et `ReadyToGo` portent `Category: Any`, refuse par l'enum

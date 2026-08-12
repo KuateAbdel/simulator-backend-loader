@@ -320,6 +320,9 @@ class ExecuteurOrganisation:
             quartier=quartier,
             telephone=telephone,
             jeune=False,
+            # `CR-03` — l'ancre du dirigeant est sa Company, stable d'un run a
+            # l'autre puisque la raison sociale l'est (mesure du 12/08).
+            ancre_client=f"dirigeant:{raison}",
             occupation="Dirigeant",
             latitude=adresse.latitude,
             longitude=adresse.longitude,

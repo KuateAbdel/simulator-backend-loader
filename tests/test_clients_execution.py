@@ -31,6 +31,7 @@ from app.clients.base import ErreurService
 from app.clients.client_service import SOUSCRIPTIONS_MAX
 from app.clients.contracts import ClientCategory, ClientSegment, ProductType
 from app.clients.faker_service import CategorieClient, ClientFaker
+from app.core.cdc import PROFILS_COMPORTEMENTAUX, TOLERANCE_DISTRIBUTION_POINTS
 from app.core.configuration import ConfigurationExecution
 from app.models.enums import EtatConsommationFaker, RunMode, RunStatus
 from app.repositories.faker_ledger import ConsommationIncoherente
@@ -501,15 +502,53 @@ class TestQuotaPays:
         assert quota.reserver(_tirage(genre="WOMAN", seed=5)) is None, "femmes saturees"
         assert quota.reserver(_tirage(genre="MAN", seed=6)) is not None
 
-    def test_les_jeunes_sont_attribues_jusqu_a_la_cible_puis_plus_jamais(self) -> None:
-        quota = QuotaPays(pays="CM", cible=5)  # jeunes cible = 3
+    def test_les_jeunes_sont_ENTRELACES_et_non_servis_en_bloc(self) -> None:
+        """`EF-22` — le compte exact ne suffit pas : l'ORDRE compte aussi.
+
+        Ce test exigeait `[True, True, True]` en tete, c'est-a-dire l'artefact
+        lui-meme. Sur 1000 clients, cela faisait des 600 PREMIERS clients de
+        chaque pays des moins de 25 ans, et des 400 suivants des plus ages —
+        visible sur n'importe quel inventaire trie par date de creation.
+
+        Et l'artefact en a produit un second, bien plus grave : le quota des
+        profils comportementaux etant glouton, les 600 jeunes vidaient le stock de
+        `BON_PAYEUR` avant qu'un seul client age n'arrive. Mesure du 12/08 : moins
+        de 25 ans -> 83,3 % de BON_PAYEUR et 0 % de DEFAUT_TOTAL, quand l'Annexe
+        D.2 dit l'exact contraire. L'ajustement de Duhamel etait INVERSE par un
+        ordonnancement.
+
+        La suite de Bresenham rend exactement `cible_jeunes` positifs sur `cible`
+        rangs, repartis.
+        """
+        quota = QuotaPays(pays="CM", cible=100)  # jeunes 60, corp 20, femmes 67
         jeunes = [
             r.jeune
-            for seed in range(5)
-            if (r := quota.reserver(_tirage(genre="WOMAN" if seed % 3 else "MAN", seed=seed)))
+            for seed in range(200)
+            if (
+                r := quota.reserver(
+                    _tirage(
+                        genre="WOMAN" if seed % 3 else "MAN",
+                        business=seed % 5 == 0,
+                        seed=seed,
+                    )
+                )
+            )
         ]
-        assert jeunes.count(True) == 3
-        assert jeunes[:3] == [True, True, True]
+        assert quota.jeunes == quota.cible_jeunes == 60, "le compte reste EXACT"
+
+        # LA PROPRIETE QUI COMPTE : les jeunes sont REPARTIS. Sur le premier
+        # tiers de la sequence on doit en trouver environ un tiers — jamais la
+        # totalite, ce que faisait la version en bloc.
+        tiers = len(jeunes) // 3
+        dans_le_premier_tiers = jeunes[:tiers].count(True)
+        # Une repartition parfaite en donne UN TIERS. Mes premieres bornes
+        # (0,40-0,45) etaient fausses : la mesure rendait 0,333, soit exactement
+        # le tiers attendu. Le code avait raison, l'assertion avait tort.
+        assert 0.28 <= dans_le_premier_tiers / 60 <= 0.40, (
+            f"{dans_le_premier_tiers}/60 jeunes dans le premier tiers — la version "
+            "en bloc en mettait 60/60, et le quota des profils comportementaux "
+            "s'en trouvait fausse (mesure du 12/08 : <25 ans -> 0 % DEFAUT_TOTAL)"
+        )
 
     def test_l_agriculture_est_servie_en_premier_puis_les_trois_autres_familles(self) -> None:
         """`EF-24` : 20 % agricole, le reste en transports/commerce/services."""
@@ -1583,3 +1622,143 @@ class TestApresOnboardingRienNeLeve:
         assert quota.faits == 40 == len(rapport.crees)
         assert quota.corporate_faits == quota.cible_corporate
         assert quota.femmes == quota.cible_femmes
+
+
+class TestProfilComportementalEF67:
+    """`EF-67` + `EF-68` + `CR-09` — l'integration de la methodologie Duhamel.
+
+    « Le Loader DOIT attribuer a **chaque client genere** un profil comportemental
+    de remboursement parmi quatre valeurs » — pas a chaque APPROVED, pas a chaque
+    pret. `D-PRET-0` : le Loader ne fait AUCUN pret ; le profil dit comment ce
+    client REMBOURSERAIT, il ne rembourse rien.
+    """
+
+    async def _run(self, cible: int = 1000) -> Any:
+        return await _executeur(
+            mode=RunMode.REAL, nb_clients=cible, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=FauxClientService(),
+            arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+
+    def test_les_cibles_somment_EXACTEMENT_a_la_cible_du_pays(self) -> None:
+        """Sans cela, le dernier client ne trouverait aucun quota ouvert. Les
+        poids du CDC sont des entiers dont la somme fait 100, mais arrondir
+        chacun separement peut perdre une unite."""
+        for cible in (1, 7, 100, 333, 500, 1000, 2000):
+            quota = QuotaPays(pays="CM", cible=cible)
+            assert sum(quota.cible_profils.values()) == cible, cible
+
+    async def test_CR_09_la_distribution_est_EXACTE(self) -> None:
+        """`CR-09` : « bon payeur entre 47 et 53 %, retard 22-28, defaut partiel
+        10-16, defaut total 9-15 ». Tenu par QUOTA, pas par calibration.
+
+        Un tirage pondere simple donnait `BON_PAYEUR` a 54,2 % — hors borne. La
+        cause n'etait pas un defaut de code mais l'arithmetique de DEUX exigences
+        qui se composent : `EF-22` fait une population aux deux tiers feminine, et
+        `EF-68` donne aux femmes `BON_PAYEUR x 1,22`.
+        """
+        rapport = await self._run()
+        quota = rapport.quotas[0]
+        total = sum(quota.profils_faits.values())
+        assert total == quota.cible
+        for nom, attendu in PROFILS_COMPORTEMENTAUX.items():
+            obtenu = quota.profils_faits[nom] / total * 100
+            assert abs(obtenu - attendu) <= TOLERANCE_DISTRIBUTION_POINTS, (
+                f"{nom} : {obtenu:.1f} % pour {attendu} % — hors des bornes CR-09"
+            )
+
+    async def test_EF_68_les_femmes_obtiennent_de_MEILLEURS_profils(self) -> None:
+        """Annexe D.2 : « Genre feminin -> renforce le profil bon payeur, reduit
+        le defaut total ». Le quota ne doit pas ECRASER cette discrimination.
+
+        Une premiere version le faisait : par preference stricte, `BON_PAYEUR`
+        restait premier pour presque tout le monde (les coefficients vont de x0,72
+        a x1,22 face a des poids 50/25/13/12), donc l'ordre ne changeait jamais et
+        le quota degenerait en « premier arrive, premier servi ». Mesure : moins de
+        25 ans et 25 ans et plus obtenaient RIGOUREUSEMENT le meme 50,0 %.
+        """
+        vus = self._capturer(await self._run())
+        femmes = [p for femme, _, p in vus if femme]
+        hommes = [p for femme, _, p in vus if not femme]
+        assert _part(femmes, "BON_PAYEUR") > _part(hommes, "BON_PAYEUR")
+        assert _part(femmes, "DEFAUT_TOTAL") < _part(hommes, "DEFAUT_TOTAL")
+
+    async def test_EF_68_les_moins_de_25_ans_defaillent_DAVANTAGE(self) -> None:
+        """Annexe D.2 : « Age inferieur a 22 ans -> renforce le defaut total » et
+        « Age entre 35 et 65 ans -> renforce le profil bon payeur ».
+
+        Ce test a echoue dans les DEUX sens avant d'etre juste : d'abord inverse
+        (83,3 % de BON_PAYEUR chez les jeunes, a cause du quota d'age servi en
+        BLOC), puis nul (50,0 % partout, a cause de la preference stricte).
+        """
+        vus = self._capturer(await self._run())
+        jeunes = [p for _, jeune, p in vus if jeune]
+        ages = [p for _, jeune, p in vus if not jeune]
+        assert _part(jeunes, "BON_PAYEUR") < _part(ages, "BON_PAYEUR"), (
+            "un moins de 25 ans ne doit pas etre MEILLEUR payeur qu'un client "
+            "de 35-65 ans — l'Annexe D.2 dit l'inverse"
+        )
+
+    def test_le_profil_est_ANCRE_au_client_pas_au_run(self) -> None:
+        """`CR-03` — sinon une reprise changerait le profil du meme client, et
+        `CR-09` mesurerait une distribution differente a chaque run."""
+        tirage = _tirage("CM", seed=7)
+        a = QuotaPays(pays="CM", cible=1000, reference_age=date(2026, 8, 12))
+        b = QuotaPays(pays="CM", cible=1000, reference_age=date(2026, 8, 12))
+        assert a.reserver(tirage).profil == b.reserver(tirage).profil  # type: ignore[union-attr]
+
+    def test_aucun_profil_hors_des_quatre_valeurs_officielles(self) -> None:
+        quota = QuotaPays(pays="CM", cible=200)
+        for seed in range(400):
+            r = quota.reserver(_tirage(genre="WOMAN" if seed % 3 else "MAN", seed=seed))
+            if r is not None:
+                assert r.profil in PROFILS_COMPORTEMENTAUX, r.profil
+
+    def test_rendre_defait_AUSSI_le_profil(self) -> None:
+        """Sans cela, un client echoue laisserait son profil compte, et `CR-09`
+        annoncerait une distribution que la base ne porte pas."""
+        quota = QuotaPays(pays="CM", cible=100)
+        reservation = quota.reserver(_tirage("CM", seed=1))
+        assert reservation is not None
+        avant = dict(quota.profils_faits)
+        quota.rendre(reservation)
+        assert quota.profils_faits[reservation.profil] == avant[reservation.profil] - 1
+
+    async def test_le_profil_ARRIVE_sur_le_client_compose(self) -> None:
+        """Un profil calcule mais non porte serait la dix-septieme occurrence du
+        defaut recurrent : ecrit, teste, coche, cable a rien."""
+        ex = _executeur(
+            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=FauxClientService(),
+            arbre=FauxArbre(_kiosques("CM")),
+        )
+        vus: list[str | None] = []
+        origine = ex._sceller
+
+        async def espion(cid: str, fiche: Any, k: Any, compose: Any, rap: Any) -> None:
+            vus.append(compose.profil_comportemental)
+            await origine(cid, fiche, k, compose, rap)
+
+        ex._sceller = espion  # type: ignore[method-assign]
+        await ex.executer()
+        assert len(vus) == 40
+        assert all(p in PROFILS_COMPORTEMENTAUX for p in vus), vus
+
+    @staticmethod
+    def _capturer(_rapport: Any) -> list[tuple[bool, bool, str]]:
+        """Rejoue les reservations pour lire genre / age / profil ensemble."""
+        quota = QuotaPays(pays="CM", cible=1000, reference_age=date(2026, 8, 12))
+        vus = []
+        for seed in range(3000):
+            if quota.faits >= quota.cible:
+                break
+            r = quota.reserver(
+                _tirage(genre="WOMAN" if seed % 3 else "MAN", business=seed % 5 == 0, seed=seed)
+            )
+            if r is not None:
+                vus.append((r.femme, r.jeune, r.profil))
+        return vus
+
+
+def _part(profils: list[str], nom: str) -> float:
+    return profils.count(nom) / (len(profils) or 1)

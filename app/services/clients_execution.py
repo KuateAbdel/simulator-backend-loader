@@ -75,7 +75,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import date
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Final
 from uuid import NAMESPACE_OID, UUID, uuid5
@@ -101,6 +102,7 @@ from app.core.cdc import (
     PART_CORPORATE,
     PART_CORPORATE_AGRICOLE,
     PART_MOINS_DE_25_ANS,
+    PROFILS_COMPORTEMENTAUX,
 )
 from app.core.configuration import ConfigurationExecution
 from app.models.enums import (
@@ -119,7 +121,11 @@ from app.services.clients_composition import (
     composer,
     occupation_du_secteur,
 )
-from app.services.generateur import CLES_PROFIL_INTERNE, Generateur
+from app.services.generateur import (
+    CLES_PROFIL_INTERNE,
+    Generateur,
+    date_de_naissance_du_client,
+)
 from app.services.geographie import ReferentielGeo
 from app.services.source_interne import (
     SourceIdentites,
@@ -284,6 +290,152 @@ def _combien_de_produits(segment: ClientSegment, alea: random.Random) -> int:
     return SOUSCRIPTIONS_MAX
 
 
+#: `EF-67` — les quatre profils, dans l'ordre de l'Annexe D.1. L'ORDRE compte :
+#: le tirage pondere parcourt la distribution cumulee dans cet ordre.
+PROFILS_ORDONNES: Final[tuple[str, ...]] = (
+    "BON_PAYEUR",
+    "RETARD_PUIS_PAIEMENT",
+    "DEFAUT_PARTIEL",
+    "DEFAUT_TOTAL",
+)
+
+#: Seuil de l'Annexe D.2, derniere ligne : « Solde Mobile Money superieur a
+#: 150 000 FCFA -> renforce le profil bon payeur ».
+SEUIL_MOBILE_MONEY_FCFA: Final = 150_000.0
+
+
+def ajuster_poids_profil(
+    genre: str,
+    age: int | None,
+    segment: ClientSegment,
+    mobile_money: float,
+) -> dict[str, float]:
+    """`EF-68` — l'ajustement contextuel de l'Annexe D.2, porte depuis Duhamel.
+
+    SEPT DES NEUF REGLES, ET LES DEUX AUTRES SONT IGNOREES A DESSEIN
+    ---------------------------------------------------------------
+    L'Annexe D.2 pondere les quatre profils selon neuf regles. Mesure du 12/08 :
+
+      OUI  genre feminin / masculin        `faker.genre`
+      OUI  age < 22 / entre 35 et 65       date de naissance — que NOUS composons
+      OUI  segment Very High / Very Low    `segment_client()` (`A-02`)
+      OUI  solde Mobile Money > 150 000    `solde_initial()` (`A-09`)
+      NON  historique de remboursement     absent de la famille A, et sans objet
+      NON  retard maximum                  absent de la famille A, et sans objet
+
+    Les deux dernieres exigent un historique de credit que la famille A ne porte
+    pas — et qui n'aurait aucun sens ici, puisque **le Loader ne fait pas de
+    prets** (`D-PRET-0`). `UC-01` prescrit exactement cette conduite : « Si une
+    caracteristique est absente du payload, la regle de ponderation
+    correspondante est **ignoree sans erreur** ».
+
+    LE LOADER SERT CETTE METHODE MIEUX QUE LE SCRIPT DONT IL LA REPREND
+    ------------------------------------------------------------------
+    Les deux regles d'age s'appliquent CHEZ NOUS. Chez Duhamel,
+    `_adjust_weights` lit `ctx.get("birth_date")` — champ qui n'existe dans AUCUN
+    payload Faker, ni famille A ni famille B (verifie le 09/08). Cette branche est
+    donc **du code mort dans son script**, et vivante dans le notre, parce que
+    nous composons la date de naissance.
+
+    LE PIEGE DE VOCABULAIRE, ET IL EST GRAVE
+    ----------------------------------------
+    `Very High` designe la **QUALITE** du client, pas son risque de defaut.
+    L'Annexe D.2 dit « Segment de risque Very High -> renforce le profil BON
+    PAYEUR », et le code de Duhamel le groupe avec `risk == "A"`, la meilleure
+    classe. Inverser ce sens produirait une population ou les MEILLEURS clients
+    font defaut — visible au premier tableau de bord.
+
+    Les coefficients sont ceux de `_adjust_weights`, valeur par valeur.
+    """
+    poids = {nom: float(PROFILS_COMPORTEMENTAUX[nom]) for nom in PROFILS_ORDONNES}
+
+    g = genre.strip().lower()
+    if g in ("f", "female", "femme", "woman", "w"):
+        poids["BON_PAYEUR"] *= 1.22
+        poids["RETARD_PUIS_PAIEMENT"] *= 1.10
+        poids["DEFAUT_PARTIEL"] *= 0.88
+        poids["DEFAUT_TOTAL"] *= 0.72
+    elif g in ("m", "male", "homme", "man"):
+        poids["BON_PAYEUR"] *= 0.94
+        poids["DEFAUT_TOTAL"] *= 1.08
+
+    if age is not None:
+        if age < 22:
+            poids["DEFAUT_PARTIEL"] *= 1.15
+            poids["DEFAUT_TOTAL"] *= 1.12
+            poids["BON_PAYEUR"] *= 0.92
+        elif age < 35:
+            poids["BON_PAYEUR"] *= 1.08
+            poids["RETARD_PUIS_PAIEMENT"] *= 1.05
+        elif age < 50:
+            poids["BON_PAYEUR"] *= 1.04
+        elif age < 65:
+            poids["BON_PAYEUR"] *= 1.10
+            poids["DEFAUT_TOTAL"] *= 0.85
+        else:
+            poids["BON_PAYEUR"] *= 1.06
+            poids["DEFAUT_PARTIEL"] *= 0.90
+
+    if segment is ClientSegment.VERY_HIGH:
+        poids["BON_PAYEUR"] *= 1.12
+        poids["DEFAUT_TOTAL"] *= 0.82
+    elif segment is ClientSegment.VERY_LOW:
+        poids["DEFAUT_TOTAL"] *= 1.18
+        poids["BON_PAYEUR"] *= 0.88
+
+    if mobile_money >= SEUIL_MOBILE_MONEY_FCFA:
+        poids["BON_PAYEUR"] *= 1.06
+    elif 0 < mobile_money < 20_000:
+        poids["DEFAUT_PARTIEL"] *= 1.05
+
+    total = sum(poids.values()) or 1.0
+    return {nom: poids[nom] / total for nom in PROFILS_ORDONNES}
+
+
+def age_revolu(naissance: date, reference: date | None = None) -> int:
+    """L'age en annees revolues — celui que l'Annexe D.2 pese.
+
+    Duhamel le derive de `scoring_year - birth_year`, une soustraction d'annees
+    qui se trompe de un an pour tout client dont l'anniversaire n'est pas encore
+    passe. On calcule l'age REEL : sur 2000 clients, l'approximation deplacerait
+    environ la moitie des cas limites d'une tranche a l'autre.
+    """
+    aujourd_hui = reference or date.today()
+    return (
+        aujourd_hui.year
+        - naissance.year
+        - ((aujourd_hui.month, aujourd_hui.day) < (naissance.month, naissance.day))
+    )
+
+
+def profil_comportemental(
+    faker: ClientFaker, segment: ClientSegment, age: int | None
+) -> str:
+    """`EF-67` / `UC-01` — le profil de CHAQUE client genere, a sa creation.
+
+    « Le Loader DOIT attribuer a **chaque client genere** un profil comportemental
+    de remboursement parmi quatre valeurs » — pas a chaque APPROVED, pas a chaque
+    pret. Le profil est une propriete du CLIENT ; un pret ne fait que la reveler.
+
+    ANCRE AU CLIENT, JAMAIS AU RUN. Meme lecon que `D-CLI-11` et `D-CLI-12` :
+    ancre sur `self._alea`, une reprise attribuerait un AUTRE profil au meme
+    client, et `CR-09` mesurerait une distribution qui change d'un run a l'autre.
+    """
+    poids = ajuster_poids_profil(
+        genre=faker.genre or "",
+        age=age,
+        segment=segment,
+        mobile_money=solde_initial(faker),
+    )
+    de_ce_client = random.Random(f"profil:{faker.client_id}")  # noqa: S311
+    tirage, cumul = de_ce_client.random(), 0.0
+    for nom in PROFILS_ORDONNES:
+        cumul += poids[nom]
+        if tirage <= cumul:
+            return nom
+    return PROFILS_ORDONNES[-1]
+
+
 def segment_client(faker: ClientFaker) -> ClientSegment:
     """Le `segment` emis a l'onboarding — `A-02`, recommandation appliquee.
 
@@ -340,6 +492,9 @@ class Reservation:
     femme: bool
     jeune: bool
     secteur: str
+    #: `EF-67` — le profil comportemental, DECIDE dans le temps sequentiel comme
+    #: `jeune` et `secteur`, pour la meme raison : c'est un quota.
+    profil: str = ""
 
 
 @dataclass(slots=True)
@@ -360,6 +515,16 @@ class QuotaPays:
     hommes: int = 0
     jeunes: int = 0
     agricoles: int = 0
+    #: `EF-67` / `CR-09` — le compte par profil comportemental. Un dict et non
+    #: quatre champs : les quatre profils sont une distribution, pas quatre
+    #: proprietes independantes.
+    profils_faits: dict[str, int] = field(
+        default_factory=lambda: dict.fromkeys(PROFILS_ORDONNES, 0)
+    )
+    #: La reference d'age du run. `EF-68` pese l'age, et l'age depend d'une date
+    #: de reference : la figer ici rend le profil reproductible meme si le run
+    #: traverse minuit.
+    reference_age: date = field(default_factory=date.today)
     #: Les tirages ecartes, par motif — ils entrent au rapport, jamais au registre.
     ecartes: dict[str, int] = field(default_factory=dict)
 
@@ -386,6 +551,24 @@ class QuotaPays:
     @property
     def cible_agricoles(self) -> int:
         return round(self.cible_corporate * PART_CORPORATE_AGRICOLE)
+
+    @property
+    def cible_profils(self) -> dict[str, int]:
+        """`CR-09` — les quatre cibles, et leur somme vaut EXACTEMENT `cible`.
+
+        Les poids du CDC sont des pourcentages entiers dont la somme fait 100 ;
+        arrondir chacun separement peut neanmoins perdre ou gagner une unite. Le
+        dernier profil absorbe donc le reste, ce qui garantit que la somme des
+        cibles egale la cible du pays — sans quoi le dernier client ne trouverait
+        aucun quota ouvert.
+        """
+        cibles: dict[str, int] = {}
+        attribue = 0
+        for nom in PROFILS_ORDONNES[:-1]:
+            cibles[nom] = round(self.cible * PROFILS_COMPORTEMENTAUX[nom] / 100)
+            attribue += cibles[nom]
+        cibles[PROFILS_ORDONNES[-1]] = self.cible - attribue
+        return cibles
 
     # NOTE — il n'y a DELIBEREMENT aucun `categorie_ouverte()` ni
     # `genre_ouvert()` ici. Ces deux methodes ont existe, et leur seule existence
@@ -451,7 +634,34 @@ class QuotaPays:
 
         # `EF-22` — 60 % de moins de 25 ans. DECIDE par nous, jamais subi :
         # aucun champ d'age n'existe en famille A.
-        jeune = self.jeunes < self.cible_jeunes
+        #
+        # ENTRELACE, PLUS EN BLOC — correction du 12/08, et le defaut etait
+        # double.
+        #
+        # La version precedente ecrivait `jeune = self.jeunes < self.cible_jeunes`.
+        # Le compte final etait exact, mais l'ORDRE etait un artefact : les 600
+        # premiers clients de chaque pays etaient TOUS des moins de 25 ans, et les
+        # 400 suivants TOUS plus ages. Visible sur n'importe quel inventaire trie
+        # par date de creation — et invisible dans un rapport qui ne compte que
+        # des totaux.
+        #
+        # Le second defaut est celui qui l'a fait decouvrir. Le profil
+        # comportemental est un quota GLOUTON : il sert le mieux note d'abord.
+        # Avec une population ordonnee par age, les 600 jeunes vidaient le stock
+        # de `BON_PAYEUR` avant que le premier client age n'arrive. Mesure :
+        # moins de 25 ans -> 83,3 % de BON_PAYEUR et 0 % de DEFAUT_TOTAL, quand
+        # l'Annexe D.2 dit « age < 22 renforce le defaut total ». L'ajustement de
+        # Duhamel etait donc INVERSE par un artefact d'ordonnancement.
+        #
+        # La suite de Bresenham repartit les jeunes sur toute la sequence et rend
+        # EXACTEMENT `cible_jeunes` positifs sur `cible` rangs — propriete des
+        # suites de Beatty. Le plafond reste, en garde-fou : si des clients
+        # echouent et que les rangs sont rejoues, il empeche tout depassement.
+        rang = max(self.faits - 1, 0)
+        jeune = (
+            self.jeunes < self.cible_jeunes
+            and (rang * self.cible_jeunes) % self.cible < self.cible_jeunes
+        )
         if jeune:
             self.jeunes += 1
 
@@ -467,7 +677,82 @@ class QuotaPays:
                 autres = [f for f in OCCUPATIONS_PAR_SECTEUR if f != "AGRICULTURE"]
                 secteur = autres[self.corporate_faits % len(autres)]
 
-        return Reservation(business=business, femme=femme, jeune=jeune, secteur=secteur)
+        # `EF-67` + `EF-68` + `CR-09` — LE PROFIL COMPORTEMENTAL, ICI ET PAS
+        # AILLEURS.
+        #
+        # POURQUOI UN QUOTA ET NON UNE CALIBRATION. Mesure du 12/08 : en tirant le
+        # profil par simple ponderation, `BON_PAYEUR` sortait a 54,2 % pour une
+        # borne `CR-09` de 47-53 %. La cause n'est pas un defaut de code — c'est
+        # l'arithmetique de DEUX exigences qui se composent : `EF-22` fait une
+        # population aux deux tiers feminine, et `EF-68` donne aux femmes
+        # `BON_PAYEUR x 1,22`. L'agregat depasse mecaniquement.
+        #
+        # `CR-09` donne des bornes EXACTES et nous savons deja tenir des comptes
+        # exacts : c'est un quota, comme `EF-22` et `EF-23`. Le quota decide le
+        # COMBIEN ; l'ajustement de Duhamel decide le QUI. Un client bien note
+        # prend `BON_PAYEUR` s'il en reste ; sinon il descend d'un cran.
+        #
+        # Rien de la methodologie n'est trahi : les coefficients de
+        # `_adjust_weights` restent intacts, valeur par valeur. Ils cessent
+        # seulement d'etre une loterie pour devenir un ORDRE DE PREFERENCE.
+        profil = self._attribuer_profil(tirage, femme=femme, jeune=jeune)
+        return Reservation(
+            business=business, femme=femme, jeune=jeune, secteur=secteur, profil=profil
+        )
+
+    def _attribuer_profil(self, tirage: ClientFaker, *, femme: bool, jeune: bool) -> str:
+        """Le profil du client : son rang de preference, borne par le quota.
+
+        L'age vient de `date_de_naissance_du_client()`, desormais ancree au client
+        et donc calculable ICI, avant la composition. C'est cette correction
+        (`CR-03`, 12/08) qui rend les cinq tranches d'age de l'Annexe D.2
+        accessibles au moteur de quotas, la ou `reservation.jeune` n'en aurait
+        offert que deux.
+        """
+        naissance = date_de_naissance_du_client(
+            tirage.client_id, jeune=jeune, reference=self.reference_age
+        )
+        poids = ajuster_poids_profil(
+            genre="WOMAN" if femme else "MAN",
+            age=age_revolu(naissance, self.reference_age),
+            segment=segment_client(tirage),
+            mobile_money=solde_initial(tirage),
+        )
+        # TIRAGE PONDERE PARMI LES PROFILS ENCORE OUVERTS — et non « le mieux
+        # note d'abord ». La difference est tout, et la mesure l'a montree.
+        #
+        # PREMIERE VERSION : preference stricte, le profil de poids maximal
+        # d'abord. Elle donnait des totaux exacts et un `EF-68` MORT : mesure sur
+        # 1000 clients, moins de 25 ans et 25 ans et plus obtenaient
+        # rigoureusement 50,0 % de `BON_PAYEUR` et 12,0 % de `DEFAUT_TOTAL`.
+        #
+        # La raison est arithmetique. Les coefficients de l'Annexe D.2 vont de
+        # x0,72 a x1,22, face a des poids de base 50/25/13/12. `BON_PAYEUR` reste
+        # donc PREMIER pour la quasi-totalite des clients : l'ORDRE de preference
+        # ne change presque jamais, et le quota glouton degenere en « premier
+        # arrive, premier servi ». L'ajustement existait sans rien decider.
+        #
+        # Le tirage pondere, lui, transmet l'ecart : un client dont `BON_PAYEUR`
+        # pese 61 % au lieu de 50 % a reellement plus de chances de l'obtenir, et
+        # le plafond de quota garantit malgre tout le total exact. On tient les
+        # deux exigences a la fois : `CR-09` par le plafond, `EF-68` par le poids.
+        ouverts = [n for n in PROFILS_ORDONNES if self.profils_faits[n] < self.cible_profils[n]]
+        if ouverts:
+            total = sum(poids[n] for n in ouverts) or 1.0
+            # Ancre au CLIENT, jamais au run — meme lecon que `D-CLI-11`.
+            tirage_alea = random.Random(f"profil:{tirage.client_id}").random()  # noqa: S311
+            cumul = 0.0
+            for nom in ouverts:
+                cumul += poids[nom] / total
+                if tirage_alea <= cumul:
+                    self.profils_faits[nom] += 1
+                    return nom
+            self.profils_faits[ouverts[-1]] += 1
+            return ouverts[-1]
+        # Tous les quotas atteints : impossible tant que la somme des cibles egale
+        # la cible du pays, ce qu'un test scelle.
+        self.profils_faits[PROFILS_ORDONNES[-1]] += 1
+        return PROFILS_ORDONNES[-1]
 
     def rendre(self, reservation: Reservation) -> None:
         """Le client n'a pas abouti : on defait la reservation en entier.
@@ -486,6 +771,8 @@ class QuotaPays:
             self.hommes -= 1
         if reservation.jeune:
             self.jeunes -= 1
+        if reservation.profil:
+            self.profils_faits[reservation.profil] -= 1
 
     def ecarter(self, motif: str) -> None:
         self.ecartes[motif] = self.ecartes.get(motif, 0) + 1
@@ -496,7 +783,15 @@ class QuotaPays:
             f"Corp {self.corporate_faits}/{self.cible_corporate} · "
             f"Femmes {self.femmes}/{self.cible_femmes} · "
             f"<25ans {self.jeunes}/{self.cible_jeunes} · "
-            f"Agri {self.agricoles}/{self.cible_agricoles}"
+            f"Agri {self.agricoles}/{self.cible_agricoles}\n"
+            # `EF-67` / `CR-09` — la distribution comportementale, RENDUE. Un
+            # compteur exact que le rapport ne montre pas ne prouve rien : `D-01`
+            # fait de ce rapport « la derniere occasion de dire non ».
+            + "        profils : "
+            + " · ".join(
+                f"{nom.replace('_', ' ').lower()} {n}/{self.cible_profils[nom]}"
+                for nom, n in self.profils_faits.items()
+            )
         )
 
 
@@ -1182,6 +1477,7 @@ class ExecuteurClients:
         concurremment, et lire un compteur ici produisait un depassement de 6,7 %
         sur `EF-22` — mesure au premier essai a blanc.
         """
+        segment = segment_client(faker)
         try:
             ancrage = ancrer_sur_kiosque(kiosque, self._referentiel)
             compose = composer(
@@ -1196,11 +1492,18 @@ class ExecuteurClients:
                     if reservation.secteur
                     else None
                 ),
-                segment=segment_client(faker),
+                segment=segment,
             )
         except CompositionImpossible as erreur:
             rapport.refuses_avant_reseau.append((faker.client_id, str(erreur)[:200]))
             return None
+
+        # `EF-67` / `UC-01` — le profil vient de la RESERVATION, pas d'un tirage
+        # ici. Il a ete decide dans le temps SEQUENTIEL, ou les quotas se
+        # tiennent : la meme lecon que `jeune` et `secteur`, et pour la meme
+        # raison. Un profil tire dans le temps concurrent aurait produit sur
+        # `CR-09` l'ecart de 6,7 % que `EF-22` a connu au premier essai a blanc.
+        compose = replace(compose, profil_comportemental=reservation.profil)
 
         panier = self._panier(collect, compose)
         if not panier:

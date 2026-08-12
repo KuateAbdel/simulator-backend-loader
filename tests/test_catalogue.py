@@ -15,6 +15,7 @@ from app.clients.contracts import PolicyMeasure, PolicyType, ProductCategory
 from app.core.cdc import PREFIXE_DONNEES, TAUX_USURE_MAX_ANNUEL_PCT
 from app.services.catalogue import (
     CATALOGUE_COLLECT,
+    PRODUITS_ENVIRONNEMENT,
     ProduitCollecte,
     charger_loan_json,
     duree_mois_du_produit,
@@ -158,20 +159,45 @@ class TestCatalogueCollect:
             for categorie in (ProductCategory.INDIVIDUAL, ProductCategory.CORPORATE):
                 assert (type_policy, categorie) in croisements
 
-    def test_les_2_preexistants_ne_sont_jamais_recrees(self) -> None:
-        """« Cotisation 20000/mois » et « plastique » existent deja."""
-        a_creer = {str(p["name"]) for p in payloads_collect()}
-        assert not any("Cotisation 20000/mois" == n for n in a_creer)
-        assert not any("plastique" == n for n in a_creer)
-        assert len(payloads_collect()) == 4
+    def test_les_SIX_collect_sont_les_notres_aucun_de_l_environnement(self) -> None:
+        """DECISION DU 12/08 — `D-PRD-9` renversee sur mesure.
 
-    def test_les_preexistants_gardent_leur_nom_sans_prefixe(self) -> None:
-        """Ils ne sont pas notres : on les retrouve tels qu'ils sont."""
+        Ces deux produits etaient RETROUVES plutot que crees : ils existaient
+        deja avec des abonnes, et product-service n'a ni unicite ni `DELETE`. La
+        regle etait bonne ; ce qu'elle ignorait, c'est ce qu'ils CONTIENNENT.
+
+        Mesure du 12/08 sur le serveur TEST :
+            « Cotisation 20000/mois »  interest_rate 99,0 %  amount 1 000 -> 100 000
+            « plastique »              interest_rate 22,0 %  amount 3,0 -> 3,0
+
+        Le produit d'ENTREE de nos 1600 clients INDIVIDUAL portait 99 % d'interet
+        mensuel, et « plastique » n'acceptait qu'une quantite de exactement 3.
+        On ne batit pas un catalogue de demonstration sur les valeurs de test
+        d'un environnement partage.
+        """
+        a_creer = {str(p["name"]) for p in payloads_collect()}
+        assert len(a_creer) == 6, "croisement complet PolicyType x Category"
+        for refuse in PRODUITS_ENVIRONNEMENT:
+            assert refuse not in a_creer, f"{refuse} porte des valeurs de test"
+
+    def test_chaque_produit_du_catalogue_porte_le_prefixe(self) -> None:
+        """`CR-07`/`EF-63` — sans exception, desormais. Le drapeau `preexistant`
+        qui rendait deux noms nus a disparu avec les produits qu'il servait :
+        aucune entite de notre catalogue n'echappe plus a la purge."""
         for produit in CATALOGUE_COLLECT:
-            if produit.preexistant:
-                assert not produit.nom_recherche.startswith(PREFIXE_DONNEES)
-            else:
-                assert produit.nom_recherche.startswith(PREFIXE_DONNEES)
+            assert produit.nom_recherche.startswith(PREFIXE_DONNEES), produit.nom
+        for payload in payloads_collect():
+            assert str(payload["name"]).startswith(PREFIXE_DONNEES)
+
+    def test_les_produits_de_l_environnement_sont_NOMMES_pour_etre_evites(self) -> None:
+        """Les connaitre est ce qui permet de ne pas les consommer par accident —
+        et de les signaler au rapport plutot que de les taire."""
+        assert PRODUITS_ENVIRONNEMENT == ("Cotisation 20000/mois", "plastique")
+        noms = {p.nom for p in CATALOGUE_COLLECT}
+        assert not (noms & set(PRODUITS_ENVIRONNEMENT)), (
+            "un produit de notre catalogue ne doit pas porter le nom exact d'un "
+            "produit de l'environnement : le GET-avant-POST le retrouverait"
+        )
 
     def test_les_noms_sont_reels_jamais_generiques(self) -> None:
         """Le CDC et la demo exigent des noms metier credibles."""

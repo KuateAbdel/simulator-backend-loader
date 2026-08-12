@@ -65,7 +65,7 @@ from app.core.cdc import TAUX_USURE_MAX_ANNUEL_PCT
 from app.models.enums import RunMode, RunStatus
 from app.repositories import AuditTrailRepository
 from app.services.catalogue import (
-    CATALOGUE_COLLECT,
+    PRODUITS_ENVIRONNEMENT,
     charger_loan_json,
     duree_mois_du_produit,
     payloads_collect,
@@ -78,7 +78,7 @@ logger = logging.getLogger(__name__)
 #: Ce que `UC-11` attend au total, une fois le catalogue en place.
 PRODUITS_ATTENDUS = 12
 #: Ce que le Loader CREE. La difference (2) est deja en base — `D-PRD-9`.
-CREATIONS_ATTENDUES = 10
+CREATIONS_ATTENDUES = 12
 
 
 @dataclass(slots=True)
@@ -88,6 +88,9 @@ class RapportCatalogue:
     mode: RunMode
     crees: list[str] = field(default_factory=list)
     reutilises: list[str] = field(default_factory=list)
+    #: Ce que l'environnement porte et que nous n'utilisons PAS — 12/08. Ni cree,
+    #: ni reutilise : constate. Un fait tu est un fait perdu.
+    constates: list[str] = field(default_factory=list)
     echoues: list[tuple[str, str]] = field(default_factory=list)
     #: L'artefact consomme par le module Depositaires.
     souscriptibles: list[ProduitSouscriptible] = field(default_factory=list)
@@ -112,6 +115,11 @@ class RapportCatalogue:
         lignes = [
             f"Mode        : {self.mode.value}",
             f"Produits crees   : {len(self.crees)} / {CREATIONS_ATTENDUES} attendus",
+            *(
+                [f"Constate (non utilise) : {c}" for c in self.constates]
+                if self.constates
+                else []
+            ),
             f"Reutilises       : {len(self.reutilises)} ({', '.join(self.reutilises) or '-'})",
             f"Echecs           : {len(self.echoues)}",
             f"Souscriptibles   : {len(self.souscriptibles)} (dont COLLECT pour les Kiosques)",
@@ -160,12 +168,19 @@ class ExecuteurCatalogue:
         for payload in payloads:
             await self._poser_un_produit(payload, rapport)
 
-        # Les 2 preexistants : retrouves, jamais recrees (`D-PRD-9`). Ils sont
-        # souscriptibles au meme titre que les autres — les ecarter priverait
-        # les Kiosques de deux produits reels.
-        for produit in CATALOGUE_COLLECT:
-            if produit.preexistant:
-                await self._retrouver_preexistant(produit.nom_recherche, rapport)
+        # LES DEUX PRODUITS DE L'ENVIRONNEMENT : CONSTATES, PLUS CONSOMMES.
+        #
+        # `D-PRD-9` les faisait retrouver et les rendait souscriptibles. La regle
+        # etait bonne — ils existaient deja avec des abonnes, et product-service
+        # n'a ni unicite ni `DELETE`. Ce qu'elle ignorait, c'est ce qu'ils
+        # CONTIENNENT : mesure du 12/08, « Cotisation 20000/mois » porte 99 %
+        # d'interet mensuel et « plastique » n'accepte qu'une quantite de
+        # exactement 3. Le produit d'ENTREE de 1600 clients, a 99 %.
+        #
+        # On ne batit pas notre catalogue sur les valeurs de test d'un
+        # environnement partage. Ils sont donc SIGNALES et jamais souscrits :
+        # l'environnement est un fait qu'on constate, pas une dependance.
+        await self._constater_l_environnement(rapport)
 
         self._verifier_le_compte(rapport)
         return rapport
@@ -314,38 +329,27 @@ class ExecuteurCatalogue:
             )
         )
 
-    async def _retrouver_preexistant(self, nom: str, rapport: RapportCatalogue) -> None:
-        """`D-PRD-9` — retrouve, jamais recree.
+    async def _constater_l_environnement(self, rapport: RapportCatalogue) -> None:
+        """Dit ce que l'environnement porte, sans jamais s'en servir.
 
-        Son absence n'est PAS un echec du Loader : c'est un fait sur l'etat de
-        l'environnement, qui merite d'etre dit et non corrige en silence.
+        Ces deux produits ne sont ni crees, ni reutilises, ni souscriptibles. Ils
+        sont NOMMES au rapport parce qu'un fait tu est un fait perdu : un lecteur
+        qui verrait « Cotisation Individuelle 20000/mois » a cote de
+        « Cotisation 20000/mois » dans l'inventaire serveur doit comprendre
+        pourquoi les deux coexistent.
+
+        Aucune ecriture, aucun `POST`. La lecture est la seule chose qu'on
+        s'autorise sur des entites partagees par toute l'equipe.
         """
-        if any(p.nom == nom for p in rapport.souscriptibles):
-            return
-        existant = await self._produits.chercher_par_nom(nom)
-        if existant is None:
-            rapport.ecart_au_cdc = (
-                f"« {nom} » etait attendu en base (D-PRD-9) et n'y est pas — "
-                "l'environnement a change, le catalogue ne compte que 11 produits"
-            )
-            logger.warning("produit preexistant %r introuvable", nom)
-            return
-        identifiant = existant.get("_id") or existant.get("id")
-        if identifiant:
-            rapport.reutilises.append(nom)
-            rapport.souscriptibles.append(
-                ProduitSouscriptible(
-                    UUID(str(identifiant)),
-                    nom,
-                    ProductType.COLLECT,
-                    str(existant.get("category") or "").upper(),
-                    # `policy.type`, jamais `type` : le `type` de premier niveau
-                    # est le `ProductType` (COLLECT/LENDING). Les confondre
-                    # mettrait « COLLECT » dans le `PolicyType` de chaque
-                    # produit, et l'ordre metier de `UC-13` deviendrait muet.
-                    str((existant.get("policy") or {}).get("type") or "").upper(),
-                    duree_mois_du_produit(nom),
-                )
+        for nom in PRODUITS_ENVIRONNEMENT:
+            existant = await self._produits.chercher_par_nom(nom)
+            if existant is None:
+                continue
+            policy = existant.get("policy") or {}
+            rapport.constates.append(
+                f"« {nom} » present en base (non prefixe, non utilise) — "
+                f"interet {policy.get('interest_rate')} %, "
+                f"montants {policy.get('amount_min')} -> {policy.get('amount_max')}"
             )
 
     # ------------------------------------------------------------------

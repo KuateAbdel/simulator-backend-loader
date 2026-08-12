@@ -50,8 +50,12 @@ class TestRaisonSociale:
 
 
 class TestIdentite:
-    def _identite(self, generateur: Generateur, *, jeune: bool):  # type: ignore[no-untyped-def]
+    def _identite(self, generateur: Generateur, *, jeune: bool, ancre: str = "CM-IND-1"):  # type: ignore[no-untyped-def]
         return generateur.identite(
+            # `CR-03`, 12/08 : la date de naissance est ancree au CLIENT, plus au
+            # run. Elle tirait dans `self._alea`, seme par le `run_id` — une
+            # reprise donnait donc une AUTRE date de naissance au meme client.
+            ancre_client=ancre,
             first_name="Ines",
             last_name="Tamadou",
             gender="WOMAN",
@@ -254,3 +258,73 @@ class TestMsisdnUnicite:
         premier = generateur.msisdn("CM", referentiel, "meme-matiere")[0]
         second = generateur.msisdn("CM", referentiel, "meme-matiere")[0]
         assert premier != second
+
+
+class TestDateDeNaissanceAncreeAuClient:
+    """`CR-03` — la date de naissance est fonction du CLIENT, jamais du run.
+
+    Elle tirait dans `self._alea`, seme par le `run_id` : une reprise donnait donc
+    une AUTRE date de naissance au meme client. Meme famille exacte que le defaut
+    msisdn (`D-CLI-11`), et meme consequence — un client dont l'identite change
+    d'un run a l'autre n'est pas le meme client.
+
+    **Defaut trouve par MUTATION le 12/08**, pas par relecture : remettre
+    `random.Random()` sans graine ne faisait echouer AUCUN test.
+
+    Cette correction en debloque une seconde : l'age devient calculable avant la
+    composition, donc le profil comportemental (`EF-67`) peut se decider dans le
+    temps sequentiel, ou les quotas se tiennent.
+    """
+
+    REFERENCE = date(2026, 8, 12)
+
+    def test_le_meme_client_rend_TOUJOURS_la_meme_date(self) -> None:
+        from app.services.generateur import date_de_naissance_du_client
+
+        a = date_de_naissance_du_client("CM-IND-42", jeune=True, reference=self.REFERENCE)
+        b = date_de_naissance_du_client("CM-IND-42", jeune=True, reference=self.REFERENCE)
+        assert a == b
+
+    def test_deux_clients_DIFFERENTS_ont_des_dates_differentes(self) -> None:
+        from app.services.generateur import date_de_naissance_du_client
+
+        dates = {
+            date_de_naissance_du_client(f"CM-IND-{r}", jeune=True, reference=self.REFERENCE)
+            for r in range(500)
+        }
+        assert len(dates) > 400, (
+            f"{len(dates)} dates pour 500 clients — une population dont les ages "
+            "se repetent n'est pas credible"
+        )
+
+    def test_deux_RUNS_rendent_la_meme_date_pour_le_meme_client(self) -> None:
+        """LA propriete que la mutation a revelee non testee."""
+        a = Generateur(UUID(int=1), reference=self.REFERENCE)
+        b = Generateur(UUID(int=999), reference=self.REFERENCE)
+        commun = {
+            "first_name": "Aya", "last_name": "Tamadou", "gender": "WOMAN",
+            "country_code": "CM", "ville": "Douala", "region": "Littoral",
+            "quartier": "Bepanda", "telephone": "+237612345678",
+            "jeune": True, "ancre_client": "CM-IND-7",
+        }
+        assert a.identite(**commun).date_of_birth == b.identite(**commun).date_of_birth
+
+    def test_EF_22_les_deux_tranches_sont_respectees(self) -> None:
+        from app.core.cdc import AGE_SEUIL_JEUNE
+        from app.services.clients_execution import age_revolu
+        from app.services.generateur import date_de_naissance_du_client
+
+        for rang in range(300):
+            jeune = date_de_naissance_du_client(
+                f"CM-IND-{rang}", jeune=True, reference=self.REFERENCE
+            )
+            age_jeune = age_revolu(jeune, self.REFERENCE)
+            assert 18 <= age_jeune < AGE_SEUIL_JEUNE, age_jeune
+
+            age = age_revolu(
+                date_de_naissance_du_client(
+                    f"CM-IND-{rang}", jeune=False, reference=self.REFERENCE
+                ),
+                self.REFERENCE,
+            )
+            assert AGE_SEUIL_JEUNE <= age <= 65, age

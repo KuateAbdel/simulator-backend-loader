@@ -489,6 +489,7 @@ class Generateur:
         telephone: str,
         *,
         jeune: bool,
+        ancre_client: str,
         occupation: str | None = None,
         latitude: float | None = None,
         longitude: float | None = None,
@@ -504,7 +505,7 @@ class Generateur:
             identity_id=uuid4(),
             first_name=first_name,
             last_name=last_name,
-            date_of_birth=self._date_de_naissance(jeune=jeune),
+            date_of_birth=self._date_de_naissance(jeune=jeune, ancre=ancre_client),
             gender=gender.upper(),
             # `nationality` exige un code ISO 3166-1 alpha-2, JAMAIS le libelle
             # du pays. Mesure du 08/08 : « Cameroun » -> HTTP 422
@@ -721,25 +722,69 @@ class Generateur:
     # Interne
     # ----------------------------------------------------------------------
 
-    def _date_de_naissance(self, *, jeune: bool) -> date:
+    def _date_de_naissance(self, *, jeune: bool, ancre: str) -> date:
         """EF-22 : 60 % de moins de 25 ans.
 
         Faker n'expose aucun filtre d'age et sa famille A ne renvoie meme pas de
         date de naissance — le quota se pilote donc entierement ici.
+
+        ANCREE AU CLIENT, PLUS AU RUN — correction du 12/08, et c'est un `CR-03`.
+        Elle tirait dans `self._alea`, seme par le `run_id` : une reprise donnait
+        donc une AUTRE date de naissance au meme client. Meme famille exacte que
+        le defaut msisdn (`D-CLI-11`), et meme consequence — un client dont
+        l'identite change d'un run a l'autre n'est pas le meme client.
+
+        Cette correction en debloque une seconde : l'age devient calculable AVANT
+        la composition, donc le profil comportemental (`EF-67`) peut se decider
+        dans le temps sequentiel, ou les quotas se tiennent.
         """
-        age = (
-            self._alea.randrange(18, AGE_SEUIL_JEUNE)
-            if jeune
-            else self._alea.randrange(AGE_SEUIL_JEUNE, 66)
-        )
-        jour = self._alea.randrange(365)
-        return self._reference - timedelta(days=age * 365 + jour)
+        return date_de_naissance_du_client(ancre, jeune=jeune, reference=self._reference)
+
+    @staticmethod
+    def _expiration_piece_ancree(ancre: str) -> date:  # pragma: no cover — reserve
+        """Reserve : meme raison que la date de naissance, non encore cablee."""
+        return date.today() + timedelta(days=random.Random(ancre).randrange(365, 3650))  # noqa: S311
 
     def _expiration_piece(self) -> date:
         """Toujours dans le futur : une piece expiree serait incoherente pour un
         client actif, et `id_expire_on` est de toute facon obligatoire en
         pratique (D-CLI-2)."""
         return date.today() + timedelta(days=self._alea.randrange(365, 3650))
+
+
+def date_de_naissance_du_client(
+    ancre: str, *, jeune: bool, reference: date
+) -> date:
+    """La date de naissance d'un client — fonction de LUI, jamais du run.
+
+    Publique et pure, pour que l'age soit calculable partout ou on en a besoin :
+    par le composeur qui l'emet au serveur, et par le moteur de quotas qui doit
+    ponderer les profils comportementaux (`EF-68`) AVANT la composition.
+
+    `EF-22` borne les deux tranches : moins de `AGE_SEUIL_JEUNE` ans, ou de
+    `AGE_SEUIL_JEUNE` a 65 ans inclus.
+    """
+    de_ce_client = random.Random(f"naissance:{ancre}")  # noqa: S311
+    age = (
+        de_ce_client.randrange(18, AGE_SEUIL_JEUNE)
+        if jeune
+        else de_ce_client.randrange(AGE_SEUIL_JEUNE, 66)
+    )
+    # DEFAUT PREEXISTANT, revele le 12/08 par un test d'age EXACT : la formule
+    # etait `reference - (age * 365 + jour)`. Sur dix-huit ans, les jours
+    # bissextiles font perdre quatre a cinq jours, et l'age REVOLU tombe a 17.
+    # Le Loader pouvait donc emettre un client MINEUR — inacceptable pour un
+    # client financier, et invisible tant que l'age n'etait pas calcule
+    # exactement.
+    #
+    # On ancre desormais sur l'anniversaire : `debut` est la date ou le client a
+    # exactement `age` ans revolus, et le decalage de 0 a 364 jours le maintient
+    # dans sa `age`-ieme annee sans jamais la quitter.
+    try:
+        debut = reference.replace(year=reference.year - age)
+    except ValueError:  # 29 fevrier — l'annee cible n'est pas bissextile
+        debut = reference.replace(year=reference.year - age, day=28)
+    return debut - timedelta(days=de_ce_client.randrange(365))
 
 
 def _sans_accents(texte: str) -> str:
