@@ -58,20 +58,25 @@ l'exigence. Une exigence sans ligne ici est une exigence oubliée.
 | EF-18 | **Rejeter et journaliser toute violation d'emboîtement** | ✅ testé | `planifier()` + `verifier_cr02()` |
 | EF-19 | Niveau de rattachement du Lender configurable *(S)* | — | **sans objet** : CO-01 tranché, le Lender est porté par la Company |
 
-### 2.3 Module Identités et Clients — EF-20 → EF-29 · **0 / 10**
+### 2.3 Module Identités et Clients — EF-20 → EF-29 · **8 / 10**
 
-| Réf | Exigence | État | Note |
+> Compteur remis à jour le **12/08**. Il affichait encore `0 / 10` alors que six
+> exigences avaient été livrées entre le 09 et le 12 — on ne peut pas savoir si le
+> Loader s'enrichit si le compteur ne bouge pas. Chaque ✅ ci-dessous est adossé à
+> une **mesure**, jamais à une impression.
+
+| Réf | Exigence | État | La preuve |
 |---|---|---|---|
-| EF-20 | Payloads clients complets via Faker | 🟡 | famille A ne fournit ni date de naissance, ni adresse, ni occupation, ni email — **`generateur.py` les compose désormais** |
-| EF-21 | Vérifier le pays retourné | ⬜ | |
-| EF-22 | 60 % de moins de 25 ans, **2 femmes pour 1 homme** | 🟡 | **aucun paramètre `sex`** chez Faker. L'âge est piloté par `generateur.identite(jeune=…)` ; le quota de genre reste à orchestrer |
-| EF-23 | 80 % Individual / 20 % Corporate | ⬜ | quota à forcer (`repartition_clients()`) |
-| EF-24 | 20 % des professionnels en agriculture | ⬜ | `sector_assignments` exploitable |
-| EF-25 | Unicité des MSISDN | ⬜ | |
-| EF-26 | Rattacher chaque client à un Kiosque du pays | ✅ | niveau `CLIENT` d'`org_hierarchy` — 1er des deux temps ; le 2ᵉ est la collecte (`D-CLI-6`) |
-| EF-27 | Valider le MSISDN contre le regex de l'opérateur | ⬜ | telcos lus en Phase 1 |
-| EF-28 | Segment de scoring configurable *(S)* | ⬜ | |
-| EF-29 | Timeouts Faker : retry avec repli *(S)* | 🟡 | `base.py` le fait pour FinZuu, pas encore pour Faker |
+| EF-20 | Payloads clients complets via Faker | ✅ | la famille A ne fournit ni date de naissance, ni adresse, ni occupation, ni email — `generateur.py` les compose. Payload complet vérifié le 12/08 : 13 champs d'identité + adresse géolocalisée |
+| EF-21 | Vérifier le pays retourné | ✅ | `clients_composition.py:357` refuse un client dont `faker.pays` diffère du pays de son Kiosque, et les Kiosques ne naissent que dans `PAYS_CIBLES`. La garantie est **structurelle**, pas déclarative |
+| EF-22 | 60 % de moins de 25 ans, **2 femmes pour 1 homme** | ✅ | `QuotaPays.reserver()` vérifie ET compte du même geste. DRY_RUN : `<25ans 300/300 · Femmes 333/333` sur les 4 pays. Deux dépassements mesurés (+6,7 % puis +1 %) ont été corrigés en remontant la décision dans le temps séquentiel |
+| EF-23 | 80 % Individual / 20 % Corporate | ✅ | `Corp 100/100` sur les 4 pays — 400 CORPORATE / 1600 INDIVIDUAL |
+| EF-24 | 20 % des professionnels en agriculture | ✅ | `Agri 20/20` sur les 4 pays. Les 4 familles d'occupation du CDC, jamais les libellés anglais de Faker |
+| EF-25 | Unicité des MSISDN | ✅ | registre par run + escalade déterministe. Mesure sur 2000 clients : **2000 MSISDN, 2000 id_number, 2000 emails distincts, 0 doublon**. Trois versions ont été nécessaires (`D-CLI-11`) |
+| EF-26 | Rattacher chaque client à un Kiosque du pays | ✅ | niveau `CLIENT` d'`org_hierarchy` — 1er des deux temps ; le 2ᵉ est la collecte (`D-CLI-6`). `uniq_client_par_run` rend le lien idempotent |
+| EF-27 | Valider le MSISDN contre le regex de l'opérateur | ✅ | **2000/2000 attribuables à un opérateur réel du pays**. Parts de marché préservées (MTN CM 47,2 %, Orange 50 %, Blue 2,8 %) |
+| EF-28 | Segment de scoring configurable *(S)* | 🟡 | le segment est **dérivé** (`A-02` : même strate que `solde_initial`, 11 signaux `quick_win`), et sa distribution est mesurée en cloche. Il n'est pas encore **configurable** — c'est un *should* |
+| EF-29 | Timeouts Faker : retry avec repli *(S)* | ✅ | timeout court dédié (8 s, protecteur) + cache de repli `_repli` alimenté et consulté (`faker_service.py:358`) |
 
 ### 2.4 Module Prêt et Historique — EF-30 → EF-38 · **0 / 9**
 
@@ -108,9 +113,13 @@ progression temps réel, journal d'erreurs, réinitialisation par préfixe, et
 Bloqué par **A-06** : le code source `ready_scoring/` est introuvable. Les poids
 50/25/13/12 sont figés dans `cdc.py`, la mécanique reste à écrire.
 
-### 2.9 Alimentation des comptes — EF-73 → EF-75 · **0 / 3**
+### 2.9 Alimentation des comptes — EF-73 → EF-75 · **1 / 3**
 
-Mouvements **réels** dans account-service. Vérifiés en recette par `CR-12`.
+| Réf | Exigence | État | La preuve |
+|---|---|---|---|
+| EF-73 | Solde initial dérivé du montant Mobile Money | ✅ | `MOB_MONEY_ACCOUNT_AMOUNT` **absent de la famille A** (mesure 11/08) — `A-09`, recommandation appliquée : fonction déterministe des 11 signaux `quick_win`, bornée par l'Annexe E. Crédité par `POST /accounts/credit`, et **le solde est relu** avant d'être compté (`FRA-218`) |
+| EF-74 | Créditer à chaque décaissement de prêt | ⬜ | module Vie non livré, et `CT-02` : loan-service non livré |
+| EF-75 | Débiter à chaque remboursement | ⬜ | idem |
 
 ### 2.10 Vie commune et re-scoring — EF-76 → EF-80 · **0 / 5**
 
