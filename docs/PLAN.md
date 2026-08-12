@@ -68,7 +68,7 @@ l'exigence. Une exigence sans ligne ici est une exigence oubliée.
 | EF-23 | 80 % Individual / 20 % Corporate | ⬜ | quota à forcer (`repartition_clients()`) |
 | EF-24 | 20 % des professionnels en agriculture | ⬜ | `sector_assignments` exploitable |
 | EF-25 | Unicité des MSISDN | ⬜ | |
-| EF-26 | Rattacher chaque client à un Kiosque du pays | ⬜ | `org_hierarchy` le permet |
+| EF-26 | Rattacher chaque client à un Kiosque du pays | ✅ | niveau `CLIENT` d'`org_hierarchy` — 1er des deux temps ; le 2ᵉ est la collecte (`D-CLI-6`) |
 | EF-27 | Valider le MSISDN contre le regex de l'opérateur | ⬜ | telcos lus en Phase 1 |
 | EF-28 | Segment de scoring configurable *(S)* | ⬜ | |
 | EF-29 | Timeouts Faker : retry avec repli *(S)* | 🟡 | `base.py` le fait pour FinZuu, pas encore pour Faker |

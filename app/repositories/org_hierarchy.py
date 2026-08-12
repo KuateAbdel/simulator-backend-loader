@@ -25,6 +25,7 @@ from uuid import UUID, uuid4
 
 from pymongo.errors import DuplicateKeyError
 
+from app.core.cdc import PREFIXE_DONNEES
 from app.core.database import COLLECTION_ORG_HIERARCHY
 from app.models.domain import OrgHierarchyNode
 from app.models.enums import NiveauOrganisation
@@ -153,6 +154,86 @@ class OrgHierarchyRepository(RepositoryBase):
         await self.collection.insert_one(en_document(noeud))
         return noeud
 
+    async def ajouter_client(
+        self,
+        run_id: UUID,
+        kiosque_id: UUID,
+        company_id: UUID,
+        country_code: str,
+        msisdn: str,
+        client_id: UUID,
+    ) -> OrgHierarchyNode:
+        """Rattache un Client a son Kiosque — `EF-26`, PREMIER TEMPS.
+
+        **Pourquoi ce noeud existe alors que le Client existe cote serveur.**
+        Mesure du 09/08 : la fiche Client rendue porte quinze cles et **aucune**
+        ne permet un rattachement — ni `depositary_id`, ni `kiosque_id`, ni
+        `company_id`. `EF-26` (« rattacher chaque client a un Kiosque existant du
+        pays cible ») est donc **inapplicable a la creation**. Elle se satisfait
+        en deux temps : ce noeud, puis la materialisation par une collecte, qui
+        seule porte `client_id` ET `depositary_id` (`D-CLI-6`).
+
+        Jusqu'a cette premiere collecte, ce noeud est notre SEULE trace. Sans
+        lui, `CR-02` reste non verifiable quel que soit le nombre de clients
+        crees — c'est exactement l'argument de `D-05`.
+
+        `EF-18` s'applique sans exception, comme aux quatre niveaux superieurs :
+        le Kiosque doit exister d'abord. Aucune unicite n'est imposee sur le
+        rattachement lui-meme — un Kiosque sert evidemment plusieurs clients —
+        mais `uniq_client_par_run` interdit d'attacher DEUX fois le meme client.
+
+        Idempotent : rejouer le meme client sur le meme run ne cree pas de second
+        noeud. `CR-03` l'exige, et la reprise passe par ce chemin.
+        """
+        if await self.collection.find_one({"_id": str(kiosque_id)}) is None:
+            raise ValueError(f"Kiosque {kiosque_id} introuvable — emboitement viole (EF-18)")
+        noeud = OrgHierarchyNode(
+            id=uuid4(),
+            run_id=run_id,
+            niveau=NiveauOrganisation.CLIENT,
+            parent_id=kiosque_id,
+            company_id=company_id,
+            # Un artefact du Loader porte le prefixe (`CR-07`/`EF-63`) ; une
+            # personne, non. Le msisdn est la cle naturelle du Client, et stable
+            # d'un run a l'autre depuis `D-CLI-11`.
+            name=f"{PREFIXE_DONNEES}Client {msisdn}",
+            country_code=country_code.upper(),
+            client_id=client_id,
+            # AUCUN `district_id` : voir `NiveauOrganisation`. L'index
+            # `uniq_district_par_run` le rejetterait, mais la vraie raison est que
+            # la geographie du client est DERIVEE de ce Kiosque — la dupliquer
+            # rendrait l'incoherence possible.
+        )
+        try:
+            await self.collection.insert_one(en_document(noeud))
+        except DuplicateKeyError:
+            existant = await self.collection.find_one(
+                {"run_id": str(run_id), "client_id": str(client_id)}
+            )
+            if existant is None:  # pragma: no cover — l'index vient de le refuser
+                raise
+            return OrgHierarchyNode.model_validate(existant)
+        return noeud
+
+    async def clients_du_kiosque(self, kiosque_id: UUID) -> list[OrgHierarchyNode]:
+        """La relation inverse — *« quels clients rattaches a ce Kiosque ? »*.
+
+        `docs/ANALYSE_CONFIG_SERVICE.md` posait cette question et repondait
+        « rien ». C'est ce noeud qui y repond. Sur l'index `idx_parent`, donc
+        sans balayage.
+        """
+        curseur = self.collection.find(
+            {"parent_id": str(kiosque_id), "niveau": NiveauOrganisation.CLIENT.value}
+        )
+        return [OrgHierarchyNode.model_validate(d) async for d in curseur]
+
+    async def compter_clients(self, run_id: UUID) -> int:
+        """Le compte des rattachements du run. Sert au rapport et a la recette,
+        sans charger 2000 documents en memoire."""
+        return await self.collection.count_documents(
+            {"run_id": str(run_id), "niveau": NiveauOrganisation.CLIENT.value}
+        )
+
     async def agents_du_kiosque(self, kiosque_id: UUID) -> list[OrgHierarchyNode]:
         """La relation inverse — *« quels Agents dans ce Kiosque ? »*.
 
@@ -222,6 +303,26 @@ class OrgHierarchyRepository(RepositoryBase):
                     anomalies.append(f"Kiosque {noeud.name} sans depositary_id")
                 if parent.niveau is not NiveauOrganisation.AGENCE:
                     anomalies.append(f"Kiosque {noeud.name} rattache a un {parent.niveau.value}")
+            elif noeud.niveau is NiveauOrganisation.CLIENT:
+                # `EF-26` — le cinquieme niveau. Le laisser hors de ce controle
+                # reviendrait a poser le rattachement sans le verifier, exactement
+                # ce que le commentaire de l'AGENT ci-dessous reproche.
+                #
+                # Le district n'est PAS controle : le noeud n'en porte pas, par
+                # conception. La coherence geographique du client vient de
+                # `ancrer_sur_kiosque()`, qui la DERIVE de ce Kiosque — elle est
+                # donc vraie par construction et non par verification. Ce qui
+                # reste verifiable ici, c'est l'emboitement et le pays.
+                if noeud.client_id is None:
+                    anomalies.append(f"Client {noeud.name} sans client_id")
+                if parent.niveau is not NiveauOrganisation.KIOSQUE:
+                    anomalies.append(f"Client {noeud.name} rattache a un {parent.niveau.value}")
+                elif noeud.country_code != parent.country_code:
+                    anomalies.append(
+                        f"Client {noeud.name} en {noeud.country_code} rattache au Kiosque "
+                        f"{parent.name} en {parent.country_code} — EF-26 exige un Kiosque "
+                        "du pays cible"
+                    )
             elif noeud.niveau is NiveauOrganisation.AGENT:
                 # Le 4e niveau manquait a ce controle. `D-11` a cree le niveau
                 # AGENT precisement pour rendre `UC-09` point 4 verifiable ; le

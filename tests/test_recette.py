@@ -44,14 +44,21 @@ class _HierarchieFausse:
         kiosques: int = 0,
         orphelins: list[str] | None = None,
         noms: list[str] | None = None,
+        clients: int = 0,
     ) -> None:
         self._anomalies = anomalies or []
         self._kiosques = kiosques
         self._orphelins = orphelins or []
         self._noms = noms
+        #: `EF-26` — les rattachements Client -> Kiosque. Zero par defaut :
+        #: `CR-04` doit rester NON_VERIFIABLE tant qu'aucun run reel n'a eu lieu.
+        self._clients = clients
 
     async def verifier_cr02(self, run_id: UUID) -> list[str]:
         return list(self._anomalies)
+
+    async def compter_clients(self, run_id: UUID) -> int:
+        return self._clients
 
     async def par_niveau(self, run_id: UUID, niveau: NiveauOrganisation) -> list[Any]:
         if niveau is NiveauOrganisation.KIOSQUE:
@@ -216,3 +223,40 @@ class TestRapport:
         rapport = await _controle().executer()
         assert "A-07" in _critere(rapport, "CR-09").detail
         assert "A-04" in _critere(rapport, "CR-10").detail
+
+
+class TestCR04:
+    """`CR-04` — *« 2000 clients generes »*, rendu MESURABLE par `EF-26`.
+
+    Ce critere annonçait « module Clients non livre », ce qui etait devenu faux :
+    l'executeur existe. Ce qui manquait n'etait pas le module mais une TRACE cote
+    Loader — la fiche Client rendue par le serveur ne porte aucun rattachement,
+    donc rien ne permettait de compter *nos* clients sans balayer un inventaire
+    partage avec toute l'equipe. Le noeud CLIENT est cette trace.
+    """
+
+    async def test_sans_rattachement_le_critere_reste_NON_VERIFIABLE(self) -> None:
+        """Aucun run reel n'a encore eu lieu : le critere ne doit ni passer ni
+        echouer, il doit se declarer non jugeable."""
+        hier = _HierarchieFausse(kiosques=40, clients=0)
+        critere = _critere(await _controle(hierarchie=hier).executer(), "CR-04")
+        assert critere.verdict is Verdict.NON_VERIFIABLE
+        assert "aucun client rattache" in critere.detail
+
+    async def test_la_cible_atteinte_rend_le_critere_TENU(self) -> None:
+        from app.core.cdc import NB_CLIENTS
+
+        hier = _HierarchieFausse(kiosques=40, clients=NB_CLIENTS)
+        critere = _critere(await _controle(hierarchie=hier).executer(), "CR-04")
+        assert critere.verdict is Verdict.TENU
+        assert str(NB_CLIENTS) in critere.detail
+
+    async def test_un_compte_INCOMPLET_est_une_VIOLATION_pas_un_silence(self) -> None:
+        """Un run qui rattache 1500 clients sur 2000 n'est pas « non
+        verifiable » : il est mesure, et il est en dessous de la cible."""
+        from app.core.cdc import NB_CLIENTS
+
+        hier = _HierarchieFausse(kiosques=40, clients=NB_CLIENTS - 500)
+        critere = _critere(await _controle(hierarchie=hier).executer(), "CR-04")
+        assert critere.verdict is Verdict.VIOLE
+        assert f"{NB_CLIENTS - 500} clients rattaches" in critere.detail

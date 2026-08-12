@@ -17,6 +17,7 @@ sont des faux en memoire. Le referentiel et le generateur sont les vrais.
 
 from __future__ import annotations
 
+import random
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -160,9 +161,23 @@ class FauxArbre:
 
     def __init__(self, noeuds: list[Any] | None = None) -> None:
         self.noeuds = noeuds or []
+        #: `EF-26` — les rattachements ecrits. Le vrai depot les rend idempotents
+        #: par l'index `uniq_client_par_run` ; ce double reproduit la regle, sinon
+        #: un test de reprise verrait deux noeuds pour un client.
+        self.rattachements: dict[UUID, UUID] = {}
 
     async def par_niveau(self, run_id: UUID, niveau: Any) -> list[Any]:
         return list(self.noeuds)
+
+    async def ajouter_client(
+        self, *, run_id: UUID, kiosque_id: UUID, company_id: UUID,
+        country_code: str, msisdn: str, client_id: UUID,
+    ) -> Any:
+        self.rattachements[client_id] = kiosque_id
+        return SimpleNamespace(
+            id=uuid4(), client_id=client_id, parent_id=kiosque_id,
+            country_code=country_code, name=f"DEMO_Client {msisdn}",
+        )
 
 
 class ServiceInterdit:
@@ -630,32 +645,131 @@ class TestReel:
         assert any("DEPOSITAIRES" in a for a in rapport.alertes)
 
 
+def _compose_pour(kiosque: Any, seed: int = 1) -> Any:
+    """Un client compose sur ce Kiosque — geographie DERIVEE, comme en vrai."""
+    from app.services.clients_composition import ancrer_sur_kiosque, composer
+
+    return composer(
+        _tirage("CM", seed=seed),
+        ancrer_sur_kiosque(kiosque, REFERENTIEL),
+        Generateur(RUN, reference=date(2026, 8, 11)),
+        REFERENTIEL,
+        random.Random(seed),  # noqa: S311
+        jeune=True,
+    )
+
+
 class TestSceller:
     async def test_un_id_serveur_uuid_est_scelle_tel_quel(self) -> None:
-        ledger = FauxLedger()
-        ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=ledger)
-        entite = uuid4()
+        ledger, arbre = FauxLedger(), FauxArbre()
+        ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=ledger, arbre=arbre)
+        entite, kiosque = uuid4(), _kiosques("CM")[0]
         await ledger.reserver("TEST-CM-IND-1")
-        await ex._sceller("TEST-CM-IND-1", {"_id": str(entite)})
+        await ex._sceller(
+            "TEST-CM-IND-1", {"_id": str(entite)}, kiosque,
+            _compose_pour(kiosque), RapportClients(mode=RunMode.REAL),
+        )
         assert ledger.confirmes["TEST-CM-IND-1"] == entite
 
     async def test_un_id_serveur_hors_uuid_est_scelle_sous_un_uuid_STABLE(self) -> None:
         """Le contrat de client-service ne garantit pas le format de `_id`, et
         l'ecriture reelle n'a jamais eu lieu. Un id illisible ne perd pas le
         lien : uuid5 est deterministe, et l'id brut vit dans le log."""
-        ledger = FauxLedger()
-        ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=ledger)
+        ledger, kiosque = FauxLedger(), _kiosques("CM")[0]
+        ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=ledger, arbre=FauxArbre())
         await ledger.reserver("TEST-CM-IND-2")
-        await ex._sceller("TEST-CM-IND-2", {"_id": "68c0ffee00b1ec7"})
+        await ex._sceller(
+            "TEST-CM-IND-2", {"_id": "68c0ffee00b1ec7"}, kiosque,
+            _compose_pour(kiosque), RapportClients(mode=RunMode.REAL),
+        )
         attendu = uuid5(NAMESPACE_OID, "finzuu-client:68c0ffee00b1ec7")
         assert ledger.confirmes["TEST-CM-IND-2"] == attendu
 
     async def test_sceller_sans_reservation_CRIE(self) -> None:
         """Une entite irreversible hors registre est un defaut de cablage —
         jamais un aleas d'exploitation a rattraper en silence."""
-        ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=FauxLedger())
+        kiosque = _kiosques("CM")[0]
+        ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=FauxLedger(), arbre=FauxArbre())
         with pytest.raises(ConsommationIncoherente):
-            await ex._sceller("TEST-JAMAIS-RESERVE", {"_id": str(uuid4())})
+            await ex._sceller(
+                "TEST-JAMAIS-RESERVE", {"_id": str(uuid4())}, kiosque,
+                _compose_pour(kiosque), RapportClients(mode=RunMode.REAL),
+            )
+
+    async def test_le_scellement_ECRIT_le_rattachement_EF_26(self) -> None:
+        """`EF-26` — le rattachement Client -> Kiosque n'existe NULLE PART cote
+        serveur a la creation : la fiche rendue porte quinze cles et aucune ne
+        rattache. Ce noeud est notre seule trace jusqu'a la premiere collecte, et
+        sans lui `CR-02` reste non verifiable."""
+        ledger, arbre = FauxLedger(), FauxArbre()
+        ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=ledger, arbre=arbre)
+        entite, kiosque = uuid4(), _kiosques("CM")[0]
+        rapport = RapportClients(mode=RunMode.REAL)
+        await ledger.reserver("TEST-CM-IND-3")
+        await ex._sceller(
+            "TEST-CM-IND-3", {"_id": str(entite)}, kiosque, _compose_pour(kiosque), rapport
+        )
+        assert arbre.rattachements == {entite: kiosque.id}
+        assert rapport.rattaches == 1, "un compteur non incremente est un rapport qui ment"
+
+    async def test_le_pays_ecrit_est_celui_du_CLIENT_pas_du_KIOSQUE(self) -> None:
+        """Sinon `CR-02` deviendrait DECORATIF.
+
+        Le controle du depot compare le pays du noeud a celui de son parent. Si
+        l'executeur ecrivait `kiosque.country_code`, il comparerait une valeur a
+        elle-meme et ne pourrait JAMAIS echouer — le defaut qu'il existe pour
+        attraper serait exactement celui qu'il ne verrait pas.
+
+        On apparie ici volontairement un client compose sur un Kiosque camerounais
+        avec un Kiosque senegalais. `ancrer_sur_kiosque()` rend ce cas impossible
+        en exploitation ; c'est precisement pourquoi il faut le fabriquer pour
+        verifier que la trace resterait denoncable.
+        """
+
+        class ArbreQuiNote(FauxArbre):
+            def __init__(self) -> None:
+                super().__init__()
+                self.pays_ecrits: list[str] = []
+
+            async def ajouter_client(self, **kwargs: Any) -> Any:
+                self.pays_ecrits.append(kwargs["country_code"])
+                return await super().ajouter_client(**kwargs)
+
+        arbre, ledger = ArbreQuiNote(), FauxLedger()
+        ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=ledger, arbre=arbre)
+        compose_cm = _compose_pour(_kiosques("CM")[0])
+        kiosque_sn = _kiosques("SN")[0]
+        await ledger.reserver("TEST-CM-IND-5")
+        await ex._sceller(
+            "TEST-CM-IND-5", {"_id": str(uuid4())}, kiosque_sn, compose_cm,
+            RapportClients(mode=RunMode.REAL),
+        )
+        assert arbre.pays_ecrits == ["CM"], (
+            "le pays ecrit doit etre celui du client (CM), pas celui du Kiosque "
+            f"auquel on l'a mal apparie (SN) — obtenu {arbre.pays_ecrits}"
+        )
+
+    async def test_un_rattachement_impossible_ALERTE_sans_perdre_le_client(self) -> None:
+        """Le client existe cote serveur, definitivement : l'annuler est
+        impossible. Mais l'absence de rattachement doit CRIER, sinon `CR-02`
+        devient non verifiable en silence."""
+
+        class ArbreQuiRefuse(FauxArbre):
+            async def ajouter_client(self, **_: Any) -> Any:
+                raise ValueError("Kiosque introuvable — emboitement viole (EF-18)")
+
+        ledger, kiosque = FauxLedger(), _kiosques("CM")[0]
+        ex = _executeur(
+            mode=RunMode.REAL, nb_clients=40, ledger=ledger, arbre=ArbreQuiRefuse()
+        )
+        rapport = RapportClients(mode=RunMode.REAL)
+        await ledger.reserver("TEST-CM-IND-4")
+        await ex._sceller(
+            "TEST-CM-IND-4", {"_id": str(uuid4())}, kiosque, _compose_pour(kiosque), rapport
+        )
+        assert rapport.rattaches == 0
+        assert any("NON RATTACHE" in a and "EF-26" in a for a in rapport.alertes)
+        assert ledger.confirmes, "la consommation reste scellee : l'entite existe bel et bien"
 
 
 # ---------------------------------------------------------------------------

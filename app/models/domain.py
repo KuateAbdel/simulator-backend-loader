@@ -217,6 +217,10 @@ class OrgHierarchyNode(LoaderDocument):
     user_id: UUID | None = Field(
         default=None, description="Renseigne au niveau AGENT uniquement (user-service) — D-11"
     )
+    client_id: UUID | None = Field(
+        default=None,
+        description="Renseigne au niveau CLIENT uniquement (client-service) — EF-26, 1er temps",
+    )
 
 
 class SuperAdminAccount(LoaderDocument):

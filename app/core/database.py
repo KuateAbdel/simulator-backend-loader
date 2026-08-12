@@ -165,6 +165,23 @@ async def ensure_indexes() -> None:
         [("parent_id", 1)],
         name="idx_parent",
     )
+    # `EF-26` + `CR-03` — un client ne se rattache qu'UNE fois par run.
+    #
+    # Sans cet index, une reprise ajouterait un second noeud pour le meme client
+    # et « quels clients dans ce Kiosque ? » repondrait 4000 pour 2000 clients.
+    # L'idempotence du rattachement est structurelle, pas confiee a l'appelant :
+    # c'est la meme raison qui fait de `faker_consumption_ledger._id` le
+    # client_id Faker lui-meme.
+    #
+    # Partiel, car seuls les noeuds CLIENT portent un `client_id` — les quatre
+    # niveaux superieurs le laissent a `null`, et un index unique non partiel les
+    # ferait tous collisionner sur cette valeur.
+    await db[COLLECTION_ORG_HIERARCHY].create_index(
+        [("run_id", 1), ("client_id", 1)],
+        name="uniq_client_par_run",
+        unique=True,
+        partialFilterExpression={"client_id": {"$type": "string"}},
+    )
     await db[COLLECTION_ORG_HIERARCHY].create_index(
         [("run_id", 1), ("district_id", 1)],
         name="uniq_district_par_run",

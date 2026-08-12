@@ -319,11 +319,37 @@ class ControleRecette:
         l'orchestrateur (`ENF-01`) ; ici c'est le VOLUME qui compte."""
         bas, haut = nb_kiosques_total()
         kiosques = len(await self._hierarchie.par_niveau(self.run_id, NiveauOrganisation.KIOSQUE))
+        # `EF-26` REND CE CRITERE MESURABLE — 12/08.
+        #
+        # Ce critere disait « module Clients non livre », ce qui etait devenu faux :
+        # l'executeur existe. Ce qui manquait n'etait pas le module mais une TRACE
+        # cote Loader — la fiche Client rendue par le serveur ne porte aucun
+        # rattachement, donc rien ne permettait de compter « nos » clients sans
+        # balayer un inventaire partage avec le reste de l'equipe.
+        #
+        # Le noeud CLIENT d'`org_hierarchy` est cette trace. C'est exactement
+        # l'argument de `D-05` : sans lui l'exigence serait invérifiable.
+        rattaches = await self._hierarchie.compter_clients(self.run_id)
+        if rattaches == 0:
+            return ResultatCritere(
+                "CR-04",
+                f"{NB_CLIENTS} clients generes",
+                Verdict.NON_VERIFIABLE,
+                f"aucun client rattache sur ce run — arbre pret : {kiosques} Kiosque(s) "
+                f"(CDC {bas}-{haut})",
+            )
+        if rattaches < NB_CLIENTS:
+            return ResultatCritere(
+                "CR-04",
+                f"{NB_CLIENTS} clients generes",
+                Verdict.VIOLE,
+                f"{rattaches} clients rattaches sur {NB_CLIENTS} attendus",
+            )
         return ResultatCritere(
             "CR-04",
             f"{NB_CLIENTS} clients generes",
-            Verdict.NON_VERIFIABLE,
-            f"module Clients non livre — arbre pret : {kiosques} Kiosque(s) (CDC {bas}-{haut})",
+            Verdict.TENU,
+            f"{rattaches} clients rattaches a {kiosques} Kiosque(s) — EF-26 tenu",
         )
 
     # ------------------------------------------------------------------

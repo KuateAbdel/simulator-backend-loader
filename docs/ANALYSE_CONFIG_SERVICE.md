@@ -194,7 +194,7 @@ bord que M. JJB regardera :
 | Quels opérateurs dans ce pays ? | ✅ `telcos_du_pays()` |
 | Quels quartiers dans cette ville ? | ✅ `quartiers_de_ville()` |
 | **Quels Kiosques dans ce quartier ?** | ⚠️ `org_hierarchy` indexé sur `(run_id, district_id)` — **possible**, à exposer |
-| **Quels clients rattachés à ce Kiosque ?** | 🔴 **rien** — le rattachement Client→Kiosque n'existe encore nulle part (`EF-26`) |
+| **Quels clients rattachés à ce Kiosque ?** | 🟠 **rien côté serveur** — mais `org_hierarchy.clients_du_kiosque()` y répond depuis le 12/08 (niveau `CLIENT`, `EF-26` 1er temps) |
 | **Quel client Faker a produit cette entité ?** | ✅ `faker_consumption_ledger.resulting_entity_id` |
 | **Quelles intentions non résolues ?** | ✅ `intentions_orphelines()` |
 

@@ -80,6 +80,8 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Final
 from uuid import NAMESPACE_OID, UUID, uuid5
 
+from pymongo.errors import PyMongoError
+
 from app.clients.account_service import AccountServiceClient
 from app.clients.base import ErreurService
 from app.clients.client_service import (
@@ -433,6 +435,10 @@ class RapportClients:
     #: dans la cible. Un second run du meme perimetre devrait n'afficher presque
     #: que ceux-la — c'est la forme observable de l'idempotence.
     deja_presents: list[str] = field(default_factory=list)
+    #: `EF-26` — les rattachements Client -> Kiosque effectivement ecrits dans
+    #: `org_hierarchy`. Compte APRES l'insertion, jamais sur l'intention : le
+    #: rapport ne doit pas affirmer un lien que la base ne porte pas.
+    rattaches: int = 0
 
     @property
     def total_cible(self) -> int:
@@ -470,6 +476,16 @@ class RapportClients:
             f"Solde dote     : {self.solde_dote:,.2f} (A-09 — recommandation appliquee)",
             f"Reservations liberees : {self.liberes} (ecartes ou echoues — D-FAKER-1)",
             f"Liberees a blanc      : {self.liberes_a_blanc} (aucune entite creee)",
+            # LE COMPTEUR NE COMPTE QUE DES ECRITURES REELLES, jamais des
+            # intentions — lecon du 11/08, ou `solde_dote` annonçait 1,04 Md FCFA
+            # que rien ne creditait. Mais un « 0 » nu ferait croire le module
+            # decable : le mode est donc dit explicitement.
+            f"Rattaches EF-26       : {self.rattaches} "
+            + (
+                "(Client -> Kiosque dans org_hierarchy — 1er temps, CR-02)"
+                if self.mode is RunMode.REAL
+                else f"(aucune ecriture a blanc — {len(self.crees)} prevus en REEL)"
+            ),
             f"Deja presents         : {len(self.deja_presents)} "
             "(reconnus d'un run anterieur — CR-03, aucun doublon cree)",
             f"Refuses avant reseau  : {len(self.refuses_avant_reseau)}",
@@ -1012,7 +1028,12 @@ class ExecuteurClients:
             # le porte deja, et `account-service` n'expose aucun moyen de
             # defaire un mouvement. Un doublon de client se voit ; un solde
             # double se lit comme une donnee legitime.
-            await self._sceller(faker.client_id, deja)
+            # Le rattachement est REJOUE sur ce chemin. Si notre MongoDB a ete
+            # perdue et que le serveur a garde ses clients, c'est la seule
+            # occasion de reconstruire `org_hierarchy` — et l'index
+            # `uniq_client_par_run` rend l'operation sans effet quand elle
+            # existe deja.
+            await self._sceller(faker.client_id, deja, kiosque, compose, rapport)
             rapport.deja_presents.append(faker.client_id)
             return compose
 
@@ -1039,7 +1060,7 @@ class ExecuteurClients:
         # compte que les consommations SCELLEES — aurait affiche ZERO client au
         # rapport. La moitie d'un write-ahead log ne vaut rien ; onzieme
         # occurrence du defaut recurrent, celle-ci dans du code du jour meme.
-        await self._sceller(faker.client_id, fiche)
+        await self._sceller(faker.client_id, fiche, kiosque, compose, rapport)
 
         # `UC-13` points 2-3 / `EF-73` — LE SOLDE INITIAL EST DEPOSE ICI.
         #
@@ -1122,8 +1143,22 @@ class ExecuteurClients:
             return
         rapport.solde_dote += confirme
 
-    async def _sceller(self, faker_client_id: str, fiche: dict[str, object]) -> None:
-        """Scelle la consommation au registre — la preuve que l'entite existe.
+    async def _sceller(
+        self,
+        faker_client_id: str,
+        fiche: dict[str, object],
+        kiosque: OrgHierarchyNode,
+        compose: ClientCompose,
+        rapport: RapportClients,
+    ) -> None:
+        """Scelle le client : registre `D-FAKER-1` ET rattachement `EF-26`.
+
+        LES DEUX TRACES SONT INDISSOCIABLES, et les separer aurait ete l'erreur.
+        Le registre dit *« ce client Faker a produit une entite »* ; le
+        rattachement dit *« cette entite appartient a ce Kiosque »*. La seconde
+        n'existe NULLE PART cote serveur a la creation — mesure du 09/08, la
+        fiche Client rendue porte quinze cles et aucune ne rattache. `EF-26` se
+        satisfait donc en deux temps, et celui-ci est le premier.
 
         L'identifiant serveur n'est PAS garanti au format UUID : le contrat de
         client-service ne le declare pas, et l'ecriture reelle de ce module n'a
@@ -1147,3 +1182,31 @@ class ExecuteurClients:
                 entite,
             )
         await self._ledger.confirmer(faker_client_id, entite)
+
+        # `EF-26` — LE RATTACHEMENT. Un echec ici ne perd pas le client : il
+        # existe cote serveur, definitivement, et l'annuler est impossible. Mais
+        # il doit CRIER, parce que sans ce noeud `CR-02` reste non verifiable et
+        # la question « quels clients dans ce Kiosque ? » n'a plus de reponse.
+        try:
+            await self._hierarchie.ajouter_client(
+                run_id=self.run_id,
+                kiosque_id=kiosque.id,
+                company_id=kiosque.company_id,
+                # LE PAYS VIENT DU CLIENT, pas du Kiosque. Passer
+                # `kiosque.country_code` rendrait le controle `CR-02`
+                # tautologique — il comparerait une valeur a elle-meme et ne
+                # pourrait JAMAIS echouer. C'est l'adresse de residence du
+                # client, derivee de sa geographie, qui doit etre confrontee a
+                # celle de son Kiosque.
+                country_code=compose.identite.adresse.country,
+                msisdn=compose.msisdn,
+                client_id=entite,
+            )
+        except (ValueError, PyMongoError) as erreur:
+            rapport.alertes.append(
+                f"{compose.msisdn} cree mais NON RATTACHE a {kiosque.name} — "
+                f"{type(erreur).__name__} : {erreur}. EF-26 exige ce lien, et il "
+                "n'existe nulle part cote serveur : sans lui CR-02 reste non verifiable."
+            )
+            return
+        rapport.rattaches += 1

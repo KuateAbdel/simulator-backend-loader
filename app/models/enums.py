@@ -102,12 +102,47 @@ class NiveauOrganisation(StrEnum):
 
     Le niveau AGENT ne change pas la regle du modele, il l'applique : un noeud
     ne peut exister sans son superieur (`EF-18`).
+
+    CLIENT — cinquieme valeur, ajoutee le 12/08/2026 (`EF-26`)
+    ---------------------------------------------------------
+    **Un Client n'est PAS un niveau de l'arbre du CDC §6.2**, qui s'arrete a
+    l'Agent. Il figure ici pour la raison EXACTE qui a fait entrer l'Agent, et
+    la mesure du 09/08 la donne sans ambiguite : la fiche Client rendue par
+    client-service porte quinze cles, et **aucune** ne permet un rattachement.
+
+        _id · created_at · updated_at · msisdn · language · channel · segment
+        category · identity · is_active · product · account_id
+        subscription_fees · subscription_date · status
+
+    Ni `depositary_id`, ni `kiosque_id`, ni `company_id`. Le rattachement
+    Client -> Kiosque n'existe **nulle part** cote serveur a la creation ; il ne
+    se materialise que par une collecte, qui seule porte `client_id` ET
+    `depositary_id` (`D-CLI-6`). `EF-26` est donc satisfaite en DEUX TEMPS, et ce
+    noeud est le premier — notre seule trace jusqu'a la premiere collecte.
+
+    Sans lui, *« quels clients rattaches a ce Kiosque ? »* reste sans reponse et
+    `CR-02` demeure non verifiable, quel que soit le nombre de clients crees.
+
+    DEUX CHOSES QUE CE NOEUD NE FAIT PAS, et les deux sont voulues :
+
+    - **Il ne porte pas de `district_id`.** L'index `uniq_district_par_run` est
+      UNIQUE : le second client d'un meme quartier serait rejete. Mais la vraie
+      raison est meilleure — la geographie du client est DERIVEE de son Kiosque
+      par `ancrer_sur_kiosque()`. Ne pas la dupliquer rend l'incoherence
+      impossible, la ou la stocker puis la comparer la rendrait seulement
+      detectable.
+    - **Son `name` n'est pas celui de la personne** mais `DEMO_Client <msisdn>`.
+      Ce noeud est un artefact du Loader, et les artefacts du Loader portent le
+      prefixe (`CR-07`/`EF-63`) ; une personne, non. Le msisdn y est lisible
+      parce qu'il est la cle naturelle du Client, et desormais stable d'un run a
+      l'autre (`D-CLI-11`).
     """
 
     BRANCHE = "BRANCHE"
     AGENCE = "AGENCE"
     KIOSQUE = "KIOSQUE"
     AGENT = "AGENT"
+    CLIENT = "CLIENT"
 
 
 class RunMode(StrEnum):
