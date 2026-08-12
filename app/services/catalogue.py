@@ -116,6 +116,34 @@ class ProduitCollecte:
     #: True pour les 2 produits deja presents en base : ils sont RETROUVES,
     #: jamais recrees, et gardent donc leur nom d'origine sans prefixe.
     preexistant: bool = False
+    #: LE TERME D'UN DEPOT A TERME — ajoute le 12/08 sur remarque de Yaniv.
+    #:
+    #: « CASH_DAT il faut une duree qu'il faut attribuer. » C'est juste, et le
+    #: manque etait REEL : mesure de l'OpenAPI vivant de product-service,
+    #: `CollectPolicySchema` porte TREIZE champs et aucun n'est une duree —
+    #: `LendingPolicySchema` en a quatre (`loan_duration`, `reconduction_day`,
+    #: `recovery_day`, `penalty_day`), COLLECT en a ZERO.
+    #:
+    #: Le terme ne pouvait donc vivre que dans le NOM du produit (« 6 Mois »),
+    #: ce qui est illisible par le code. Il est desormais une donnee, et il se
+    #: materialise a la souscription dans `CollectSchema.end_date` — le seul
+    #: champ temporel que collect-service expose.
+    #:
+    #: `None` pour `CASH` et `PRODUCT` : une cotisation reguliere et une collecte
+    #: en nature n'ont pas de terme. L'invariant est verifie ci-dessous.
+    duree_mois: int | None = None
+
+    def __post_init__(self) -> None:
+        """Un `CASH_DAT` sans terme n'est pas un depot a terme, et un `CASH`
+        avec terme n'est pas une cotisation. L'incoherence est refusee ICI plutot
+        que decouverte a la creation de la premiere Collect — product-service
+        n'expose aucun `DELETE`."""
+        if (self.policy_type is PolicyType.CASH_DAT) != (self.duree_mois is not None):
+            raise ValueError(
+                f"{self.nom!r} : policy_type={self.policy_type.value} et "
+                f"duree_mois={self.duree_mois!r} sont incoherents. CASH_DAT exige un "
+                "terme ; CASH et PRODUCT n'en ont pas."
+            )
 
     @property
     def nom_recherche(self) -> str:
@@ -154,6 +182,7 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         50000.0,
         5000000.0,
         6.5,
+        duree_mois=6,
     ),
     ProduitCollecte(
         "Depot a Terme Entreprise 12 Mois",
@@ -163,6 +192,7 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         200000.0,
         20000000.0,
         8.0,
+        duree_mois=12,
     ),
     ProduitCollecte(
         "plastique",
@@ -186,6 +216,28 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         0.0,
     ),
 )
+
+
+#: Le terme, retrouvable par NOM — prefixe ou non. `catalogue_execution`
+#: construit `ProduitSouscriptible` depuis des payloads et des fiches serveur, ou
+#: la duree n'existe pas : product-service ne l'accepte pas. `CATALOGUE_COLLECT`
+#: reste donc la source unique, et cette table l'expose sans la dupliquer.
+DUREE_MOIS_PAR_NOM: Final[dict[str, int]] = {
+    nom: produit.duree_mois
+    for produit in CATALOGUE_COLLECT
+    if produit.duree_mois is not None
+    for nom in (produit.nom, f"{PREFIXE_DONNEES}{produit.nom}")
+}
+
+
+def duree_mois_du_produit(nom: str) -> int | None:
+    """Le terme d'un produit, ou `None` s'il n'en a pas.
+
+    Sert a `CollectSchema.end_date` : la Collect d'un `CASH_DAT` arrive a
+    echeance `duree_mois` apres sa souscription. C'est la seule facon d'exprimer
+    un terme dans FinZuu — le produit n'a pas de champ pour le porter.
+    """
+    return DUREE_MOIS_PAR_NOM.get(nom)
 
 
 def charger_loan_json(chemin: Path) -> list[ProduitCredit]:

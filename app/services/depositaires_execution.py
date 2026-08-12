@@ -96,6 +96,17 @@ class ProduitSouscriptible:
     #: PAS au premier niveau — le `type` de premier niveau est le `ProductType`
     #: (COLLECT/LENDING). Confondre les deux donnerait `COLLECT` partout.
     policy_type: str = ""
+    #: AJOUT DU 12/08 — le TERME d'un `CASH_DAT`, en mois. `None` sinon.
+    #:
+    #: Il ne vient PAS du serveur : `CollectPolicySchema` n'a aucun champ de
+    #: duree (mesure de l'OpenAPI vivant, treize champs, zero terme). Il vient de
+    #: `CATALOGUE_COLLECT`, notre source unique, via `duree_mois_du_produit()`.
+    #:
+    #: Son usage est en aval : la Collect d'un depot a terme porte
+    #: `end_date = souscription + duree_mois` — `CollectSchema.end_date` est le
+    #: seul champ temporel que collect-service expose. Sans cette valeur, un
+    #: depot a terme serait un depot sans terme.
+    duree_mois: int | None = None
 
 
 @dataclass(slots=True)

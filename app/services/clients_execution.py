@@ -252,6 +252,38 @@ SEGMENTS_ANNEXE_E: Final[tuple[ClientSegment, ...]] = (
 )
 
 
+#: `UC-13` pt 4 — « 1 a 3 produits Collecte SELON SON PROFIL SEGMENTE ».
+#:
+#: Probabilite de prendre 1, 2 ou 3 produits, par strate. Le CDC fixe la BORNE
+#: (1 a 3) et le PRINCIPE (selon le segment) ; les valeurs sont notre lecture,
+#: declaree ici plutot que dispersee dans le code : un epargnant aise diversifie,
+#: un epargnant fragile a une cotisation et rien d'autre.
+#:
+#: Chaque ligne somme a 1.0 — verifie par test, parce qu'une ligne mal ajustee
+#: deplacerait silencieusement la distribution.
+PANIER_PAR_SEGMENT: Final[dict[ClientSegment, tuple[float, float, float]]] = {
+    ClientSegment.VERY_LOW: (0.85, 0.15, 0.00),
+    ClientSegment.LOW: (0.65, 0.30, 0.05),
+    ClientSegment.MEDIUM: (0.45, 0.40, 0.15),
+    ClientSegment.HIGH: (0.25, 0.45, 0.30),
+    ClientSegment.VERY_HIGH: (0.10, 0.35, 0.55),
+    # `ANY` reste possible : un client compose sans segment derive (chemin de
+    # repli). On lui donne la mediane plutot qu'un minimum arbitraire.
+    ClientSegment.ANY: (0.45, 0.40, 0.15),
+}
+
+
+def _combien_de_produits(segment: ClientSegment, alea: random.Random) -> int:
+    """1, 2 ou 3 — tire selon la strate du client. `UC-13` pt 4."""
+    parts = PANIER_PAR_SEGMENT[segment]
+    tirage, cumul = alea.random(), 0.0
+    for combien, part in enumerate(parts, start=1):
+        cumul += part
+        if tirage < cumul:
+            return combien
+    return SOUSCRIPTIONS_MAX
+
+
 def segment_client(faker: ClientFaker) -> ClientSegment:
     """Le `segment` emis a l'onboarding — `A-02`, recommandation appliquee.
 
@@ -859,14 +891,28 @@ class ExecuteurClients:
         appel — est le `CASH` du client. Les 2e et 3e s'ajoutent par
         `PUT /subscribe` dans l'ordre du metier.
 
-        LE COMBIEN — une decision, declaree comme telle
-        -----------------------------------------------
-        `UC-13` dit « 1 a 3 » et ne donne aucune distribution. Nous en
-        choisissons une, deterministe et documentee, plutot que de prendre le
-        minimum par defaut : 50 % un produit, 30 % deux, 20 % trois. Un
-        ecosysteme ou chaque client n'a qu'un produit rendrait `CR-09` et la
-        boucle de vie sans relief, et l'Annexe E du CDC decrit des profils
-        d'epargne varies.
+        LE COMBIEN — « SELON SON PROFIL SEGMENTE », et c'est le CDC qui le dit
+        ---------------------------------------------------------------------
+        Correction du 12/08, apres lecture DIRECTE du CDC (question de Yaniv sur
+        les produits de credit). `UC-13` point 4, mot pour mot :
+
+            « Il souscrit le client a 1 a 3 produits Collecte
+              (CASH, CASH_DAT, PRODUCT) SELON SON PROFIL SEGMENTE. »
+
+        Ma premiere version tirait 50 / 30 / 20 sur le msisdn — deterministe et
+        documente, mais AVEUGLE au segment. Le CDC ne laisse pas ce choix libre :
+        le nombre de produits depend du profil. Et c'est aussi ce que la vie
+        reelle dit — un epargnant `VERY_HIGH` diversifie, un `VERY_LOW` a une
+        cotisation et rien d'autre.
+
+        Le segment vient de `segment_client()` : la meme strate que
+        `solde_initial()`, derivee des onze signaux `quick_win` de la famille A
+        (`A-02`). Un client mieux dote prend donc plus de produits, ce qui rend
+        `CR-12` (« solde = initial + decaissements - remboursements ») coherent
+        avec sa capacite d'epargne au lieu de la contredire.
+
+        La part de hasard qui reste — ancree au client, jamais au run — ne sert
+        qu'a eviter que tous les clients d'un meme segment soient identiques.
         """
         compatibles = self._produits_compatibles(collect, compose.categorie)
         if not compatibles:
@@ -881,8 +927,7 @@ class ExecuteurClients:
         )
 
         de_ce_client = random.Random(f"panier:{compose.msisdn}")  # noqa: S311
-        tirage = de_ce_client.random()
-        combien = 1 if tirage < 0.50 else (2 if tirage < 0.80 else SOUSCRIPTIONS_MAX)
+        combien = _combien_de_produits(compose.segment, de_ce_client)
         # Le doublon est refuse par le serveur — `400 « A customer cannot
         # subscribe to the same products twice »`. Une tranche d'une liste sans
         # repetition ne peut pas en produire.

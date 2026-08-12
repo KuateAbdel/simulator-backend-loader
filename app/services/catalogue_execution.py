@@ -67,6 +67,7 @@ from app.repositories import AuditTrailRepository
 from app.services.catalogue import (
     CATALOGUE_COLLECT,
     charger_loan_json,
+    duree_mois_du_produit,
     payloads_collect,
     payloads_lending,
 )
@@ -219,6 +220,7 @@ class ExecuteurCatalogue:
                         str(existant.get("category") or "").upper(),
                         # `policy.type`, jamais `type` : mesure du 12/08.
                         str((existant.get("policy") or {}).get("type") or "").upper(),
+                        duree_mois_du_produit(nom),
                     )
                 )
             return
@@ -263,6 +265,7 @@ class ExecuteurCatalogue:
                     # parce qu'aucun symptome ne la denonce. Un simple
                     # renommage de produit l'aurait fait apparaitre en REEL.
                     str((payload.get("policy") or {}).get("type") or "").upper(),
+                    duree_mois_du_produit(nom),
                 )
             )
             return
@@ -307,6 +310,7 @@ class ExecuteurCatalogue:
                 type_produit,
                 str(payload.get("category") or "").upper(),
                 str((payload.get("policy") or {}).get("type") or "").upper(),
+                duree_mois_du_produit(nom),
             )
         )
 
@@ -340,6 +344,7 @@ class ExecuteurCatalogue:
                     # mettrait « COLLECT » dans le `PolicyType` de chaque
                     # produit, et l'ordre metier de `UC-13` deviendrait muet.
                     str((existant.get("policy") or {}).get("type") or "").upper(),
+                    duree_mois_du_produit(nom),
                 )
             )
 

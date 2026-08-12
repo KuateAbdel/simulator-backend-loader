@@ -37,6 +37,7 @@ from app.repositories.faker_ledger import ConsommationIncoherente
 from app.services.clients_execution import (
     CLES_QUICK_WIN_BINAIRES,
     ORDRE_SOUSCRIPTION,
+    PANIER_PAR_SEGMENT,
     SEGMENTS_ANNEXE_E,
     SOLDE_INITIAL_MAX,
     SOLDE_INITIAL_MIN,
@@ -1259,17 +1260,51 @@ class TestUC13Souscriptions:
             f"chiffre unique deguise — obtenu {sorted(tailles)}"
         )
 
-    def test_la_distribution_declaree_est_celle_qu_on_obtient(self) -> None:
-        """50 / 30 / 20 est une DECISION, pas un hasard : elle doit se mesurer."""
+    def test_chaque_ligne_de_distribution_somme_a_UN(self) -> None:
+        """Une ligne mal ajustee deplacerait la distribution en silence : le
+        dernier palier absorberait le reste sans que rien ne le signale."""
+        for segment, parts in PANIER_PAR_SEGMENT.items():
+            assert abs(sum(parts) - 1.0) < 1e-9, f"{segment.value} : {sum(parts)}"
+            assert len(parts) == SOUSCRIPTIONS_MAX
+
+    def test_la_distribution_de_CHAQUE_segment_est_celle_qui_est_declaree(self) -> None:
+        """`UC-13` pt 4 : « 1 a 3 produits Collecte SELON SON PROFIL SEGMENTE ».
+        Les valeurs sont notre lecture du CDC — donc elles doivent se mesurer."""
         from collections import Counter
 
-        paniers = self._paniers(1000)
-        parts = Counter(len(p) for p in paniers)
-        for taille, attendu in ((1, 0.50), (2, 0.30), (3, 0.20)):
-            obtenu = parts[taille] / len(paniers)
-            assert abs(obtenu - attendu) < 0.05, (
-                f"{taille} produit(s) : {obtenu:.1%} pour {attendu:.0%} annonces"
-            )
+        ex = _executeur(mode=RunMode.DRY_RUN, nb_clients=40)
+        catalogue = self._catalogue()
+        kiosque = _kiosques("CM")[0]
+        for segment, attendus in PANIER_PAR_SEGMENT.items():
+            parts = Counter()
+            for graine in range(1, 1201):
+                compose = _compose_pour(kiosque, seed=graine)
+                object.__setattr__(compose, "segment", segment)
+                parts[len(ex._panier(catalogue, compose))] += 1
+            for combien, attendu in enumerate(attendus, start=1):
+                obtenu = parts[combien] / 1200
+                assert abs(obtenu - attendu) < 0.05, (
+                    f"{segment.value} · {combien} produit(s) : {obtenu:.1%} "
+                    f"pour {attendu:.0%} declares"
+                )
+
+    def test_un_segment_plus_HAUT_prend_plus_de_produits(self) -> None:
+        """La propriete metier, et celle que le CDC vise : un epargnant aise
+        diversifie, un epargnant fragile a une cotisation et rien d'autre."""
+        ex = _executeur(mode=RunMode.DRY_RUN, nb_clients=40)
+        catalogue = self._catalogue()
+        kiosque = _kiosques("CM")[0]
+        moyennes = []
+        for segment in SEGMENTS_ANNEXE_E:
+            tailles = []
+            for graine in range(1, 601):
+                compose = _compose_pour(kiosque, seed=graine)
+                object.__setattr__(compose, "segment", segment)
+                tailles.append(len(ex._panier(catalogue, compose)))
+            moyennes.append(sum(tailles) / len(tailles))
+        detail = dict(zip([s.value for s in SEGMENTS_ANNEXE_E], moyennes, strict=True))
+        assert moyennes == sorted(moyennes), f"la moyenne doit croitre : {detail}"
+        assert moyennes[-1] > moyennes[0] + 0.8, "l'ecart doit etre VISIBLE, pas symbolique"
 
     def test_le_panier_est_ANCRE_au_client_pas_au_run(self) -> None:
         """`CR-03` — sinon une reprise attacherait d'AUTRES produits au meme

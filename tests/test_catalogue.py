@@ -11,11 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from app.clients.contracts import PolicyType, ProductCategory
+from app.clients.contracts import PolicyMeasure, PolicyType, ProductCategory
 from app.core.cdc import PREFIXE_DONNEES, TAUX_USURE_MAX_ANNUEL_PCT
 from app.services.catalogue import (
     CATALOGUE_COLLECT,
+    ProduitCollecte,
     charger_loan_json,
+    duree_mois_du_produit,
     payloads_collect,
     payloads_lending,
 )
@@ -183,3 +185,93 @@ class TestCatalogueCollect:
         """6 LENDING + 6 COLLECT — la volumetrie du CDC."""
         assert len(payloads_lending(produits)) == 6
         assert len(CATALOGUE_COLLECT) == 6
+
+
+class TestTermeDuDepotATerme:
+    """« CASH_DAT il faut une duree qu'il faut attribuer » — remarque de Yaniv,
+    12/08. Elle etait juste, et le manque etait REEL.
+
+    MESURE DE L'OPENAPI VIVANT DE PRODUCT-SERVICE, 12/08
+    ----------------------------------------------------
+    `CollectPolicySchema` porte TREIZE champs — `name`, `type`, `interest_type`,
+    `interest_rate`, `interest_x`, `vat`, `measure`, `measure_price`,
+    `amount_min`, `amount_max`, `penalty_amount`, `penalty_percent`,
+    `penalty_type` — et **aucun n'est une duree**. `LendingPolicySchema` en a
+    quatre (`loan_duration`, `reconduction_day`, `recovery_day`, `penalty_day`).
+
+    Le terme ne pouvait donc vivre que dans le NOM du produit (« 6 Mois »),
+    illisible par le code. Il est desormais une donnee, et il se materialise a la
+    souscription dans `CollectSchema.end_date` — le seul champ temporel que
+    collect-service expose.
+    """
+
+    def test_chaque_CASH_DAT_porte_un_terme(self) -> None:
+        dat = [p for p in CATALOGUE_COLLECT if p.policy_type is PolicyType.CASH_DAT]
+        assert dat, "aucun CASH_DAT : le test ne prouverait rien"
+        for produit in dat:
+            assert produit.duree_mois, f"{produit.nom} : depot a terme SANS terme"
+
+    def test_le_terme_correspond_au_nom_annonce(self) -> None:
+        """Un produit nomme « 6 Mois » avec un terme de 12 mentirait au bailleur."""
+        for produit in CATALOGUE_COLLECT:
+            if produit.duree_mois is not None:
+                assert f"{produit.duree_mois} Mois" in produit.nom, produit.nom
+
+    def test_ni_CASH_ni_PRODUCT_ne_portent_de_terme(self) -> None:
+        """Une cotisation reguliere et une collecte en nature n'ont pas
+        d'echeance : leur en donner une fabriquerait une fausse Collect."""
+        for produit in CATALOGUE_COLLECT:
+            if produit.policy_type is not PolicyType.CASH_DAT:
+                assert produit.duree_mois is None, produit.nom
+
+    def test_un_CASH_DAT_sans_terme_est_REFUSE_a_la_construction(self) -> None:
+        """L'incoherence est refusee AVANT le reseau : product-service n'expose
+        aucun `DELETE`, un produit mal forme serait definitif."""
+        with pytest.raises(ValueError, match="incoherents"):
+            ProduitCollecte(
+                "Depot a Terme sans terme",
+                PolicyType.CASH_DAT,
+                ProductCategory.INDIVIDUAL,
+                PolicyMeasure.KILOGRAM,
+                1000.0,
+                2000.0,
+                5.0,
+            )
+
+    def test_un_CASH_avec_terme_est_REFUSE_aussi(self) -> None:
+        with pytest.raises(ValueError, match="incoherents"):
+            ProduitCollecte(
+                "Cotisation avec terme",
+                PolicyType.CASH,
+                ProductCategory.INDIVIDUAL,
+                PolicyMeasure.KILOGRAM,
+                1000.0,
+                2000.0,
+                5.0,
+                duree_mois=6,
+            )
+
+    def test_le_terme_est_retrouvable_par_nom_PREFIXE_ou_non(self) -> None:
+        """`catalogue_execution` construit `ProduitSouscriptible` tantot depuis un
+        payload (nom prefixe `DEMO_`), tantot depuis une fiche serveur (nom
+        d'origine). Les deux doivent rendre le meme terme."""
+        assert duree_mois_du_produit("Depot a Terme 6 Mois") == 6
+        assert duree_mois_du_produit(f"{PREFIXE_DONNEES}Depot a Terme 6 Mois") == 6
+        assert duree_mois_du_produit(f"{PREFIXE_DONNEES}Depot a Terme Entreprise 12 Mois") == 12
+
+    def test_un_produit_sans_terme_rend_None_et_ne_leve_pas(self) -> None:
+        assert duree_mois_du_produit("Cotisation 20000/mois") is None
+        assert duree_mois_du_produit("produit inconnu") is None
+
+    def test_le_contrat_serveur_n_accepte_TOUJOURS_pas_de_duree(self) -> None:
+        """Le jour ou product-service ajoutera un champ de terme, ce test tombera
+        et il faudra le declarer cote serveur plutot que seulement chez nous."""
+        for payload in payloads_collect():
+            policy = payload["policy"]
+            interdits = [c for c in policy if any(
+                k in c.lower() for k in ("dur", "day", "matur", "term", "end")
+            )]
+            assert interdits == [], (
+                f"{payload['name']} : {interdits} — le contrat mesure le 12/08 "
+                "n'acceptait aucun champ de duree en COLLECT"
+            )
