@@ -45,7 +45,7 @@ import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 from app.clients.account_service import AccountServiceClient
@@ -70,6 +70,7 @@ from app.services.generateur import Generateur
 from app.services.generateur import patronyme as _patronyme_bouchon
 from app.services.geographie import ReferentielGeo
 from app.services.organisation import CompanyPorteuse, PlanOrganisation
+from app.services.referentiel_statique import ReferentielStatique
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +188,9 @@ class ExecuteurOrganisation:
         run_id: UUID,
         mode: RunMode,
         referentiel: ReferentielGeo,
+        #: `SD-2` — le catalogue de JJB. Charge une fois, jamais recharge : c'est
+        #: lui qui fournit les secteurs et industries reels envoyes au serveur.
+        statique: ReferentielStatique,
         generateur: Generateur,
         company_client: CompanyServiceClient,
         user_client: UserServiceClient,
@@ -197,6 +201,7 @@ class ExecuteurOrganisation:
         self.run_id = run_id
         self.mode = mode
         self._referentiel = referentiel
+        self._statique = statique
         self._generateur = generateur
         self._companies = company_client
         self._users = user_client
@@ -207,6 +212,9 @@ class ExecuteurOrganisation:
     @property
     def ecriture_reelle(self) -> bool:
         return self.mode is RunMode.REAL
+
+    def _fonction_du_dirigeant(self, raison: str, est_imf: bool) -> str:
+        return _fonction_du_dirigeant_pour(raison, est_imf, self._statique)
 
     # ----------------------------------------------------------------------
     # Coherence territoriale — croisement avec le Sprint 1
@@ -301,6 +309,9 @@ class ExecuteurOrganisation:
             logger.info("Company %s deja presente, reutilisee", court)
             return existante
 
+        secteurs, industries = secteurs_et_industrie(
+            type_company, ancre=court, statique=self._statique
+        )
         ville_ref = next((v for v in self._referentiel.villes.values() if v.name == ville), None)
         adresse = self._generateur.adresse(
             quartier,
@@ -323,7 +334,11 @@ class ExecuteurOrganisation:
             # `CR-03` — l'ancre du dirigeant est sa Company, stable d'un run a
             # l'autre puisque la raison sociale l'est (mesure du 12/08).
             ancre_client=f"dirigeant:{raison}",
-            occupation="Dirigeant",
+            # `SD-4` — la FONCTION reelle du dirigeant, plus « Dirigeant » en dur.
+            # Les 20 fonctions du fichier de JJB, en francais : l'ecosysteme est
+            # ouest-africain francophone, et le libelle part dans un champ libre
+            # de 200 caracteres qu'aucun service ne valide.
+            occupation=self._fonction_du_dirigeant(raison, est_imf),
             latitude=adresse.latitude,
             longitude=adresse.longitude,
             referentiel=self._referentiel,
@@ -352,8 +367,20 @@ class ExecuteurOrganisation:
                 adresse=adresse,
                 admin_email=owner.email,
                 currency=devise,
-                industries=[secteur],
-                sectors=[secteur],
+                # `SD-2` — DEUX AXES DISTINCTS, plus un doublon.
+                #
+                # Nous envoyions `industries=[secteur]` ET `sectors=[secteur]` : la
+                # meme valeur dans les deux champs. `Finance & Insurance` est une
+                # INDUSTRIE, `MicroFinance` un SECTEUR de cette industrie. La
+                # fiche `DEMO_QA0808_SARL Tamadou Textile`, en base depuis le
+                # 08/08, en porte la trace : `industries=["MicroFinance"]` et
+                # `sectors=["Textile"]`, deux valeurs sans rapport.
+                #
+                # L'industrie est DERIVEE, jamais choisie. Et la Fondation cesse
+                # d'avoir `sectors=[""]` — une chaine vide qui passait le
+                # `minItems: 1` sans rien signifier.
+                industries=industries,
+                sectors=secteurs,
             )
         except ErreurService as exc:
             # ANO-CPY-BUG-06 et consorts : on journalise et on poursuit.
@@ -861,6 +888,105 @@ def _dotation_capital(lender_type: LenderType) -> float:
     return DOTATION_CAPITAL_LOCAL
 
 
+#: `SD-2` — le secteur PRINCIPAL et les secteurs CONNEXES admissibles, par type
+#: serveur. Treize libelles declares, **et chacun est verifie present dans le
+#: referentiel de JJB** au chargement : un libelle disparu fait echouer bruyamment
+#: plutot que d'envoyer au serveur une valeur qui n'a aucune source.
+#:
+#: POURQUOI DECLARER PLUTOT QUE CALCULER. J'ai essaye la voie automatique — tirer
+#: les connexes parmi tous les secteurs de la meme industrie. Mesure du 12/08 :
+#: elle produit `sectors=['Retail', 'NGO']` (un commercant qui est une ONG) et
+#: `['MicroFinance', 'Cryptocurrency']` (une IMF rurale dans la crypto). Le
+#: fichier dit quel secteur appartient a quelle industrie ; il ne dit PAS quels
+#: secteurs vont ensemble pour une institution de microfinance. Cette
+#: connaissance est METIER, elle n'est pas dans les donnees.
+#:
+#: La declaration est donc NECESSAIRE, et non paresseuse — la preuve est mesuree.
+SECTEURS_PAR_TYPE: Final[dict[CompanyType, tuple[str, tuple[str, ...]]]] = {
+    CompanyType.IMF: ("MicroFinance", ("Lender", "Consulting", "Insurance")),
+    CompanyType.BANK: ("Banking", ("Investment", "Brokerage", "Insurance")),
+    CompanyType.MERCHANT: ("Retail", ("Wholesale", "Distribution", "Import Export")),
+    CompanyType.FONDATION: ("NGO", ("Charity", "Education", "Health")),
+    #: `EF-12` — les 4 bailleurs institutionnels. Ils financent, ils ne collectent
+    #: pas : leur secteur est `Investment`, jamais `MicroFinance`.
+    CompanyType.FUNDING_PROVIDER: ("Investment", ("Lender", "Insurance")),
+}
+
+#: La forme juridique par type. Prise parmi les 27 du fichier de JJB, et non plus
+#: parmi les 6 que Faker expose. `GIE` et `ONG` sont des formes reelles en zone
+#: UEMOA/CEMAC, absentes de Faker.
+FORME_PAR_TYPE: Final[dict[CompanyType, str]] = {
+    CompanyType.IMF: "SARL",
+    CompanyType.BANK: "SA",
+    CompanyType.MERCHANT: "SA",
+    CompanyType.FONDATION: "ONG",
+    CompanyType.FUNDING_PROVIDER: "Holding",
+}
+
+#: Combien de secteurs une Company porte. `sectors` est un `array` de `minItems: 1`
+#: — une Company reelle en declare plusieurs, mais toujours DANS SON INDUSTRIE.
+SECTEURS_MAX_PAR_COMPANY: Final = 3
+
+
+def secteurs_et_industrie(
+    type_company: CompanyType, ancre: str, statique: ReferentielStatique
+) -> tuple[list[str], list[str]]:
+    """Les `sectors` et `industries` d'une Company. `UC-07`, `INV-CPY-03/04`.
+
+    UNE SEULE INDUSTRIE, PLUSIEURS SECTEURS DEDANS
+    ----------------------------------------------
+    Le defaut corrige ici, mesure le 12/08 : nous envoyions
+    `industries=[secteur]` ET `sectors=[secteur]` — **la meme valeur dans les deux
+    champs**. Or `Finance & Insurance` est une INDUSTRIE et `MicroFinance` un
+    SECTEUR de cette industrie. La fiche `DEMO_QA0808_SARL Tamadou Textile`, en
+    base depuis le 08/08, porte encore `industries=["MicroFinance"]` et
+    `sectors=["Textile"]` — deux valeurs qui n'ont aucun rapport.
+
+    L'industrie est DERIVEE du secteur principal, jamais choisie. Et une seule :
+    prendre l'union des industries de tous les secteurs produisait des absurdites
+    — une fondation caritative classee en « Technology », parce que `Health`
+    appartient a la fois a Commerce et a Technology. Une entreprise se classe par
+    UNE activite principale : logique NACE/ISIC.
+
+    ET LA FONDATION CESSE D'AVOIR UN SECTEUR VIDE
+    --------------------------------------------
+    `_profil_company` rendait `secteur=""` pour les Fondations, donc
+    `sectors=[""]` : une chaine vide qui passe le `minItems: 1` du serveur SANS
+    RIEN SIGNIFIER. C'est un doublon de defaut, pas une valeur.
+
+    Ancre au CLIENT — ici a la Company — jamais au run (`CR-03`).
+    """
+    principal, connexes = SECTEURS_PAR_TYPE[type_company]
+    industrie = statique.industrie_du_secteur(principal)
+    alea = random.Random(f"secteurs:{ancre}")  # noqa: S311
+    combien = 1 + alea.randrange(min(SECTEURS_MAX_PAR_COMPANY, len(connexes) + 1))
+    secteurs = [principal, *alea.sample(list(connexes), combien - 1)]
+    return secteurs, [industrie]
+
+
+def _fonction_du_dirigeant_pour(
+    ancre: str, est_imf: bool, statique: ReferentielStatique
+) -> str:
+    """`SD-4` — la fonction du dirigeant, parmi les 20 du fichier de JJB.
+
+    L'IMF racine porte la PREMIERE — « Directeur General / President-Directeur
+    General », l'equivalent PDG/CEO. C'est elle qui porte toute la hierarchie
+    (`UC-09`) : lui donner un titre subalterne serait incoherent.
+
+    Les autres Companies tirent parmi les 19 restantes, ancrees sur leur raison
+    sociale — stable d'un run a l'autre (`CR-03`), puisque `raison_sociale()` ne
+    depend pas du `run_id` (mesure du 12/08).
+
+    Le libelle FRANCAIS, jamais l'anglais ni l'abreviation : les quatre pays
+    cibles sont francophones, et `occupation` est un champ libre que le serveur ne
+    valide pas — c'est a nous d'y mettre du sens.
+    """
+    fonctions = statique.fonctions_dirigeant
+    if est_imf:
+        return fonctions[0].francais
+    return random.Random(f"fonction:{ancre}").choice(fonctions[1:]).francais  # noqa: S311
+
+
 def _profil_company(est_imf: bool, index: int) -> tuple[CompanyType, str, str]:
     """Le triplet (type serveur, forme juridique, secteur) d'une Company.
 
@@ -881,9 +1007,14 @@ def _profil_company(est_imf: bool, index: int) -> tuple[CompanyType, str, str]:
     institutionnels (`EF-12`).
     """
     if est_imf:
-        return CompanyType.IMF, "SARL", "MicroFinance"
+        return CompanyType.IMF, FORME_PAR_TYPE[CompanyType.IMF], "MicroFinance"
+    # Le secteur rendu ici est le PRINCIPAL — il sert a `raison_sociale()`. Les
+    # secteurs complets et l'industrie viennent de `secteurs_et_industrie()`.
+    type_company = (CompanyType.MERCHANT, CompanyType.FONDATION, CompanyType.BANK)[
+        index % 3
+    ]
     return (
-        (CompanyType.MERCHANT, "SA", "Commerce"),
-        (CompanyType.FONDATION, "Fondation", ""),
-        (CompanyType.BANK, "SA", "Banque"),
-    )[index % 3]
+        type_company,
+        FORME_PAR_TYPE[type_company],
+        SECTEURS_PAR_TYPE[type_company][0],
+    )

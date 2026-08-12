@@ -77,13 +77,72 @@ distribution **naturelle de Faker**, pas notre exigence. `EF-23` impose 80/20 �
 
 ---
 
+## D-13 · `parent_company_id` — disponible, volontairement inutilisé
+
+**Tranché le 12/08/2026 · Yaniv, sur mesure**
+
+Le lien parent-filiale de company-service **fonctionne** : trois niveaux créés,
+trois HTTP 201, licence à chacun (campagne du 12/08). On **écrit** `company_id`, on
+**lit** `parent` — et `parent` porte l'objet Company **entier**, imbriqué
+récursivement.
+
+**Décision : nous ne l'employons pas.** Et la raison vient du CDC, pas d'une
+limite technique.
+
+`UC-07` crée « entre 3 et 5 Companies **par pays** ». Ce sont **des personnes
+morales indépendantes** : une IMF, une banque, une fondation, un commerçant. Le
+CDC ne décrit **aucune relation mère-fille** entre elles, et §6.3 est explicite sur
+ce que le vocabulaire distingue : *« une Company désigne toute personne morale
+utilisant la plateforme »* — pas un groupe.
+
+**Poser un lien de filiale serait inventer un fait que le CDC n'énonce pas.** C'est
+précisément ce qu'il interdit.
+
+**Ce que la campagne apporte donc n'est pas une capacité à utiliser, mais une
+certitude** : le jour où le CDC décrira un groupe avec des filiales, le serveur le
+portera, et nous savons exactement comment. En attendant, `parent_company_id` reste
+exposé par `CompanyServiceClient.creer_company()` avec **zéro appelant** — et cette
+absence est désormais **une décision écrite**, non un oubli.
+
+**Appliqué** : `app/clients/company_service.py` (paramètre conservé et documenté) ·
+`docs/empirical/2026-08-12_arbre_company_service.md`
+
+---
+
 ## D-05 · Branche et Agence — niveaux logiques internes au Loader
 
 **Tranché le 8 août 2026 · Yaniv**
 
-company-service n'expose **aucune route** pour Branche ni Agence, et son enum
-`CompanyType` ne comporte **aucune valeur `BRANCH`**. Les matérialiser en Companies
-filles ferait exploser le budget de 12‑20 Companies fixé par `UC-07`, sans bénéfice.
+> ⚠️ **JUSTIFICATION CORRIGÉE LE 12/08/2026 — la décision tient, son motif était
+> à moitié faux.** Voir `docs/empirical/2026-08-12_arbre_company_service.md`.
+
+**Ce qui était écrit, et qui est inexact** : *« company-service n'expose aucune
+route pour Branche ni Agence, et son enum `CompanyType` ne comporte aucune valeur
+`BRANCH` »*.
+
+Exact pour `BRANCH`. **Faux pour Agence et Kiosque** — mesure du 12/08 :
+`CompanyType = ['MERCHANT','BANK','IMF','AGENCY','KIOSK','FUNDING_PROVIDER','FONDATION']`.
+Et le CDC ligne 467 les nomme lui-même parmi les **sept types de Company du niveau
+1**. Le lien parent-filiale fonctionne, mesuré sur **trois niveaux**, licence
+incluse à chacun.
+
+**Les trois vraies raisons, et aucune n'est une impossibilité technique :**
+
+1. **La géographie n'existe pas côté serveur.** Le CDC ancre chaque niveau
+   opérationnel sur un niveau géographique — *« Branche : rattachée à une **Region**
+   · Agence : au niveau d'une **Ville** · Kiosque : rattaché à un **Quartier** »*
+   (lignes 468-470). Or config-service ne porte ni région, ni ville, ni quartier :
+   c'est `Loader_Base` qui en porte 51 / 50 / 82. **L'ossature de l'arbre
+   opérationnel n'existe pas là où on voudrait le poser.**
+2. **La duplication.** Un Kiosque **existe déjà** côté serveur, comme
+   **Dépositaire** porteur de `company_id`. En faire aussi une Company le créerait
+   **deux fois, dans deux services, sans lien entre les deux.** C'est l'argument
+   le plus fort, et il n'avait pas été formulé.
+3. **La volumétrie.** `UC-07` fixe « entre 3 et 5 Companies par pays » (12 à 20) ;
+   `UC-09` exige 40 à 80 Kiosques. On ne met pas 80 Kiosques dans un budget de 20.
+   S'y ajoute un coût de lecture mesuré : la fiche d'une Company passe de **1 386
+   à 4 043 caractères** avec deux ancêtres — le serveur imbrique la chaîne
+   ascendante entière, et `GET /companies/` les rend toutes.
 
 **Décision** : Branche et Agence restent **logiques**, persistées chez nous. Seuls
 Company (IMF) et Kiosque_Dépositaire existent côté serveur, reliés par `company_id`.

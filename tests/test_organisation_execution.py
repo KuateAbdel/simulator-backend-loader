@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.clients.base import ErreurService
+from app.clients.contracts import CompanyType
 from app.core.cdc import (
     COMPTES_LENDER,
     DOTATION_CAPITAL_INSTITUTIONNEL,
@@ -31,9 +32,15 @@ from app.services.generateur import Generateur
 from app.services.geographie import ReferentielGeo, charger_referentiel
 from app.services.organisation import planifier
 from app.services.organisation_execution import (
+    FORME_PAR_TYPE,
+    SECTEURS_MAX_PAR_COMPANY,
+    SECTEURS_PAR_TYPE,
     ExecuteurOrganisation,
     RapportOrganisation,
+    _fonction_du_dirigeant_pour,
+    secteurs_et_industrie,
 )
+from app.services.referentiel_statique import charger_statique
 
 RUN_ID = UUID("11111111-2222-3333-4444-555555555555")
 SIM_START = date(2026, 2, 9)
@@ -165,6 +172,12 @@ class AuditMuet:
         self.entrees.append(str(kwargs["entity_type"]))
 
 
+#: `SD-1` — charge une fois pour tout le module. Les libelles de secteur et
+#: d'industrie qu'il porte partent REELLEMENT au serveur : les simuler masquerait
+#: une incoherence entre notre catalogue et ce qu'on envoie.
+STATIQUE = charger_statique()
+
+
 @pytest.fixture(scope="module")
 def referentiel() -> ReferentielGeo:
     return charger_referentiel(
@@ -181,6 +194,10 @@ def _executeur(mode: RunMode, referentiel: ReferentielGeo, company_client: Any =
         "audit": AuditMuet(),
     }
     executeur = ExecuteurOrganisation(
+        # `SD-2` — le catalogue de JJB fournit les secteurs et industries reels.
+        # Le charger ici plutot que de le simuler : ces libelles partent au
+        # serveur, et un double appauvri masquerait une incoherence.
+        statique=STATIQUE,
         run_id=RUN_ID,
         mode=mode,
         referentiel=referentiel,
@@ -365,3 +382,162 @@ class TestDotationDuCapital:
             "le rapport doit porter le solde RELU, jamais la somme demandee"
         )
         assert rapport.companies_creees, "un ecart de solde n'annule aucune Company"
+
+
+class TestSecteursEtIndustries:
+    """`SD-2` — deux axes distincts, plus un doublon.
+
+    LE DEFAUT CORRIGE, mesure le 12/08 : nous envoyions `industries=[secteur]` ET
+    `sectors=[secteur]` — la MEME valeur dans les deux champs. `Finance &
+    Insurance` est une INDUSTRIE, `MicroFinance` un SECTEUR de cette industrie.
+
+    La trace est en base depuis le 08/08 : `DEMO_QA0808_SARL Tamadou Textile`
+    porte `industries=["MicroFinance"]` et `sectors=["Textile"]` — deux valeurs
+    qui n'ont aucun rapport. Sans `DELETE`, elle reste fausse a jamais.
+    """
+
+    def test_chaque_libelle_declare_EXISTE_dans_le_referentiel(self) -> None:
+        """LE TEST LE PLUS IMPORTANT DE CETTE CLASSE. Treize libelles sont
+        declares en dur ; si JJB en renomme un, le Loader enverrait au serveur une
+        valeur qui n'a AUCUNE source. Ce test l'interdit."""
+        manquants = [
+            (typ.value, libelle)
+            for typ, (principal, connexes) in SECTEURS_PAR_TYPE.items()
+            for libelle in (principal, *connexes)
+            if libelle not in STATIQUE.secteurs
+        ]
+        assert manquants == [], f"libelles absents du fichier de JJB : {manquants}"
+
+    def test_chaque_forme_juridique_EXISTE_dans_le_referentiel(self) -> None:
+        absentes = [
+            (typ.value, forme)
+            for typ, forme in FORME_PAR_TYPE.items()
+            if forme not in STATIQUE.formes_juridiques
+        ]
+        assert absentes == [], f"formes absentes des 27 du fichier : {absentes}"
+
+    def test_chaque_connexe_partage_l_industrie_de_son_principal(self) -> None:
+        """Sinon une Company porterait des secteurs de deux industries, et
+        `industries` — derivee du principal — mentirait sur une partie d'eux.
+
+        C'est ce controle qui a fait ecarter le tirage automatique parmi TOUS les
+        secteurs d'une industrie : il produisait `['Retail', 'NGO']`, un
+        commercant qui est une ONG.
+        """
+        for typ, (principal, connexes) in SECTEURS_PAR_TYPE.items():
+            industrie = STATIQUE.industrie_du_secteur(principal)
+            hors = [c for c in connexes if industrie not in STATIQUE.secteurs[c]]
+            assert hors == [], f"{typ.value} : {hors} hors de {industrie}"
+
+    def test_UNE_SEULE_industrie_par_Company(self) -> None:
+        """Une entreprise se classe par UNE activite principale — logique
+        NACE/ISIC. Prendre l'union des industries des secteurs choisis classait
+        une fondation caritative en « Technology », parce que `Health` appartient
+        a la fois a Commerce et a Technology."""
+        for typ in SECTEURS_PAR_TYPE:
+            for rang in range(20):
+                _, industries = secteurs_et_industrie(typ, f"a{rang}", STATIQUE)
+                assert len(industries) == 1, (typ.value, industries)
+
+    def test_le_PRINCIPAL_est_TOUJOURS_en_tete(self) -> None:
+        for typ, (principal, _) in SECTEURS_PAR_TYPE.items():
+            for rang in range(20):
+                secteurs, _ = secteurs_et_industrie(typ, f"b{rang}", STATIQUE)
+                assert secteurs[0] == principal, (typ.value, secteurs)
+
+    def test_de_UN_a_TROIS_secteurs_sans_doublon(self) -> None:
+        """`sectors` est un `array` de `minItems: 1` — une Company reelle en
+        declare plusieurs, mais jamais deux fois le meme."""
+        vues = set()
+        for typ in SECTEURS_PAR_TYPE:
+            for rang in range(40):
+                secteurs, _ = secteurs_et_industrie(typ, f"c{rang}", STATIQUE)
+                assert 1 <= len(secteurs) <= SECTEURS_MAX_PAR_COMPANY
+                assert len(secteurs) == len(set(secteurs)), secteurs
+                vues.add(len(secteurs))
+        assert vues == {1, 2, 3}, f"les trois tailles doivent apparaitre : {vues}"
+
+    def test_AUCUN_secteur_vide_JAMAIS(self) -> None:
+        """`_profil_company` rendait `secteur=""` pour les Fondations, donc
+        `sectors=[""]` : une chaine vide qui passe le `minItems: 1` du serveur SANS
+        RIEN SIGNIFIER. C'est un doublon de defaut, pas une valeur."""
+        for typ in SECTEURS_PAR_TYPE:
+            for rang in range(20):
+                secteurs, industries = secteurs_et_industrie(typ, f"d{rang}", STATIQUE)
+                assert all(s.strip() for s in secteurs), (typ.value, secteurs)
+                assert all(i.strip() for i in industries), (typ.value, industries)
+
+    def test_la_FONDATION_est_une_ONG_pas_un_commerce_vide(self) -> None:
+        secteurs, industries = secteurs_et_industrie(
+            CompanyType.FONDATION, "fondation", STATIQUE
+        )
+        assert secteurs[0] == "NGO"
+        assert industries == ["Commerce"]
+
+    def test_le_BAILLEUR_institutionnel_ne_fait_PAS_de_microfinance(self) -> None:
+        """`EF-12` — les 4 institutionnels financent, ils ne collectent pas."""
+        secteurs, _ = secteurs_et_industrie(
+            CompanyType.FUNDING_PROVIDER, "bailleur", STATIQUE
+        )
+        assert secteurs[0] == "Investment"
+        assert "MicroFinance" not in secteurs
+
+    def test_ANCRE_a_la_Company_jamais_au_run(self) -> None:
+        """`CR-03` — deux runs du meme perimetre doivent donner les memes secteurs,
+        sinon une reprise reecrirait la fiche."""
+        for typ in SECTEURS_PAR_TYPE:
+            a = secteurs_et_industrie(typ, "DEMO_SARL Kouassi", STATIQUE)
+            b = secteurs_et_industrie(typ, "DEMO_SARL Kouassi", STATIQUE)
+            assert a == b
+
+    def test_deux_Companies_DIFFERENTES_ne_sont_pas_toutes_identiques(self) -> None:
+        vus = {
+            tuple(secteurs_et_industrie(CompanyType.MERCHANT, f"m{r}", STATIQUE)[0])
+            for r in range(30)
+        }
+        assert len(vus) > 1, "toutes les Companies auraient les memes secteurs"
+
+
+class TestFonctionDuDirigeant:
+    """`SD-4` — « Dirigeant » etait code en dur. Le fichier de JJB en donne 20."""
+
+    def test_l_IMF_racine_porte_la_fonction_de_PDG(self) -> None:
+        """C'est elle qui porte toute la hierarchie (`UC-09`) : lui donner un
+        titre subalterne serait incoherent."""
+        fonction = _fonction_du_dirigeant_pour("DEMO_SARL Kouassi", True, STATIQUE)
+        assert "Directeur" in fonction and "General" in fonction.replace("é", "e")
+
+    def test_les_autres_ne_sont_pas_toutes_PDG(self) -> None:
+        vues = {
+            _fonction_du_dirigeant_pour(f"DEMO_SA Nom{r}", False, STATIQUE)
+            for r in range(30)
+        }
+        assert len(vues) > 3, f"seulement {len(vues)} fonction(s) distincte(s) : {vues}"
+        assert STATIQUE.fonctions_dirigeant[0].francais not in vues, (
+            "la fonction de PDG est reservee a l'IMF racine"
+        )
+
+    def test_toujours_une_fonction_du_REFERENTIEL(self) -> None:
+        admises = {f.francais for f in STATIQUE.fonctions_dirigeant}
+        for est_imf in (True, False):
+            for r in range(30):
+                assert (
+                    _fonction_du_dirigeant_pour(f"DEMO_X{r}", est_imf, STATIQUE)
+                    in admises
+                )
+
+    def test_le_libelle_est_en_FRANCAIS_jamais_l_abreviation(self) -> None:
+        """Les quatre pays cibles sont francophones, et `occupation` est un champ
+        libre que le serveur ne valide pas — c'est a nous d'y mettre du sens."""
+        fonction = _fonction_du_dirigeant_pour("DEMO_SA Test", False, STATIQUE)
+        abreviations = {f.abreviation for f in STATIQUE.fonctions_dirigeant}
+        anglais = {f.anglais for f in STATIQUE.fonctions_dirigeant}
+        assert fonction not in abreviations
+        assert fonction not in anglais
+
+    def test_ANCREE_a_la_Company_jamais_au_run(self) -> None:
+        """`CR-03` — `raison_sociale()` est stable d'un run a l'autre, donc la
+        fonction doit l'etre aussi."""
+        a = _fonction_du_dirigeant_pour("DEMO_SA Fall", False, STATIQUE)
+        b = _fonction_du_dirigeant_pour("DEMO_SA Fall", False, STATIQUE)
+        assert a == b

@@ -274,7 +274,8 @@ citées mot pour mot.
 | n'**écrit jamais** en base FinZuu directement | Il consomme les API comme n'importe quel client. Écrire en base court-circuiterait la validation métier et corromprait les invariants |
 | ne **crée aucun menu** | Config d'interface, périmètre Zidane. Et la mesure du 11/08 le confirme : les 14 menus sont tous techniques et publics, `routes: []` sur les 16 groupes |
 | ne **crée aucune permission** | `POST /permissions/create` existe, **aucun `DELETE`** : une permission créée serait définitive. `D-07` écarte aussi les 22 `LENDER_*` |
-| ne **matérialise pas** Branche et Agence en Companies | `D-05`. Elles n'ont aucune contrepartie serveur, et les créer ferait exploser le budget de 12-20 Companies d'`UC-07` |
+| ne **matérialise pas** Branche et Agence en Companies | `D-05`, justification corrigée le 12/08. `AGENCY` et `KIOSK` **existent** dans l'enum et le lien filiale fonctionne — mais l'ossature géographique de l'arbre (Region, Ville, Quartier) n'existe pas côté serveur, un Kiosque serait **dupliqué** avec son Dépositaire, et `UC-07` plafonne à 20 Companies quand `UC-09` exige 40 à 80 Kiosques |
+| n'emploie **pas** `parent_company_id` | `D-13`. Le lien fonctionne (mesuré, 3 niveaux), mais le CDC ne décrit **aucune** relation mère-fille entre les 3 à 5 Companies indépendantes d'un pays. L'employer serait inventer un fait |
 | ne **touche pas company-service** en créant un Kiosque | Il ne fait que **référencer** un `company_id` déjà créé |
 | n'**invente aucune géographie** hors du référentiel | `patronyme("ZZ")` **lève** ; un pays inconnu arrête le run au lieu de se peupler de noms empruntés |
 | ne **compose pas** les noms officiels | `UC-08` impose les identités officielles des 4 institutionnels : `DEMO_IFC`, jamais « Etablissement Ifc Financement » |

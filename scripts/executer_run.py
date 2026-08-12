@@ -55,6 +55,7 @@ from app.services.orchestrateur import Etape, Orchestrateur, RapportEtape, Trava
 from app.services.organisation import CompanyPorteuse
 from app.services.organisation_execution import ExecuteurOrganisation
 from app.services.recette import ControleRecette
+from app.services.referentiel_statique import charger_statique
 from app.services.roles_execution import ExecuteurRoles
 from app.services.staff_execution import ExecuteurStaff
 
@@ -78,6 +79,10 @@ async def executer(
     await ensure_indexes()
     run_id = uuid4()
     referentiel = charger_referentiel(CLASSEUR)
+    # `SD-1` — le catalogue de JJB, charge AVANT toute ecriture. Un referentiel
+    # incoherent doit interrompre le lancement, jamais laisser partir 20 Companies
+    # avec des secteurs disparus sur un service sans `DELETE`.
+    statique = charger_statique()
     configuration = ConfigurationExecution.defaut_cdc()
 
     # `ENF-16` — fenetre de 180 jours, calculee ICI : elle fait partie de ce que
@@ -183,6 +188,7 @@ async def executer(
         run_id=run_id,
         mode=mode,
         referentiel=referentiel,
+        statique=statique,
         generateur=generateur,
         company_client=companies,
         user_client=users,
