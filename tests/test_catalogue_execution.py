@@ -15,7 +15,7 @@ Ce que ces tests protegent :
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from uuid import UUID, uuid4
 
 import pytest
@@ -159,3 +159,93 @@ class TestArtefactPourLaSuite:
         assert len(rapport.souscriptibles) == PRODUITS_ATTENDUS
         assert all(isinstance(p.product_id, UUID) for p in rapport.souscriptibles)
         assert rapport.statut is RunStatus.COMPLETED
+
+
+class TestPolicyTypeJusquAuPanier:
+    """`UC-13` — le `PolicyType` doit ARRIVER jusqu'a `_panier()`.
+
+    DEFAUT DU 12/08, ET IL ETAIT JUSTE PAR COINCIDENCE
+    --------------------------------------------------
+    `ProduitSouscriptible` a gagne un `policy_type` pour ordonner le panier
+    (`CASH` -> `CASH_DAT` -> `PRODUCT`). Deux des QUATRE sites de construction ne
+    le renseignaient pas, dont celui du produit PLANIFIE en DRY_RUN.
+
+    Sans lui, le tri retombe sur le NOM — et « Cotisation » < « Depot » <
+    « plastique » dans l'ordre alphabetique. Le rapport a blanc affichait donc un
+    ordre metier correct POUR UNE RAISON FAUSSE. Aucun symptome ne le denonçait ;
+    un simple renommage de produit l'aurait fait apparaitre en REEL.
+
+    C'est la meme famille que le defaut du 11/08 documente juste au-dessus dans
+    `catalogue_execution.py` : le produit prevu qui n'entrait pas dans
+    `souscriptibles`. Meme endroit, meme lecon, appliquee a moitie.
+    """
+
+    #: `D-PRD-9` — les DEUX produits que le Loader ne cree pas mais RETROUVE.
+    #: Mesure du 12/08 : tous deux presents en base, et tous deux INDIVIDUAL.
+    #:
+    #: FAIT A SIGNALER, trouve en ecrivant ce test : « Cotisation 20000/mois » est
+    #: le seul produit `CASH` INDIVIDUAL du catalogue, donc le PRODUIT D'ENTREE
+    #: des 1600 clients individuels — et il est preexistant. S'il disparaissait de
+    #: l'environnement, `UC-13` n'aurait plus de porte d'entree pour eux.
+    #: `rapport.ecart_au_cdc` le signale deja ; le panier tomberait alors sur
+    #: `CASH_DAT`, ce qui serait un depot a terme sans epargne prealable.
+    PREEXISTANTS: ClassVar[dict[str, tuple[str, str]]] = {
+        "Cotisation 20000/mois": ("CASH", "INDIVIDUAL"),
+        "plastique": ("PRODUCT", "INDIVIDUAL"),
+    }
+
+    @classmethod
+    async def _a_blanc(cls) -> Any:
+        """Les quatre produits COLLECT manquants sont PLANIFIES — on exerce donc
+        le site de construction qui oubliait le `policy_type` — et les deux
+        preexistants sont RETROUVES, comme dans l'environnement reel."""
+
+        preexistants = cls.PREEXISTANTS
+
+        class _Produits:
+            async def chercher_par_nom(self, nom: str) -> dict[str, Any] | None:
+                for attendu, (policy, categorie) in preexistants.items():
+                    if attendu in nom:
+                        return {
+                            "_id": str(uuid4()),
+                            "name": nom,
+                            "category": categorie,
+                            # `policy.type`, comme le vrai serveur (mesure 12/08).
+                            "policy": {"type": policy},
+                        }
+                return None
+
+        return await ExecuteurCatalogue(
+            run_id=uuid4(),
+            mode=RunMode.DRY_RUN,
+            product_client=_Produits(),  # type: ignore[arg-type]
+            audit=None,  # type: ignore[arg-type]
+            chemin_loan_json=LOAN_JSON,
+        ).executer()
+
+    @pytest.mark.asyncio
+    async def test_a_blanc_chaque_COLLECT_porte_son_policy_type(self) -> None:
+        rapport = await self._a_blanc()
+        collect = [p for p in rapport.souscriptibles if p.type_produit is ProductType.COLLECT]
+        assert collect, "aucun COLLECT : le test ne prouverait rien"
+        sans = [p.nom for p in collect if not p.policy_type]
+        assert sans == [], f"policy_type absent : {sans}"
+
+    @pytest.mark.asyncio
+    async def test_a_blanc_les_trois_PolicyType_sont_TOUS_representes(self) -> None:
+        """Le catalogue en declare trois par categorie. Si le rapport a blanc n'en
+        montrait qu'un, `UC-13` ne pourrait produire qu'un panier d'un produit —
+        et `D-01` fait de ce rapport « la derniere occasion de dire non »."""
+        rapport = await self._a_blanc()
+        collect = [p for p in rapport.souscriptibles if p.type_produit is ProductType.COLLECT]
+        for categorie in ("INDIVIDUAL", "CORPORATE"):
+            types = {p.policy_type for p in collect if p.categorie == categorie}
+            assert types == {"CASH", "CASH_DAT", "PRODUCT"}, f"{categorie} : {types}"
+
+    @pytest.mark.asyncio
+    async def test_le_policy_type_ne_recopie_JAMAIS_le_ProductType(self) -> None:
+        """Il vit dans `policy.type`, pas au premier niveau. Les confondre
+        mettrait « COLLECT » partout et rendrait l'ordre metier muet."""
+        rapport = await self._a_blanc()
+        for produit in rapport.souscriptibles:
+            assert produit.policy_type not in {"COLLECT", "LENDING"}, produit.nom

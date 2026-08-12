@@ -28,18 +28,22 @@ import pytest
 
 from app.clients.account_service import AccountServiceClient
 from app.clients.base import ErreurService
-from app.clients.contracts import ClientCategory, ProductType
+from app.clients.client_service import SOUSCRIPTIONS_MAX
+from app.clients.contracts import ClientCategory, ClientSegment, ProductType
 from app.clients.faker_service import CategorieClient, ClientFaker
 from app.core.configuration import ConfigurationExecution
 from app.models.enums import EtatConsommationFaker, RunMode, RunStatus
 from app.repositories.faker_ledger import ConsommationIncoherente
 from app.services.clients_execution import (
     CLES_QUICK_WIN_BINAIRES,
+    ORDRE_SOUSCRIPTION,
+    SEGMENTS_ANNEXE_E,
     SOLDE_INITIAL_MAX,
     SOLDE_INITIAL_MIN,
     ExecuteurClients,
     QuotaPays,
     RapportClients,
+    segment_client,
     solde_initial,
 )
 from app.services.depositaires_execution import ProduitSouscriptible
@@ -99,7 +103,19 @@ class FauxFaker:
         if self._replier:
             seed = seed % self._replier
         return _tirage(
+            # LES NEUF SIGNAUX `quick_win`, VARIES PAR LA GRAINE.
+            #
+            # Ce double n'en posait qu'UN a 1, donc `segment_client()` rendait
+            # `VERY_LOW` pour tous et `solde_initial()` restait dans la strate la
+            # plus basse. Defaut trouve le 12/08 par le test « les 2000 clients ne
+            # sont plus tous ANY » : le code etait bon, le double appauvri.
+            #
+            # La famille A est deterministe par graine et porte onze champs
+            # `quick_win`, dont neuf binaires. Les bits de la graine les etalent.
             pays,
+            quick_win={
+                cle: (seed >> i) & 1 for i, cle in enumerate(CLES_QUICK_WIN_BINAIRES)
+            },
             genre="WOMAN" if seed % 3 else "MAN",
             business=categorie == CategorieClient.BUSINESS,
             seed=seed,
@@ -199,8 +215,12 @@ class FauxClientService:
         *,
         sans_account_id: bool = False,
         msisdns_existants: set[str] | None = None,
+        refuser_souscriptions: bool = False,
     ) -> None:
         self.onboardes: list[dict[str, Any]] = []
+        #: `UC-13` / `D-CLI-7` — les `PUT /clients/subscribe` recus.
+        self.souscriptions: list[tuple[str, Any]] = []
+        self._refuser_souscriptions = refuser_souscriptions
         self.fiches: list[dict[str, Any]] = []
         self.recherches: list[str] = []
         self._echouer = echouer_1_sur
@@ -210,6 +230,25 @@ class FauxClientService:
         #: cree jamais.
         self._existants = msisdns_existants or set()
         self._n = 0
+
+    async def souscrire(self, msisdn: str, product_id: Any) -> dict[str, Any]:
+        """`D-CLI-7` — HTTP 200, le tableau `product` s'allonge (mesure 09/08).
+
+        Le vrai service refuse le DOUBLON : `400 « A customer cannot subscribe to
+        the same products twice »`. Ce double le reproduit, sinon un panier qui
+        repeterait un produit passerait ici sans que rien ne le signale.
+        """
+        if self._refuser_souscriptions:
+            raise ErreurService(
+                "client-service", "PUT", "/subscribe", 500, "panne simulee", "-"
+            )
+        if (msisdn, product_id) in self.souscriptions:
+            raise ErreurService(
+                "client-service", "PUT", "/subscribe", 400,
+                "A customer cannot subscribe to the same products twice", "-",
+            )
+        self.souscriptions.append((msisdn, product_id))
+        return {"msisdn": msisdn}
 
     async def chercher_par_msisdn(self, msisdn: str) -> dict[str, Any] | None:
         """Le vrai service rend `404` — donc `None` — quand le client n'existe
@@ -273,9 +312,39 @@ class FauxComptes:
 
 
 def _produits() -> list[ProduitSouscriptible]:
+    """LE CATALOGUE REEL — six COLLECT, trois par categorie, un par PolicyType.
+
+    Cette fixture n'en portait que DEUX (un par categorie) et aucun
+    `policy_type`. Consequence trouvee le 12/08 : l'executeur ne pouvait
+    composer qu'un panier d'UN produit, donc `UC-13` restait a une souscription —
+    et les tests de panier, qui s'appuyaient sur un catalogue synthetique a trois
+    produits, passaient quand meme. Un double appauvri rend un test complaisant.
+
+    Noms et `PolicyType` conformes a `app/services/catalogue.py`.
+    """
     return [
-        ProduitSouscriptible(uuid4(), "DEMO_Cotisation", ProductType.COLLECT, "INDIVIDUAL"),
-        ProduitSouscriptible(uuid4(), "DEMO_Cotisation Corp", ProductType.COLLECT, "CORPORATE"),
+        ProduitSouscriptible(
+            uuid4(), "DEMO_Cotisation 20000/mois", ProductType.COLLECT, "INDIVIDUAL", "CASH"
+        ),
+        ProduitSouscriptible(
+            uuid4(), "DEMO_Depot a Terme 6 Mois", ProductType.COLLECT, "INDIVIDUAL", "CASH_DAT"
+        ),
+        ProduitSouscriptible(
+            uuid4(), "DEMO_plastique", ProductType.COLLECT, "INDIVIDUAL", "PRODUCT"
+        ),
+        ProduitSouscriptible(
+            uuid4(), "DEMO_Cotisation Commercants", ProductType.COLLECT, "CORPORATE", "CASH"
+        ),
+        ProduitSouscriptible(
+            uuid4(),
+            "DEMO_Depot a Terme Entreprise 12 Mois",
+            ProductType.COLLECT,
+            "CORPORATE",
+            "CASH_DAT",
+        ),
+        ProduitSouscriptible(
+            uuid4(), "DEMO_Collecte Cacao", ProductType.COLLECT, "CORPORATE", "PRODUCT"
+        ),
         # Un LENDING dans la liste : il DOIT etre filtre (UC-13).
         ProduitSouscriptible(uuid4(), "DEMO_Nano", ProductType.LENDING, "INDIVIDUAL"),
     ]
@@ -785,7 +854,7 @@ class TestProduits:
         rapport = RapportClients(mode=RunMode.DRY_RUN)
         collect = ex._produits_collect(rapport)
         assert all(p.type_produit is ProductType.COLLECT for p in collect)
-        assert len(collect) == 2
+        assert len(collect) == 6, "trois par categorie, un par PolicyType — le catalogue reel"
 
     def test_un_corporate_ne_recoit_jamais_un_produit_individual(self) -> None:
         """`OBS-CLI-CROSSCHECK-01` : aucune validation croisee cote serveur —
@@ -794,9 +863,11 @@ class TestProduits:
         individual_seul = [
             ProduitSouscriptible(uuid4(), "DEMO_Cotisation", ProductType.COLLECT, "INDIVIDUAL")
         ]
-        assert ex._choisir_produit(individual_seul, ClientCategory.CORPORATE) is None
-        produit = ex._choisir_produit(individual_seul, ClientCategory.INDIVIDUAL)
-        assert produit is not None
+        assert ex._produits_compatibles(individual_seul, ClientCategory.CORPORATE) == []
+        assert (
+            ex._produits_compatibles(individual_seul, ClientCategory.INDIVIDUAL)
+            == individual_seul
+        )
 
     def test_un_catalogue_sans_collect_bloque_et_le_dit(self) -> None:
         """`D-CLI-1` : `product_id` est REQUIS a l'onboarding — sans COLLECT,
@@ -1120,3 +1191,360 @@ class TestReprise:
             "collisions comme des clients crees"
         )
         assert quota.femmes + quota.hommes == len(rapport.crees)
+
+
+class TestUC13Souscriptions:
+    """`UC-13` — « 1 a 3 souscriptions a des produits Collecte ».
+
+    TROIS FAITS MESURES, ET LE SERVEUR N'EN PORTE QU'UN
+    ---------------------------------------------------
+    - Le plafond n'est PAS porte : six produits attaches a un meme client sans
+      le moindre rejet (09/08). `SOUSCRIPTIONS_MAX = 3` est a nous.
+    - Le doublon EST refuse : `400 « A customer cannot subscribe to the same
+      products twice »` — invariant qu'aucune de nos sources ne documentait.
+    - La categorie n'est PAS verifiee (`OBS-CLI-CROSSCHECK-01`).
+    """
+
+    def _catalogue(self, categorie: str = "INDIVIDUAL") -> list[Any]:
+        """Les trois COLLECT d'une categorie, un par PolicyType — le catalogue
+        reel. Volontairement dans le DESORDRE, pour que le tri se voie."""
+        return [
+            ProduitSouscriptible(
+                uuid4(), "DEMO_plastique", ProductType.COLLECT, categorie, "PRODUCT"
+            ),
+            ProduitSouscriptible(
+                uuid4(), "DEMO_DAT 6 Mois", ProductType.COLLECT, categorie, "CASH_DAT"
+            ),
+            ProduitSouscriptible(
+                uuid4(), "DEMO_Cotisation", ProductType.COLLECT, categorie, "CASH"
+            ),
+        ]
+
+    def _paniers(self, nb: int = 400) -> list[list[Any]]:
+        ex = _executeur(mode=RunMode.DRY_RUN, nb_clients=40)
+        catalogue = self._catalogue()
+        return [
+            ex._panier(catalogue, _compose_pour(_kiosques("CM")[0], seed=graine))
+            for graine in range(1, nb + 1)
+        ]
+
+    def test_le_PREMIER_produit_est_TOUJOURS_le_CASH(self) -> None:
+        """Le produit d'entree part a l'onboarding, `OnboardClientSchema` exigeant
+        `product_id` des le premier appel. Mon premier jet tirait un
+        `random.sample()` : il pouvait mettre « plastique » en premier et produire
+        un client d'epargne dont l'unique produit est une collecte de dechets."""
+        for panier in self._paniers(200):
+            assert panier, "un client sans produit ne serait pas onboardable"
+            assert panier[0].policy_type == "CASH", (
+                f"produit d'entree {panier[0].nom} ({panier[0].policy_type}) — "
+                "la cotisation est la porte d'entree, pas la collecte en nature"
+            )
+
+    def test_l_ordre_metier_est_respecte_dans_tout_le_panier(self) -> None:
+        for panier in self._paniers(200):
+            rangs = [ORDRE_SOUSCRIPTION.index(p.policy_type) for p in panier]
+            assert rangs == sorted(rangs), [p.nom for p in panier]
+
+    def test_jamais_de_doublon_le_serveur_le_refuserait(self) -> None:
+        """`400 « A customer cannot subscribe to the same products twice »`."""
+        for panier in self._paniers():
+            identifiants = [p.product_id for p in panier]
+            assert len(identifiants) == len(set(identifiants))
+
+    def test_entre_UN_et_TROIS_jamais_au_dela(self) -> None:
+        tailles = {len(p) for p in self._paniers()}
+        assert tailles <= {1, 2, 3}, tailles
+        assert tailles == {1, 2, 3}, (
+            f"les trois tailles doivent apparaitre, sinon « 1 a 3 » n'est qu'un "
+            f"chiffre unique deguise — obtenu {sorted(tailles)}"
+        )
+
+    def test_la_distribution_declaree_est_celle_qu_on_obtient(self) -> None:
+        """50 / 30 / 20 est une DECISION, pas un hasard : elle doit se mesurer."""
+        from collections import Counter
+
+        paniers = self._paniers(1000)
+        parts = Counter(len(p) for p in paniers)
+        for taille, attendu in ((1, 0.50), (2, 0.30), (3, 0.20)):
+            obtenu = parts[taille] / len(paniers)
+            assert abs(obtenu - attendu) < 0.05, (
+                f"{taille} produit(s) : {obtenu:.1%} pour {attendu:.0%} annonces"
+            )
+
+    def test_le_panier_est_ANCRE_au_client_pas_au_run(self) -> None:
+        """`CR-03` — sinon une reprise attacherait d'AUTRES produits au meme
+        client, et `PUT /subscribe` n'a pas de `DELETE` : il finirait avec cinq
+        produits pour un plafond de trois."""
+        # SUR CINQUANTE CLIENTS, pas un seul : le panier est une TRANCHE d'une
+        # liste ordonnee, donc deux runs peuvent coincider par hasard sur un
+        # client isole. Le test de mutation du 12/08 l'a montre — il passait avec
+        # l'ancrage au run remis.
+        catalogue = self._catalogue()
+        kiosque = _kiosques("CM")[0]
+        a = _executeur(mode=RunMode.DRY_RUN, nb_clients=40, run_id=UUID(int=1))
+        b = _executeur(mode=RunMode.DRY_RUN, nb_clients=40, run_id=UUID(int=999))
+        for graine in range(1, 51):
+            compose = _compose_pour(kiosque, seed=graine)
+            assert [p.product_id for p in a._panier(catalogue, compose)] == [
+                p.product_id for p in b._panier(catalogue, compose)
+            ], f"le client {compose.msisdn} change de panier d'un run a l'autre"
+
+    def test_un_CORPORATE_ne_recoit_que_des_produits_CORPORATE(self) -> None:
+        ex = _executeur(mode=RunMode.DRY_RUN, nb_clients=40)
+        melange = self._catalogue("INDIVIDUAL") + self._catalogue("CORPORATE")
+        compose = _compose_pour(_kiosques("CM")[0], seed=3)
+        object.__setattr__(compose, "categorie", ClientCategory.CORPORATE)
+        panier = ex._panier(melange, compose)
+        assert panier
+        assert all(p.categorie == "CORPORATE" for p in panier), [p.nom for p in panier]
+
+    def test_un_policy_type_inconnu_ne_devient_JAMAIS_produit_d_entree(self) -> None:
+        """Le serveur peut ne pas declarer le `PolicyType` — il vit dans
+        `policy.type`, pas au premier niveau. Un tel produit reste souscriptible,
+        mais jamais en porte d'entree."""
+        ex = _executeur(mode=RunMode.DRY_RUN, nb_clients=40)
+        catalogue = [
+            ProduitSouscriptible(
+                uuid4(), "DEMO_Sans policy", ProductType.COLLECT, "INDIVIDUAL", ""
+            ),
+            ProduitSouscriptible(
+                uuid4(), "DEMO_Cotisation", ProductType.COLLECT, "INDIVIDUAL", "CASH"
+            ),
+        ]
+        for graine in range(1, 60):
+            panier = ex._panier(catalogue, _compose_pour(_kiosques("CM")[0], seed=graine))
+            assert panier[0].policy_type == "CASH", panier[0].nom
+
+
+class TestUC13Ecriture:
+    async def test_les_2e_et_3e_produits_passent_par_PUT_subscribe(self) -> None:
+        """`D-CLI-7` — `OnboardClientSchema` exige `product_id` des le premier
+        appel, donc la 1re souscription est faite a l'onboarding ; les suivantes
+        n'ont QUE ce chemin. Jusqu'au 12/08 le Loader s'arretait a la premiere :
+        « 1 a 3 » etait toujours 1."""
+        clients = FauxClientService()
+        rapport = await _executeur(
+            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+
+        assert len(clients.onboardes) == 40
+        assert clients.souscriptions, "aucun PUT /subscribe — UC-13 resterait a 1 produit"
+        assert rapport.souscriptions == len(clients.souscriptions)
+        total = len(rapport.crees) + rapport.souscriptions
+        assert 40 < total <= 40 * SOUSCRIPTIONS_MAX
+        for msisdn, _ in clients.souscriptions:
+            assert msisdn in {o["msisdn"] for o in clients.onboardes}
+
+    async def test_une_souscription_refusee_ALERTE_sans_annuler_le_client(self) -> None:
+        """Le Client existe cote serveur, definitivement : aucun des trois
+        services de la cascade n'expose de `DELETE`. Une souscription manquante
+        degrade l'ecosysteme ; annuler le client detruirait une entite
+        irreversible pour un motif secondaire."""
+        clients = FauxClientService(refuser_souscriptions=True)
+        rapport = await _executeur(
+            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+
+        assert len(rapport.crees) == 40, "les 40 clients existent malgre les refus"
+        assert rapport.souscriptions == 0
+        assert any("souscription" in a and "UC-13" in a for a in rapport.alertes)
+
+    async def test_a_blanc_rien_n_est_souscrit_mais_tout_est_ANNONCE(self) -> None:
+        """`D-01` — le rapport a blanc est « la derniere occasion de dire non »."""
+        rapport = await _executeur(
+            mode=RunMode.DRY_RUN, nb_clients=200, pays_actifs=("CM",),
+            ledger=FauxLedger(), arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+
+        assert rapport.souscriptions == 0, "aucune ecriture a blanc"
+        assert rapport.souscriptions_prevues > len(rapport.crees), (
+            "le panier moyen doit depasser un produit par client"
+        )
+        assert 1.0 <= rapport.moyenne_souscriptions <= 3.0
+        assert "Souscriptions UC-13" in rapport.resume()
+
+
+class TestSegmentA02:
+    """`A-02` — le `segment` emis a l'onboarding, recommandation appliquee.
+
+    `EF-80` est inapplicable tel qu'ecrit : les deux champs de segment de Faker
+    sont de FAMILLE B, et `behavior_segment` vaut 0.0 dans quatorze cas sur
+    quinze. Nos 2000 clients viennent de la famille A, qui n'en porte aucun.
+
+    Le Loader emettait donc `ANY` pour les 2000 — legitime, mais cela aplatit un
+    axe de six valeurs. La strate vient desormais des onze signaux `quick_win`
+    que la famille A porte vraiment : LA MEME que `solde_initial()`.
+    """
+
+    def _faker(self, signaux: int, rang: int = 1) -> Any:
+        """Un client de la famille A avec `signaux` signaux `quick_win` a 1.
+        `rang` devient le `client_id` (`CM-IND-<rang>`) : c'est lui qui etale le
+        solde DANS la strate, donc deux clients de meme strate en diffèrent."""
+        return _tirage(
+            "CM",
+            seed=rang,
+            quick_win={
+                cle: (1 if i < signaux else 0)
+                for i, cle in enumerate(CLES_QUICK_WIN_BINAIRES)
+            },
+        )
+
+    def test_le_segment_est_MONOTONE_avec_le_solde(self) -> None:
+        """LA propriete qui fait de ce choix une seule decision et non deux :
+        un client mieux dote ne peut pas tomber dans un segment plus bas."""
+        precedent_seg, precedent_solde = -1, -1.0
+        for signaux in range(len(CLES_QUICK_WIN_BINAIRES) + 1):
+            faker = self._faker(signaux, signaux + 1)
+            rang = SEGMENTS_ANNEXE_E.index(segment_client(faker))
+            solde = solde_initial(faker)
+            assert rang >= precedent_seg, f"{signaux} signaux : segment en recul"
+            assert solde > precedent_solde, f"{signaux} signaux : solde en recul"
+            precedent_seg, precedent_solde = rang, solde
+
+    def test_les_cinq_strates_de_l_annexe_E_sont_toutes_atteignables(self) -> None:
+        atteints = {
+            segment_client(self._faker(n, n + 1))
+            for n in range(len(CLES_QUICK_WIN_BINAIRES) + 1)
+        }
+        assert atteints == set(SEGMENTS_ANNEXE_E), (
+            f"une strate inatteignable rendrait l'axe partiellement mort : {atteints}"
+        )
+
+    def test_jamais_ANY_ni_hors_enum(self) -> None:
+        """`ANY` n'est pas une strate, c'est « pas de contrainte »."""
+        for n in range(len(CLES_QUICK_WIN_BINAIRES) + 1):
+            segment = segment_client(self._faker(n, n + 1))
+            assert segment is not ClientSegment.ANY
+            assert segment in SEGMENTS_ANNEXE_E
+
+    def test_zero_et_maximum_de_signaux_ne_debordent_pas(self) -> None:
+        """La projection `presents * 5 // (total + 1)` doit tenir aux deux bouts —
+        un `IndexError` au maximum ferait tomber le client entier."""
+        assert segment_client(self._faker(0)) is ClientSegment.VERY_LOW
+        assert (
+            segment_client(self._faker(len(CLES_QUICK_WIN_BINAIRES)))
+            is ClientSegment.VERY_HIGH
+        )
+
+    def test_le_meme_client_rend_TOUJOURS_le_meme_segment(self) -> None:
+        """`ENF-15`, et `CR-03` : une reprise ne doit pas changer le segment."""
+        faker = self._faker(4, 42)
+        assert segment_client(faker) is segment_client(faker)
+
+    def test_le_segment_arrive_DANS_le_payload_envoye_au_serveur(self) -> None:
+        """Un segment derive mais non transmis serait la seizieme occurrence du
+        defaut recurrent : calcule, teste, coche, cable a rien."""
+        from app.services.clients_composition import ancrer_sur_kiosque, composer
+
+        faker = self._faker(len(CLES_QUICK_WIN_BINAIRES), 7)
+        compose = composer(
+            faker,
+            ancrer_sur_kiosque(_kiosques("CM")[0], REFERENTIEL),
+            Generateur(RUN, reference=date(2026, 8, 11)),
+            REFERENTIEL,
+            random.Random(7),  # noqa: S311
+            jeune=True,
+            segment=segment_client(faker),
+        )
+        assert compose.segment is ClientSegment.VERY_HIGH
+
+    async def test_les_2000_clients_ne_sont_plus_TOUS_ANY(self) -> None:
+        """La mesure qui justifie le changement : l'axe etait plat."""
+        clients = FauxClientService()
+        await _executeur(
+            mode=RunMode.REAL, nb_clients=200, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+        segments = {o["segment"] for o in clients.onboardes}
+        assert len(segments) > 1, f"axe toujours plat : {segments}"
+        assert "ANY" not in segments
+
+
+class TestApresOnboardingRienNeLeve:
+    """LE DEFAUT LE PLUS GRAVE DU 12/08, et il ne venait pas de `UC-13`.
+
+    Mon panier n'a fait que le reveler : une exception IMPREVUE apres le POST
+    d'onboarding remontait jusqu'a `asyncio.gather(return_exceptions=True)`, qui
+    la comptait en ECHEC. La boucle rendait alors le quota ET liberait la
+    reservation `D-FAKER-1` — donc elle RETIRAIT un client qui existait deja et en
+    creait un SECOND. Sur client-service, identity-service et account-service,
+    qui n'exposent aucun `DELETE`.
+
+    Mesure au moment de la decouverte : **84 comptes credites pour une cible de
+    40**. Le doublon n'etait pas theorique.
+
+    Le POST d'onboarding est l'acte irreversible. Des qu'il a reussi, le client
+    est un succes quoi qu'il advienne ensuite.
+    """
+
+    async def _run(self, arbre: Any, comptes: Any = None) -> tuple[Any, Any]:
+        clients = FauxClientService()
+        rapport = await _executeur(
+            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients, comptes=comptes,
+            arbre=arbre,
+        ).executer()
+        return rapport, clients
+
+    async def test_une_panne_du_rattachement_ne_cree_AUCUN_doublon(self) -> None:
+        class ArbreQuiExplose(FauxArbre):
+            async def ajouter_client(self, **_: Any) -> Any:
+                raise RuntimeError("panne imprevue, pas une ValueError")
+
+        rapport, clients = await self._run(ArbreQuiExplose(_kiosques("CM")))
+
+        assert len(clients.onboardes) == 40, (
+            f"{len(clients.onboardes)} onboardings pour une cible de 40 — chaque "
+            "client en trop est IRREVERSIBLE"
+        )
+        assert len({o["msisdn"] for o in clients.onboardes}) == 40
+        assert len(rapport.crees) == 40
+        assert rapport.echoues == [], "un client cree n'est pas un echec"
+        assert any("client CREE" in a and "DOUBLON" in a for a in rapport.alertes)
+
+    async def test_une_panne_de_la_dotation_ne_cree_AUCUN_doublon(self) -> None:
+        class ComptesQuiExplosent(FauxComptes):
+            async def crediter(self, *_: Any, **__: Any) -> Any:
+                raise RuntimeError("panne imprevue du service de comptes")
+
+        rapport, clients = await self._run(
+            FauxArbre(_kiosques("CM")), ComptesQuiExplosent()
+        )
+
+        assert len(clients.onboardes) == 40
+        assert len(rapport.crees) == 40
+        assert rapport.solde_dote == 0.0, "aucun solde confirme : rien ne doit etre compte"
+
+    async def test_le_registre_reste_COHERENT_malgre_la_panne(self) -> None:
+        """`D-FAKER-1` — un client Faker consomme ne doit pas etre libere sous
+        pretexte qu'un enrichissement a echoue : il a bien produit une entite."""
+
+        class ArbreQuiExplose(FauxArbre):
+            async def ajouter_client(self, **_: Any) -> Any:
+                raise RuntimeError("panne imprevue")
+
+        ledger, clients = FauxLedger(), FauxClientService()
+        await _executeur(
+            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
+            ledger=ledger, clients=clients, arbre=ArbreQuiExplose(_kiosques("CM")),
+        ).executer()
+
+        assert len(ledger.confirmes) == 40, "chaque entite creee reste scellee"
+        assert ledger.reserves == set()
+        assert ledger.liberations == 0, (
+            "aucune liberation : liberer ferait retirer un client existant du "
+            "vivier et en faire creer un second"
+        )
+
+    async def test_le_quota_reste_EXACT_malgre_la_panne(self) -> None:
+        class ArbreQuiExplose(FauxArbre):
+            async def ajouter_client(self, **_: Any) -> Any:
+                raise RuntimeError("panne imprevue")
+
+        rapport, _ = await self._run(ArbreQuiExplose(_kiosques("CM")))
+        quota = next(q for q in rapport.quotas if q.pays == "CM")
+        assert quota.faits == 40 == len(rapport.crees)
+        assert quota.corporate_faits == quota.cible_corporate
+        assert quota.femmes == quota.cible_femmes

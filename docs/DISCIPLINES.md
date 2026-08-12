@@ -107,7 +107,7 @@ persiste le JWT **en clair** dans ses logs pendant 7 jours (`VIOL-06.7`).
 
 ---
 
-## Client — `D-CLI-*` · 12 disciplines *(8 de la page Anatomy + 4 nôtres)* · `app/clients/client_service.py`
+## Client — `D-CLI-*` · 14 disciplines *(8 de la page Anatomy + 6 nôtres)* · `app/clients/client_service.py`
 
 | # | Discipline | Le fait mesuré |
 |---|---|---|
@@ -122,6 +122,8 @@ persiste le JWT **en clair** dans ses logs pendant 7 jours (`VIOL-06.7`).
 | `D-CLI-9` 🔸 | `currency` **n'est validée nulle part** | elle traverse le service, n'apparaît pas dans la fiche Client rendue, et **atterrit verbatim dans le compte CHECKING** |
 | `D-CLI-10` 🔸 | Un Client ne souscrit **qu'à** des produits `COLLECT` | le serveur accepte un LENDING — `FRA-230` |
 | `D-CLI-11` 🔸 | **Le `msisdn` est fonction du client, jamais du `run_id`** | mesuré le 12/08 : le tirage de l'opérateur venait d'`alea`, donc la même matière client rendait `237679614504` au run 1 et `237699614504` au run 2. `D-CLI-5` cherchait une clé qui changeait à chaque run — il n'aurait **jamais** trouvé personne |
+| `D-CLI-13` 🔸 | **Le panier de produits suit l'ordre métier `CASH → CASH_DAT → PRODUCT`** | `UC-13` autorise 1 à 3 produits mais ne dit rien de l'ordre. Un `random.sample()` pouvait placer « plastique » **en premier**, donc à l'onboarding : un client d'épargne dont l'unique produit est une collecte de déchets. La cotisation est la porte d'entrée |
+| `D-CLI-14` 🔸 | **Rien ne lève après le POST d'onboarding** | mesure du 12/08 : une exception imprévue dans les enrichissements faisait relâcher la réservation `D-FAKER-1`, donc **recréer un second client** — **84 comptes crédités pour une cible de 40**, sur trois services sans `DELETE` |
 | `D-CLI-12` 🔸 | **La graine Faker est fonction du périmètre, jamais du `run_id`** | corollaire : elle était tirée dans `alea`, donc un second run réel tirait 2000 clients Faker entièrement différents. Le registre `D-FAKER-1` ne reconnaissait rien et l'écosystème doublait, sur des services sans `DELETE` |
 
 ---

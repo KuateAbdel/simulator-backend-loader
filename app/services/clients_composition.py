@@ -342,6 +342,7 @@ def composer(
     *,
     jeune: bool,
     occupation_imposee: str | None = None,
+    segment: ClientSegment | None = None,
 ) -> ClientCompose:
     """Traduit un client Faker en client onboardable. **Aucun appel reseau.**
 
@@ -449,8 +450,15 @@ def composer(
         telco=telco.short_name,
         devise=devise,
         categorie=categorie,
-        # La famille A ne porte aucun scoring : il n'y a rien a traduire.
-        segment=ClientSegment.ANY,
+        # `A-02` — DECIDE PAR L'APPELANT, comme `jeune` et `occupation_imposee`.
+        #
+        # La famille A ne porte aucun champ de scoring : les deux segments de
+        # Faker sont de famille B, et `behavior_segment` vaut 0.0 dans quatorze
+        # cas sur quinze. `EF-80` est inapplicable tel qu'ecrit. `ANY` reste le
+        # defaut legitime ; `segment_client()` en derive la strate de l'Annexe E
+        # depuis les onze signaux `quick_win` que la famille A porte vraiment —
+        # la MEME strate que `solde_initial()`, pas une seconde invention.
+        segment=segment or ClientSegment.ANY,
         canal=_canal(faker),
         langue=langue_de_la_region(pays, ancrage.region),
         ancrage=ancrage,

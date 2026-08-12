@@ -217,6 +217,8 @@ class ExecuteurCatalogue:
                         # La categorie vient de la FICHE SERVEUR : c'est elle qui
                         # fait foi sur un produit qu'on n'a pas cree.
                         str(existant.get("category") or "").upper(),
+                        # `policy.type`, jamais `type` : mesure du 12/08.
+                        str((existant.get("policy") or {}).get("type") or "").upper(),
                     )
                 )
             return
@@ -247,6 +249,20 @@ class ExecuteurCatalogue:
                     nom,
                     type_produit,
                     str(payload.get("category") or "").upper(),
+                    # LE MEME DEFAUT QU'AU-DESSUS, UN CRAN PLUS FIN — 12/08.
+                    #
+                    # Le produit prevu entrait bien dans `souscriptibles` depuis
+                    # le 11/08, mais SANS son `policy_type`. `UC-13` ordonne le
+                    # panier par `CASH` -> `CASH_DAT` -> `PRODUCT` : sans cette
+                    # valeur, le tri retombait sur le NOM.
+                    #
+                    # Et il tombait JUSTE PAR COINCIDENCE : « Cotisation » <
+                    # « Depot » < « plastique » dans l'ordre alphabetique. Le
+                    # rapport a blanc montrait donc un ordre correct pour une
+                    # raison fausse — la forme de defaut la plus dangereuse,
+                    # parce qu'aucun symptome ne la denonce. Un simple
+                    # renommage de produit l'aurait fait apparaitre en REEL.
+                    str((payload.get("policy") or {}).get("type") or "").upper(),
                 )
             )
             return
@@ -290,6 +306,7 @@ class ExecuteurCatalogue:
                 nom,
                 type_produit,
                 str(payload.get("category") or "").upper(),
+                str((payload.get("policy") or {}).get("type") or "").upper(),
             )
         )
 
@@ -318,6 +335,11 @@ class ExecuteurCatalogue:
                     nom,
                     ProductType.COLLECT,
                     str(existant.get("category") or "").upper(),
+                    # `policy.type`, jamais `type` : le `type` de premier niveau
+                    # est le `ProductType` (COLLECT/LENDING). Les confondre
+                    # mettrait « COLLECT » dans le `PolicyType` de chaque
+                    # produit, et l'ordre metier de `UC-13` deviendrait muet.
+                    str((existant.get("policy") or {}).get("type") or "").upper(),
                 )
             )
 

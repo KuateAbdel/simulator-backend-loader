@@ -85,11 +85,12 @@ from pymongo.errors import PyMongoError
 from app.clients.account_service import AccountServiceClient
 from app.clients.base import ErreurService
 from app.clients.client_service import (
+    SOUSCRIPTIONS_MAX,
     ClientServiceClient,
     OnboardingNonConforme,
     valider_produit_client,
 )
-from app.clients.contracts import ClientCategory, ProductType
+from app.clients.contracts import ClientCategory, ClientSegment, ProductType
 from app.clients.faker_service import (
     CategorieClient,
     ClientFaker,
@@ -164,6 +165,14 @@ TOURS_INFRUCTUEUX_MAX: Final = 5
 #: negligeable, et le CDC §185 la prevoit de toute facon.
 GRAINE_FAKER_MAX: Final = 10_000_000
 
+#: `UC-13` — l'ordre METIER dans lequel un client prend ses produits Collecte.
+#: Ce ne sont pas des variantes interchangeables : la cotisation est le produit
+#: d'entree, le depot a terme suppose une capacite d'epargne deja constituee, et
+#: la collecte en nature est une activite distincte. Le premier de cette liste
+#: est celui qui part a l'onboarding, `OnboardClientSchema` exigeant `product_id`
+#: des le premier appel.
+ORDRE_SOUSCRIPTION: Final[tuple[str, ...]] = ("CASH", "CASH_DAT", "PRODUCT")
+
 
 def _graine_faker(pays: str, rang: int) -> int:
     """La graine d'un tirage — fonction du PERIMETRE, jamais du run.
@@ -230,6 +239,61 @@ def solde_initial(faker: ClientFaker) -> float:
     position = int.from_bytes(empreinte[:3], "big") / 0xFFFFFF
 
     return round(SOLDE_INITIAL_MIN + (presents + position) * largeur, 2)
+
+
+#: `A-02` — les cinq strates de l'Annexe E, dans l'ordre croissant. `ANY` n'y
+#: figure pas : c'est la valeur « pas de contrainte », pas une strate.
+SEGMENTS_ANNEXE_E: Final[tuple[ClientSegment, ...]] = (
+    ClientSegment.VERY_LOW,
+    ClientSegment.LOW,
+    ClientSegment.MEDIUM,
+    ClientSegment.HIGH,
+    ClientSegment.VERY_HIGH,
+)
+
+
+def segment_client(faker: ClientFaker) -> ClientSegment:
+    """Le `segment` emis a l'onboarding — `A-02`, recommandation appliquee.
+
+    POURQUOI CE N'EST PAS « SUIVRE FAKER », ET POURQUOI ON NE PEUT PAS
+    -----------------------------------------------------------------
+    La doctrine du Loader est de composer a partir de la matiere de Faker. Sur
+    cet axe c'est impossible, et c'est MESURE : les deux champs de segment que
+    Faker porte — `metadata.behavior_segment` et
+    `features.__precomputed_scores.segment` — n'appartiennent qu'a la FAMILLE B,
+    et `behavior_segment` vaut 0.0 dans quatorze cas sur quinze. Nos 2000 clients
+    viennent necessairement de la famille A, qui n'en porte aucun. `EF-80` est
+    inapplicable tel qu'ecrit — c'est l'arbitrage `A-02`.
+
+    Le Loader emettait donc `ANY` pour les 2000. Valeur legitime, mais elle
+    aplatit un axe de six valeurs et prive la demonstration d'un relief que le
+    serveur sait porter.
+
+    LA MEME STRATE QUE LE SOLDE, PAS UNE SECONDE INVENTION
+    ------------------------------------------------------
+    `solde_initial()` derive deja une strate par client des onze signaux binaires
+    `quick_win` que la famille A porte REELLEMENT, bornee par l'Annexe E
+    (`A-09`, recommandation appliquee). Le segment est CETTE strate, projetee sur
+    les cinq valeurs de l'enum serveur.
+
+    Consequence : un client dont les signaux le placent haut a un solde eleve ET
+    un segment eleve. Une seule decision coherente au lieu de deux deconnectees —
+    et rien de neuf n'est invente, c'est le meme signal mesure.
+
+    AUCUN CONFLIT AVEC LES PRODUITS N'EST POSSIBLE
+    ----------------------------------------------
+    Mesure du 12/08 : les huit produits du serveur portent `segment: ANY`, et
+    notre propre catalogue l'emet en dur. `ANY` signifie « ouvert a tous les
+    segments » : un client `VERY_HIGH` peut donc souscrire a chacun d'eux. Le
+    jour ou un produit ciblerait une strate, `_produits_compatibles()` serait
+    l'endroit ou l'ajouter — la coherence est deja centralisee la.
+    """
+    presents = sum(1 for cle in CLES_QUICK_WIN_BINAIRES if faker.quick_win.get(cle) == 1)
+    total = len(CLES_QUICK_WIN_BINAIRES)
+    # `presents` va de 0 a `total` inclus : la projection couvre les cinq strates
+    # sans jamais deborder, y compris au maximum.
+    rang = presents * len(SEGMENTS_ANNEXE_E) // (total + 1)
+    return SEGMENTS_ANNEXE_E[rang]
 
 
 @dataclass(frozen=True, slots=True)
@@ -439,6 +503,19 @@ class RapportClients:
     #: `org_hierarchy`. Compte APRES l'insertion, jamais sur l'intention : le
     #: rapport ne doit pas affirmer un lien que la base ne porte pas.
     rattaches: int = 0
+    #: `UC-13` — les souscriptions SUPPLEMENTAIRES effectivement ecrites par
+    #: `PUT /subscribe`. La premiere est faite a l'onboarding et compte dans
+    #: `crees` : additionner les deux donnerait deux fois le meme fait.
+    souscriptions: int = 0
+    #: Ce que le REEL attacherait, annonce meme a blanc — `D-01`. Compte le
+    #: panier ENTIER, premiere souscription comprise.
+    souscriptions_prevues: int = 0
+
+    @property
+    def moyenne_souscriptions(self) -> float:
+        """`UC-13` — le nombre moyen de produits par client. Doit tomber dans
+        [1, 3] ; c'est la forme la plus lisible du respect de l'exigence."""
+        return self.souscriptions_prevues / max(len(self.crees), 1)
 
     @property
     def total_cible(self) -> int:
@@ -480,6 +557,16 @@ class RapportClients:
             # intentions — lecon du 11/08, ou `solde_dote` annonçait 1,04 Md FCFA
             # que rien ne creditait. Mais un « 0 » nu ferait croire le module
             # decable : le mode est donc dit explicitement.
+            "Souscriptions UC-13   : "
+            + (
+                f"{len(self.crees) + self.souscriptions} "
+                f"({len(self.crees)} a l'onboarding + {self.souscriptions} par PUT/subscribe)"
+                if self.mode is RunMode.REAL
+                else (
+                    f"{self.souscriptions_prevues} prevues pour {len(self.crees)} clients "
+                    f"(moyenne {self.moyenne_souscriptions:.2f} — UC-13 : 1 a 3)"
+                )
+            ),
             f"Rattaches EF-26       : {self.rattaches} "
             + (
                 "(Client -> Kiosque dans org_hierarchy — 1er temps, CR-02)"
@@ -699,15 +786,23 @@ class ExecuteurClients:
             )
         return collect
 
-    def _choisir_produit(
+    def _produits_compatibles(
         self, collect: list[ProduitSouscriptible], categorie: ClientCategory
-    ) -> ProduitSouscriptible | None:
-        """La coherence Client/Produit est ENTIEREMENT a notre charge.
+    ) -> list[ProduitSouscriptible]:
+        """Tous les produits qu'un client de cette categorie peut souscrire.
 
+        La coherence Client/Produit est ENTIEREMENT a notre charge.
         `OBS-CLI-CROSSCHECK-01`, mesure du 09/08 : un Client CORPORATE souscrit a
         un produit INDIVIDUAL sans le moindre rejet. « Devant un bailleur qui
         connait le metier, c'est une incoherence visible a l'oeil nu. »
+
+        Rendait le PREMIER compatible jusqu'au 12/08. Consequence : les mille
+        clients INDIVIDUAL d'un pays souscrivaient tous au meme produit, alors
+        que le catalogue leur en ouvre trois (`Cotisation 20000/mois`, `Depot a
+        Terme 6 Mois`, `plastique`). Un catalogue de dix produits dont un seul
+        est consomme par categorie ne ressemble a aucune institution reelle.
         """
+        compatibles = []
         for produit in collect:
             try:
                 valider_produit_client(
@@ -716,8 +811,82 @@ class ExecuteurClients:
                 )
             except OnboardingNonConforme:
                 continue
-            return produit
-        return None
+            compatibles.append(produit)
+        return compatibles
+
+    def _panier(
+        self, collect: list[ProduitSouscriptible], compose: ClientCompose
+    ) -> list[ProduitSouscriptible]:
+        """`UC-13` — de UN a TROIS produits Collecte, DISTINCTS et ordonnes.
+
+        TROIS CONTRAINTES MESUREES, ET AUCUNE N'EST PORTEE PAR LE SERVEUR
+        ----------------------------------------------------------------
+        1. Le plafond. Mesure du 09/08 : **six** produits attaches a un meme
+           client, sans le moindre rejet. `SOUSCRIPTIONS_MAX = 3` est a nous.
+        2. Le doublon, lui, EST refuse : `PUT /subscribe` du meme produit rend
+           `400 « A customer cannot subscribe to the same products twice »`.
+           Le panier doit donc etre sans repetition — un invariant qu'aucune de
+           nos sources ne documentait avant le sondage.
+        3. La categorie. Le serveur ne verifie rien (`OBS-CLI-CROSSCHECK-01`) ;
+           `_produits_compatibles()` s'en charge en amont.
+
+        LE TIRAGE EST ANCRE AU CLIENT, JAMAIS AU RUN
+        --------------------------------------------
+        C'est la lecon du 12/08, et elle s'applique ici mot pour mot. Ancre sur
+        `self._alea`, une reprise attacherait d'AUTRES produits au meme client :
+        le premier run lui donnerait `Cotisation` + `plastique`, le second
+        `Depot a Terme` — et comme `PUT /subscribe` n'a pas de `DELETE`, le
+        client finirait avec cinq produits pour un plafond de trois. Le msisdn
+        est stable depuis `D-CLI-11` : il sert d'ancre.
+
+        L'ORDRE N'EST PAS INDIFFERENT — CORRECTION DU 12/08
+        ---------------------------------------------------
+        Ma premiere version tirait `random.sample()` parmi les compatibles. Elle
+        respectait la lettre de `UC-13` et manquait le metier : elle pouvait
+        placer « plastique » EN PREMIER, donc a l'onboarding, et produire un
+        client dont l'unique produit est une collecte de dechets plastiques. Ce
+        n'est pas un client d'epargne — c'est du desordre.
+
+        Les trois `PolicyType` du catalogue COLLECT ne sont pas interchangeables,
+        et le CDC les distingue :
+
+          `CASH`      la cotisation reguliere — LE PRODUIT D'ENTREE
+          `CASH_DAT`  le depot a terme — suppose une capacite d'epargne
+          `PRODUCT`   la collecte en nature — une activite distincte
+
+        Le panier suit donc cet ordre, toujours. Le premier produit — celui de
+        l'onboarding, `OnboardClientSchema` exigeant `product_id` des le premier
+        appel — est le `CASH` du client. Les 2e et 3e s'ajoutent par
+        `PUT /subscribe` dans l'ordre du metier.
+
+        LE COMBIEN — une decision, declaree comme telle
+        -----------------------------------------------
+        `UC-13` dit « 1 a 3 » et ne donne aucune distribution. Nous en
+        choisissons une, deterministe et documentee, plutot que de prendre le
+        minimum par defaut : 50 % un produit, 30 % deux, 20 % trois. Un
+        ecosysteme ou chaque client n'a qu'un produit rendrait `CR-09` et la
+        boucle de vie sans relief, et l'Annexe E du CDC decrit des profils
+        d'epargne varies.
+        """
+        compatibles = self._produits_compatibles(collect, compose.categorie)
+        if not compatibles:
+            return []
+
+        # L'ordre du metier. Un produit dont le serveur ne declare pas le
+        # `PolicyType` tombe en fin de liste plutot que d'etre ecarte : il reste
+        # souscriptible, simplement jamais en produit d'entree.
+        rang = {p: i for i, p in enumerate(ORDRE_SOUSCRIPTION)}
+        ordonnes = sorted(
+            compatibles, key=lambda p: (rang.get(p.policy_type, len(rang)), p.nom)
+        )
+
+        de_ce_client = random.Random(f"panier:{compose.msisdn}")  # noqa: S311
+        tirage = de_ce_client.random()
+        combien = 1 if tirage < 0.50 else (2 if tirage < 0.80 else SOUSCRIPTIONS_MAX)
+        # Le doublon est refuse par le serveur — `400 « A customer cannot
+        # subscribe to the same products twice »`. Une tranche d'une liste sans
+        # repetition ne peut pas en produire.
+        return ordonnes[: min(combien, len(ordonnes), SOUSCRIPTIONS_MAX)]
 
     # ------------------------------------------------------------------
     # La boucle de tirage-et-rejet
@@ -982,13 +1151,14 @@ class ExecuteurClients:
                     if reservation.secteur
                     else None
                 ),
+                segment=segment_client(faker),
             )
         except CompositionImpossible as erreur:
             rapport.refuses_avant_reseau.append((faker.client_id, str(erreur)[:200]))
             return None
 
-        produit = self._choisir_produit(collect, compose.categorie)
-        if produit is None:
+        panier = self._panier(collect, compose)
+        if not panier:
             rapport.refuses_avant_reseau.append(
                 (
                     faker.client_id,
@@ -997,6 +1167,7 @@ class ExecuteurClients:
                 )
             )
             return None
+        produit, *suivants = panier
 
         nom = f"{compose.identite.first_name} {compose.identite.last_name}"
 
@@ -1004,6 +1175,7 @@ class ExecuteurClients:
             # Ce que le REEL ecrirait, annonce meme a blanc — `D-01`.
             rapport.comptes_attendus += 1
             rapport.solde_dote += solde_initial(faker)
+            rapport.souscriptions_prevues += len(panier)
             rapport.crees.append(f"{nom} [prevu]")
             return compose
 
@@ -1060,24 +1232,86 @@ class ExecuteurClients:
         # compte que les consommations SCELLEES — aurait affiche ZERO client au
         # rapport. La moitie d'un write-ahead log ne vaut rien ; onzieme
         # occurrence du defaut recurrent, celle-ci dans du code du jour meme.
-        await self._sceller(faker.client_id, fiche, kiosque, compose, rapport)
-
-        # `UC-13` points 2-3 / `EF-73` — LE SOLDE INITIAL EST DEPOSE ICI.
+        # APRES CE POINT, LE CLIENT EXISTE. RIEN NE DOIT PLUS LEVER.
         #
-        # DEFAUT LE PLUS TROMPEUR DU 11/08 : `solde_dote` accumulait 1,04 Md FCFA
-        # et le rapport l'AFFICHAIT — sans qu'aucun appel a `crediter()` existe.
-        # Meme en REEL, les 2000 comptes CHECKING seraient restes a zero. Ce
-        # n'etait pas un module muet : c'etait un rapport qui affirmait un fait
-        # que le code ne produisait pas, et `D-01` fait de ce rapport « la
-        # derniere occasion de dire non ». Un rapport qui ment lui retire sa
-        # raison d'etre.
-        await self._doter(compose, faker, fiche, rapport)
+        # DEFAUT TROUVE LE 12/08, ET IL NE VENAIT PAS DE `UC-13` — mon panier n'a
+        # fait que le reveler. Une exception imprevue dans cette phase remontait
+        # jusqu'a `asyncio.gather(return_exceptions=True)`, qui la comptait en
+        # ECHEC. La boucle rendait alors le quota ET liberait la reservation
+        # `D-FAKER-1`, donc elle RETIRAIT un client et en creait un SECOND — sur
+        # client-service, identity-service et account-service, qui n'exposent
+        # aucun `DELETE`. Mesure : 84 comptes credites pour une cible de 40.
+        #
+        # Le POST d'onboarding est l'acte irreversible. Des qu'il a reussi, le
+        # client est un succes, quoi qu'il advienne ensuite : le scellement, la
+        # dotation et les souscriptions sont des enrichissements. Les manquer
+        # degrade l'ecosysteme ; relacher la reservation le CORROMPT.
+        #
+        # `ConsommationIncoherente` est incluse volontairement. Elle signale un
+        # defaut de cablage et doit crier — mais la laisser remonter ICI
+        # fabriquerait le doublon qu'elle denonce. Elle crie donc au rapport, ce
+        # qui suffit a faire basculer le run en PARTIAL.
+        # Trois enrichissements, dans l'ordre :
+        #
+        #   `_sceller`            le registre `D-FAKER-1` et le rattachement `EF-26`
+        #   `_doter`              `UC-13` pt 2-3 / `EF-73`. Defaut le plus trompeur
+        #                         du 11/08 : `solde_dote` accumulait 1,04 Md FCFA
+        #                         que le rapport AFFICHAIT sans qu'aucun appel a
+        #                         `crediter()` existe. Un rapport qui ment perd sa
+        #                         raison d'etre — `D-01` en fait « la derniere
+        #                         occasion de dire non ».
+        #   `_souscrire_le_reste` `UC-13` / `D-CLI-7`. `OnboardClientSchema` exige
+        #                         `product_id` des le premier appel, donc la 1re
+        #                         souscription est faite ci-dessus ; les 2e et 3e
+        #                         n'ont que `PUT /clients/subscribe`. Jusqu'au
+        #                         12/08 le Loader s'arretait a la premiere.
+        try:
+            await self._sceller(faker.client_id, fiche, kiosque, compose, rapport)
+            await self._doter(compose, faker, fiche, rapport)
+            await self._souscrire_le_reste(compose, suivants, rapport)
+        except Exception as erreur:
+            logger.exception("apres-onboarding de %s", compose.msisdn)
+            rapport.alertes.append(
+                f"{compose.msisdn} : client CREE, mais la suite a echoue — "
+                f"{type(erreur).__name__} : {str(erreur)[:140]}. Le client est "
+                "conserve : le relacher ferait recreer un DOUBLON irreversible."
+            )
 
         # Compte APRES l'ecriture : un compteur incremente sur une intention
         # annoncerait des comptes qui n'existent pas.
         rapport.comptes_attendus += 1
         rapport.crees.append(nom)
         return compose
+
+    async def _souscrire_le_reste(
+        self,
+        compose: ClientCompose,
+        suivants: list[ProduitSouscriptible],
+        rapport: RapportClients,
+    ) -> None:
+        """Attache les produits 2 et 3. Un echec n'annule JAMAIS le client.
+
+        Meme raison que pour la dotation : le Client existe cote serveur,
+        definitivement, et aucun des trois services de la cascade n'expose de
+        `DELETE`. Une souscription manquante degrade la richesse de l'ecosysteme ;
+        annuler le client detruirait une entite irreversible pour un motif
+        secondaire. L'alerte, en revanche, est obligatoire — `UC-13` est une
+        exigence, et un manquement silencieux la rendrait invisible.
+
+        `souscrire()` relit la fiche avant chaque `PUT` et refuse au-dela de
+        `SOUSCRIPTIONS_MAX` : le plafond tient meme si ce panier se trompait.
+        """
+        for produit in suivants:
+            try:
+                await self._clients.souscrire(compose.msisdn, produit.product_id)
+            except (OnboardingNonConforme, ErreurService) as erreur:
+                rapport.alertes.append(
+                    f"{compose.msisdn} : souscription a {produit.nom} refusee — "
+                    f"{type(erreur).__name__} : {str(erreur)[:120]}. UC-13 prevoit "
+                    "1 a 3 produits ; le client reste valide avec ce qu'il a."
+                )
+                continue
+            rapport.souscriptions += 1
 
     async def _doter(
         self,

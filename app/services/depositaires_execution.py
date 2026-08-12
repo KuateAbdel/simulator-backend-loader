@@ -84,6 +84,18 @@ class ProduitSouscriptible:
     #: `""` quand le serveur ne la declare pas : `valider_produit_client` traite
     #: la chaine vide comme « pas de contrainte », au meme titre qu'`ANY`.
     categorie: str = ""
+    #: AJOUT DU 12/08, meme argument que `categorie` la veille : un produit dont
+    #: on ignore le `PolicyType` ne doit pas pouvoir entrer dans la boucle de
+    #: souscription. `UC-13` autorise 1 a 3 produits, et l'ORDRE dans lequel un
+    #: client les prend n'est pas indifferent — `CASH` est le produit d'entree
+    #: (la cotisation), `CASH_DAT` suppose une capacite d'epargne, `PRODUCT` est
+    #: une collecte en nature. Un client dont le seul produit serait
+    #: « plastique » n'est pas un client d'epargne.
+    #:
+    #: MESURE DU 12/08 : cette valeur vit dans `policy.type` de la fiche serveur,
+    #: PAS au premier niveau — le `type` de premier niveau est le `ProductType`
+    #: (COLLECT/LENDING). Confondre les deux donnerait `COLLECT` partout.
+    policy_type: str = ""
 
 
 @dataclass(slots=True)
