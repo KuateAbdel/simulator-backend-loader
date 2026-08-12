@@ -1,0 +1,320 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Income profile parameters by profession",
+  "description": "Taxonomy of professions mapped to four lognormal income profiles. Parameters are inherited from income_profiles unless overridden downstream by country, currency, seniority or employment-status adjustments.",
+  "distribution": {
+    "name": "lognormal",
+    "formula": "income ~ LogNormal(mu, sigma)",
+    "parameter_scale": "natural logarithm",
+    "unit": "same monetary unit and period as the original model",
+    "warning": "These are modelling priors, not official salary estimates. Employment status and actual cash-flow behaviour take precedence over profession title."
+  },
+  "income_profiles": {
+    "bank_stable": {
+      "mu": 12.15,
+      "sigma": 0.28,
+      "definition": "Regular and predictable salary, pension or institutional payroll, generally paid through a bank or mobile-money account."
+    },
+    "sme_formal": {
+      "mu": 12.05,
+      "sigma": 0.40,
+      "definition": "Formal SME owner, registered independent professional or salaried employee of a structured private business, with moderately variable income."
+    },
+    "micro_informal": {
+      "mu": 11.65,
+      "sigma": 0.55,
+      "definition": "Informal micro-entrepreneur, casual worker, commission worker or self-employed service provider with irregular cash income."
+    },
+    "agri_seasonal": {
+      "mu": 11.50,
+      "sigma": 0.70,
+      "definition": "Agriculture, livestock, fishing or forestry activity whose income is strongly seasonal and exposed to weather, biological and commodity-price risks."
+    }
+  },
+  "classification_priority": [
+    "explicit_income_pattern",
+    "employment_status",
+    "employer_type",
+    "profession",
+    "sector_default"
+  ],
+  "employment_status_rules": {
+    "civil_servant_or_public_payroll": "bank_stable",
+    "permanent_formal_employee": "bank_stable",
+    "retiree_with_regular_pension": "bank_stable",
+    "registered_business_owner": "sme_formal",
+    "registered_independent_professional": "sme_formal",
+    "formal_private_employee_without_proven_payroll_stability": "sme_formal",
+    "informal_self_employed": "micro_informal",
+    "casual_or_daily_worker": "micro_informal",
+    "commission_only_worker": "micro_informal",
+    "smallholder_or_seasonal_primary_producer": "agri_seasonal"
+  },
+  "profession_groups": [
+    {
+      "sector": "Public administration and government",
+      "default_profile": "bank_stable",
+      "professions": [
+        "Civil servant", "Public administrator", "Administrative officer", "Government clerk", "Municipal employee", "Local government officer", "Prefecture employee", "Tax officer", "Customs officer", "Immigration officer", "Civil registry officer", "Social security officer", "Public treasury officer", "Public procurement officer", "Government accountant", "Government auditor", "Statistician in public service", "Census officer on permanent contract", "Diplomat", "Embassy employee", "Magistrate", "Judge", "Court clerk", "Public prosecutor", "Prison officer", "Police officer", "Gendarme", "Military officer", "Enlisted soldier", "Firefighter", "Forest ranger on public payroll", "Public sanitation inspector", "Labour inspector", "Agricultural extension officer on public payroll", "Veterinary inspector", "Elected official with regular allowance"
+      ]
+    },
+    {
+      "sector": "Education and research",
+      "default_profile": "bank_stable",
+      "professions": [
+        "Instituteur", "Primary school teacher", "Secondary school teacher", "High school teacher", "Public preschool teacher", "Public vocational trainer", "Head teacher", "School principal", "Education inspector", "Public university lecturer", "University professor", "Public researcher", "Laboratory technician at public institution", "Librarian on institutional payroll", "School administrator", "Academic registrar", "Guidance counsellor", "Teaching assistant on regular payroll"
+      ],
+      "variants": {
+        "Private school owner": "sme_formal",
+        "Private tutor with registered activity": "sme_formal",
+        "Informal private tutor": "micro_informal",
+        "Community teacher paid irregularly": "micro_informal",
+        "Temporary or substitute teacher without regular payroll": "micro_informal"
+      }
+    },
+    {
+      "sector": "Health and social services",
+      "default_profile": "bank_stable",
+      "professions": [
+        "Public hospital doctor", "Public hospital nurse", "Public midwife", "Public pharmacist", "Public dentist", "Public laboratory scientist", "Public laboratory technician", "Public radiographer", "Public physiotherapist", "Public psychologist", "Public social worker", "Public health officer", "Epidemiologist on institutional payroll", "Community health officer on regular payroll", "Hospital administrator", "Hospital accountant", "Ambulance driver on regular payroll", "Mortuary attendant on regular payroll"
+      ],
+      "variants": {
+        "Private clinic owner": "sme_formal",
+        "Private medical practitioner": "sme_formal",
+        "Registered community pharmacy owner": "sme_formal",
+        "Registered laboratory owner": "sme_formal",
+        "Formal private clinic employee": "sme_formal",
+        "Traditional healer": "micro_informal",
+        "Traditional birth attendant": "micro_informal",
+        "Informal medicine vendor": "micro_informal",
+        "Community health worker paid per campaign": "micro_informal"
+      }
+    },
+    {
+      "sector": "Banking, insurance and formal financial services",
+      "default_profile": "bank_stable",
+      "professions": [
+        "Bank employee", "Bank teller", "Bank cashier", "Customer service officer", "Credit analyst", "Loan officer on salary", "Risk analyst", "Compliance officer", "Internal auditor", "Bank accountant", "Treasury analyst", "Branch manager", "Relationship manager on base salary", "Insurance employee", "Insurance underwriter", "Actuary", "Claims officer", "Pension fund employee", "Microfinance employee on salary", "Mobile-money company employee", "Fintech employee on permanent payroll", "Securities exchange employee", "Investment fund employee"
+      ],
+      "variants": {
+        "Commission-only insurance agent": "micro_informal",
+        "Independent mobile-money agent": "micro_informal",
+        "Registered mobile-money agency owner": "sme_formal",
+        "Independent loan broker": "micro_informal"
+      }
+    },
+    {
+      "sector": "Large formal enterprises and regulated utilities",
+      "default_profile": "bank_stable",
+      "professions": [
+        "Permanent corporate employee", "Corporate accountant", "Corporate auditor", "Human resources officer", "Payroll officer", "Procurement officer", "Operations officer", "Quality assurance officer", "Health and safety officer", "Legal counsel", "Company secretary", "Executive assistant", "Call-centre employee on regular payroll", "Telecommunications employee", "Electricity utility employee", "Water utility employee", "Gas utility employee", "Oil company employee", "Mining company permanent employee", "Airline employee", "Airport employee", "Port authority employee", "Railway employee", "Permanent factory worker", "Warehouse employee on regular payroll", "Security guard employed by formal company", "Cleaner employed by formal company", "Driver employed on permanent contract"
+      ]
+    },
+    {
+      "sector": "NGOs, international organizations and religious institutions",
+      "default_profile": "bank_stable",
+      "professions": [
+        "UN employee", "International organization employee", "NGO permanent employee", "Development project officer on regular payroll", "Monitoring and evaluation officer", "Humanitarian programme officer", "Grants officer", "NGO accountant", "NGO logistics officer", "NGO field officer on salaried contract", "Registered church employee on payroll", "Registered mosque employee on payroll", "Clergy receiving a regular institutional salary"
+      ],
+      "variants": {
+        "Short-term survey enumerator": "micro_informal",
+        "Project-based community mobilizer": "micro_informal",
+        "Clergy living mainly on donations": "micro_informal",
+        "Volunteer receiving irregular stipends": "micro_informal"
+      }
+    },
+    {
+      "sector": "Registered professional and business services",
+      "default_profile": "sme_formal",
+      "professions": [
+        "Registered accountant", "Independent auditor", "Tax consultant", "Management consultant", "Registered lawyer", "Notary", "Bailiff", "Architect", "Surveyor", "Quantity surveyor", "Civil engineer in private practice", "Mechanical engineer in private practice", "Electrical engineer in private practice", "Environmental consultant", "Agronomy consultant", "Veterinary practitioner", "Private psychologist", "Private physiotherapist", "Registered translator", "Registered interpreter", "Recruitment agency owner", "Travel agency owner", "Real-estate agency owner", "Property manager", "Advertising agency owner", "Market research firm owner", "Private security company owner", "Cleaning company owner", "Event-planning company owner", "Funeral-services company owner"
+      ]
+    },
+    {
+      "sector": "Technology, media and creative formal businesses",
+      "default_profile": "sme_formal",
+      "professions": [
+        "Software company owner", "Registered software developer", "IT consultant", "Cybersecurity consultant", "Data analyst in formal SME", "Web agency owner", "Internet service reseller with registered business", "Computer repair shop owner", "Electronics shop owner", "Printing business owner", "Registered graphic designer", "Registered photographer", "Video-production company owner", "Radio station owner", "Local television company owner", "Newspaper owner", "Publishing company owner", "Registered content studio owner", "Formal digital-marketing consultant", "Cinema operator", "Gaming-centre owner with registered business"
+      ],
+      "variants": {
+        "Freelance developer with irregular contracts": "micro_informal",
+        "Informal phone repairer": "micro_informal",
+        "Street photographer": "micro_informal",
+        "Freelance content creator without stable contracts": "micro_informal",
+        "Cybercafe operator without registered business": "micro_informal"
+      }
+    },
+    {
+      "sector": "Formal trade, hospitality and personal-service SMEs",
+      "default_profile": "sme_formal",
+      "professions": [
+        "Registered wholesaler", "Registered retailer", "Supermarket owner", "Minimarket owner", "Pharmacy owner", "Hardware store owner", "Building-materials merchant", "Furniture shop owner", "Clothing boutique owner", "Bookshop owner", "Stationery shop owner", "Spare-parts shop owner", "Registered fuel-station operator", "Hotel owner", "Guesthouse owner", "Restaurant owner", "Catering company owner", "Bakery owner", "Laundry business owner", "Hair salon owner with registered business", "Beauty salon owner with registered business", "Gym owner", "Day-care centre owner", "Private school owner", "Driving school owner", "Registered car-rental operator", "Registered transport company owner", "Registered courier company owner", "Registered waste-management operator"
+      ]
+    },
+    {
+      "sector": "Formal manufacturing, construction and repair SMEs",
+      "default_profile": "sme_formal",
+      "professions": [
+        "Construction company owner", "Building contractor with registered business", "Electrical contractor", "Plumbing contractor", "Painting contractor", "Welding workshop owner", "Metal-fabrication business owner", "Carpentry workshop owner", "Furniture manufacturer", "Garment workshop owner", "Textile manufacturer", "Shoe manufacturer", "Food-processing business owner", "Beverage producer", "Dairy processor", "Meat-processing business owner", "Animal-feed producer", "Soap manufacturer", "Cosmetics manufacturer", "Plastic-products manufacturer", "Packaging manufacturer", "Block-making business owner", "Brick manufacturer", "Mechanic garage owner", "Auto-body shop owner", "Tyre shop owner", "Solar-installation company owner", "Borehole-drilling company owner", "Recycling company owner"
+      ]
+    },
+    {
+      "sector": "Informal commerce and street trade",
+      "default_profile": "micro_informal",
+      "professions": [
+        "Market trader", "Street vendor", "Hawker", "Kiosk operator", "Table-top retailer", "Informal food retailer", "Fruit seller", "Vegetable seller", "Fish seller", "Meat seller", "Egg seller", "Grain seller", "Spice seller", "Second-hand clothing seller", "Shoe seller", "Cosmetics seller", "Household-goods seller", "Charcoal seller", "Firewood seller", "Water vendor", "Ice seller", "Street book seller", "Phone-accessories seller", "Informal electronics seller", "Informal spare-parts seller", "Informal building-materials seller", "Cross-border petty trader", "Itinerant merchant", "Commission sales agent", "Informal online reseller", "Social-commerce seller", "Village-shop operator", "Unregistered mini-shop owner", "Lottery-ticket seller"
+      ]
+    },
+    {
+      "sector": "Informal food, hospitality and household production",
+      "default_profile": "micro_informal",
+      "professions": [
+        "Street-food vendor", "Cooked-meal seller", "Tea seller", "Coffee seller", "Juice seller", "Local beverage brewer", "Home baker", "Informal caterer", "Small chop-bar operator", "Informal restaurant operator", "Food-cart operator", "Roasted-maize seller", "Roasted-groundnut seller", "Cassava-products seller", "Informal fish smoker", "Informal meat processor", "Home-based dairy processor", "Home-based jam producer", "Home-based spice processor", "Boarding-house operator", "Informal room-rental operator", "Homestay operator", "Domestic cook paid casually", "Domestic worker", "Housekeeper", "Nanny", "Gardener for households", "Laundry worker", "Ironing service provider"
+      ]
+    },
+    {
+      "sector": "Informal crafts, construction and repair",
+      "default_profile": "micro_informal",
+      "professions": [
+        "Mason", "Bricklayer", "Construction labourer", "Casual site worker", "Informal carpenter", "Cabinet maker", "Wood carver", "Thatcher", "Informal plumber", "Informal electrician", "Painter", "Tiler", "Plasterer", "Welder", "Blacksmith", "Metalworker", "Aluminium fabricator", "Brick maker", "Concrete-block maker", "Quarry worker paid casually", "Sand harvester", "Gravel extractor", "Informal mechanic", "Motorcycle mechanic", "Bicycle repairer", "Tyre repairer", "Panel beater", "Auto electrician", "Generator repairer", "Solar-device repairer", "Refrigerator repairer", "Air-conditioner repairer", "Phone repairer", "Radio and television repairer", "Watch repairer", "Shoemaker", "Cobbler", "Tailor", "Dressmaker", "Weaver", "Basket maker", "Potter", "Leatherworker", "Jewellery artisan", "Bead maker", "Sign painter"
+      ]
+    },
+    {
+      "sector": "Informal transport and logistics",
+      "default_profile": "micro_informal",
+      "professions": [
+        "Motorcycle taxi rider", "Boda-boda rider", "Okada rider", "Taxi driver", "Minibus driver", "Matatu driver", "Tro-tro driver", "Bus conductor", "Minibus conductor", "Tricycle taxi driver", "Keke driver", "Bajaj driver", "Rickshaw operator", "Bicycle taxi rider", "Cart operator", "Informal truck driver", "Delivery rider", "Independent courier", "Market porter", "Head porter", "Kayaye", "Loader", "Dock labourer paid casually", "Warehouse casual worker", "Parking attendant", "Vehicle washer", "Roadside vulcanizer"
+      ],
+      "variants": {
+        "Driver on permanent company payroll": "bank_stable",
+        "Registered fleet owner": "sme_formal",
+        "Registered logistics company owner": "sme_formal"
+      }
+    },
+    {
+      "sector": "Informal personal, digital and entertainment services",
+      "default_profile": "micro_informal",
+      "professions": [
+        "Informal hairdresser", "Barber", "Braider", "Beautician", "Manicurist", "Make-up artist", "Massage provider", "Shoe shiner", "Street cleaner paid casually", "Waste picker", "Scrap collector", "Informal recycler", "Public letter writer", "Photocopy operator", "Cybercafe attendant", "Mobile-money agent", "Airtime seller", "Phone-charging operator", "Freelance photographer", "Videographer paid per event", "Disc jockey", "Musician paid per performance", "Dancer paid per performance", "Master of ceremonies", "Comedian", "Freelance journalist", "Blogger", "Social-media creator", "Freelance graphic designer", "Freelance web developer", "Data-entry freelancer", "Sports-betting agent", "Gaming kiosk operator", "Informal tour guide", "Beach vendor", "Traditional healer", "Fortune teller", "Religious worker supported by donations"
+      ]
+    },
+    {
+      "sector": "Agronomy and crop farming",
+      "default_profile": "agri_seasonal",
+      "professions": [
+        "Smallholder farmer", "Subsistence farmer", "Tenant farmer", "Sharecropper", "Crop farmer", "Mixed-crop farmer", "Rain-fed farmer", "Irrigated-crop farmer", "Cereal farmer", "Maize farmer", "Rice farmer", "Millet farmer", "Sorghum farmer", "Wheat farmer", "Barley farmer", "Teff farmer", "Fonio farmer", "Cassava farmer", "Yam farmer", "Sweet-potato farmer", "Potato farmer", "Cocoyam farmer", "Plantain farmer", "Banana farmer", "Bean farmer", "Cowpea farmer", "Pigeon-pea farmer", "Groundnut farmer", "Soybean farmer", "Sesame farmer", "Sunflower farmer", "Vegetable farmer", "Tomato farmer", "Onion farmer", "Cabbage farmer", "Pepper farmer", "Okra farmer", "Leafy-vegetable farmer", "Fruit farmer", "Mango farmer", "Citrus farmer", "Pineapple farmer", "Watermelon farmer", "Avocado farmer", "Papaya farmer", "Cashew farmer", "Cocoa farmer", "Coffee farmer", "Tea grower", "Cotton farmer", "Sugarcane farmer", "Tobacco farmer", "Rubber grower", "Oil-palm farmer", "Coconut farmer", "Shea-nut collector-producer", "Spice farmer", "Ginger farmer", "Turmeric farmer", "Vanilla farmer", "Flower grower", "Seed producer", "Nursery operator", "Mushroom grower", "Urban farmer", "Market gardener", "Farm labourer paid seasonally", "Harvester", "Farm machinery operator paid seasonally"
+      ],
+      "variants": {
+        "Agronomist on public payroll": "bank_stable",
+        "Agronomist employed permanently by formal company": "bank_stable",
+        "Registered commercial farm owner with diversified contracts": "sme_formal",
+        "Registered agricultural input dealer": "sme_formal",
+        "Informal agricultural input seller": "micro_informal"
+      }
+    },
+    {
+      "sector": "Livestock and animal production",
+      "default_profile": "agri_seasonal",
+      "professions": [
+        "Livestock farmer", "Pastoralist", "Agropastoralist", "Cattle farmer", "Dairy farmer", "Beef producer", "Goat farmer", "Sheep farmer", "Pig farmer", "Poultry farmer", "Layer farmer", "Broiler farmer", "Guinea-fowl farmer", "Duck farmer", "Rabbit farmer", "Beekeeper", "Honey producer", "Snail farmer", "Grasscutter farmer", "Camel herder", "Cattle herder", "Goat herder", "Shepherd", "Poultry keeper", "Animal breeder", "Hatchery operator", "Fodder producer", "Silage producer", "Livestock-market trader-producer", "Milk collector dependent on seasonal supply", "Egg producer", "Manure producer", "Seasonal ranch worker"
+      ],
+      "variants": {
+        "Veterinarian on public payroll": "bank_stable",
+        "Registered veterinary clinic owner": "sme_formal",
+        "Registered commercial poultry company owner": "sme_formal",
+        "Butcher operating informally": "micro_informal",
+        "Registered abattoir owner": "sme_formal"
+      }
+    },
+    {
+      "sector": "Fishing and aquaculture",
+      "default_profile": "agri_seasonal",
+      "professions": [
+        "Artisanal fisher", "Marine fisher", "Inland fisher", "Lake fisher", "River fisher", "Canoe fisher", "Crew member on artisanal fishing boat", "Fish farmer", "Tilapia farmer", "Catfish farmer", "Shrimp farmer", "Oyster farmer", "Seaweed farmer", "Aquaculture pond operator", "Fish hatchery operator", "Fingerling producer", "Seasonal fish processor-producer", "Fishing-net owner-operator", "Crab collector", "Shellfish collector"
+      ],
+      "variants": {
+        "Commercial fishing company owner": "sme_formal",
+        "Registered aquaculture company owner": "sme_formal",
+        "Fish seller without production activity": "micro_informal",
+        "Fisheries officer on public payroll": "bank_stable"
+      }
+    },
+    {
+      "sector": "Forestry and forest products",
+      "default_profile": "agri_seasonal",
+      "professions": [
+        "Community forest producer", "Small-scale tree grower", "Timber-tree farmer", "Fuelwood producer", "Charcoal producer dependent on seasonal production", "Bamboo grower", "Rattan collector", "Gum arabic collector", "Resin collector", "Medicinal-plant collector", "Wild-fruit collector", "Mushroom collector", "Non-timber forest-product collector", "Tree nursery operator", "Seasonal logging worker", "Small-scale sawmiller dependent on seasonal supply", "Mangrove-resource harvester", "Forest honey producer"
+      ],
+      "variants": {
+        "Forest ranger on public payroll": "bank_stable",
+        "Registered timber company owner": "sme_formal",
+        "Registered furniture manufacturer": "sme_formal",
+        "Informal timber trader": "micro_informal",
+        "Informal charcoal retailer": "micro_informal"
+      }
+    },
+    {
+      "sector": "Extractive and other irregular primary activities",
+      "default_profile": "micro_informal",
+      "professions": [
+        "Artisanal miner", "Small-scale gold miner", "Diamond digger", "Gemstone miner", "Salt miner", "Clay extractor", "Stone breaker", "Informal quarry worker", "Sand miner", "Gravel miner", "Mineral washer", "Mine-site porter", "Mineral broker operating informally"
+      ],
+      "variants": {
+        "Permanent employee of formal mining company": "bank_stable",
+        "Registered small-scale mining company owner": "sme_formal"
+      }
+    },
+    {
+      "sector": "Pensions and non-occupational stable income",
+      "default_profile": "bank_stable",
+      "professions": [
+        "Public-sector retiree with regular pension", "Private-sector retiree with regular pension", "Military retiree with regular pension", "Beneficiary of a documented regular annuity"
+      ],
+      "variants": {
+        "Older person dependent on irregular family transfers": "micro_informal",
+        "Remittance recipient with documented regular monthly transfers": "bank_stable",
+        "Remittance recipient with irregular transfers": "micro_informal"
+      }
+    }
+  ],
+  "normalization_aliases": {
+    "teacher": "Primary school teacher",
+    "instituteur": "Instituteur",
+    "enseignant": "Primary school teacher",
+    "fonctionnaire": "Civil servant",
+    "agent public": "Civil servant",
+    "boda boda": "Boda-boda rider",
+    "okada": "Okada rider",
+    "zemidjan": "Motorcycle taxi rider",
+    "moto-taxi": "Motorcycle taxi rider",
+    "taximan": "Taxi driver",
+    "matatu": "Matatu driver",
+    "tro tro": "Tro-tro driver",
+    "keke": "Keke driver",
+    "bajaj": "Bajaj driver",
+    "commerçant": "Market trader",
+    "commercant": "Market trader",
+    "vendeur ambulant": "Hawker",
+    "boutiquier": "Village-shop operator",
+    "couturier": "Tailor",
+    "couturière": "Dressmaker",
+    "menuisier": "Informal carpenter",
+    "maçon": "Mason",
+    "mecanicien": "Informal mechanic",
+    "coiffeur": "Informal hairdresser",
+    "coiffeuse": "Informal hairdresser",
+    "agriculteur": "Smallholder farmer",
+    "cultivateur": "Crop farmer",
+    "éleveur": "Livestock farmer",
+    "eleveur": "Livestock farmer",
+    "pasteur nomade": "Pastoralist",
+    "pêcheur": "Artisanal fisher",
+    "pecheur": "Artisanal fisher",
+    "pisciculteur": "Fish farmer",
+    "apiculteur": "Beekeeper",
+    "maraîcher": "Market gardener",
+    "maraicher": "Market gardener",
+    "orpailleur": "Small-scale gold miner",
+    "mobile money agent": "Mobile-money agent"
+  }
+}

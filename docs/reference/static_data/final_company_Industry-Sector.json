@@ -1,0 +1,762 @@
+{
+  "company_types": [
+    "LLC",
+    "LLP",
+    "SCI",
+    "SNC",
+    "SCS",
+    "SCA",
+    "SAS",
+    "GIE",
+    "SCP",
+    "ONG",
+    "PTE",
+    "LTD",
+    "PTY",
+    "EIRL",
+		"EURL",
+    "SCOP",
+    "SARL",
+    "GmbH", 
+    "EI",
+    "SA",
+    "AG",
+    "Trust",
+    "Group",
+    "Holding",
+    "Charity",  
+    "PTE LTD",
+    "PTY LTD"
+  ],
+  "industries": [
+    {
+      "id": 1,
+      "label": "Finance & Insurance"
+    },
+    {
+      "id": 2,
+      "label": "Agriculture"
+    },
+    {
+      "id": 3,
+      "label": "Commerce"
+    },
+    {
+      "id": 4,
+      "label": "Logistic & Transport"
+    },
+    {
+      "id": 5,
+      "label": "Technology"
+    },
+    {
+      "id": 6,
+      "label": "Energy"
+    }
+  ],
+  "sectors": [
+    {
+      "label": "Trading",
+      "industry_ids": [
+        1
+      ]
+    },
+    {
+      "label": "MicroFinance",
+      "industry_ids": [
+        1
+      ]
+    },
+    {
+      "label": "Investment",
+      "industry_ids": [
+        1
+      ]
+    },
+   {
+      "label": "Lender",
+      "industry_ids": [
+        1
+      ] 
+    },
+    {
+      "label": "Fintech",
+      "industry_ids": [
+        1,
+        5
+      ]
+    },
+    {
+      "label": "Biology",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Pisciculture",
+      "industry_ids": [
+        2
+      ]
+    },
+    {
+      "label": "Elevage",
+      "industry_ids": [
+        2
+      ]
+    },
+    {
+      "label": "Farming",
+      "industry_ids": [
+        2
+      ]
+    },
+    {
+      "label": "Agronomy",
+      "industry_ids": [
+        2
+      ]
+    },
+    {
+      "label": "Forest Industry",
+      "industry_ids": [
+        2
+      ]
+    },
+    {
+      "label": "LiveStock",
+      "industry_ids": [
+        2
+      ]
+    },
+    {
+      "label": "CyberSecurity",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "DataScience",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "AI",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Consulting",
+      "industry_ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "label": "Construction",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Transport",
+      "industry_ids": [
+        4
+      ]
+    },
+    {
+      "label": "Telecom",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Tourism",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Health",
+      "industry_ids": [
+        3,
+        5
+      ]
+    },
+    {
+      "label": "Education",
+      "industry_ids": [
+        3,
+        5
+      ]
+    },
+    {
+      "label": "Logistics",
+      "industry_ids": [
+        4
+      ]
+    },
+    {
+      "label": "eCommerce",
+      "industry_ids": [
+        3,
+        5
+      ]
+    },
+    {
+      "label": "Insurance",
+      "industry_ids": [
+        1
+      ]
+    },
+    {
+      "label": "Media",
+      "industry_ids": [
+        3,
+        5
+      ]
+    },
+    {
+      "label": "Software",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Food",
+      "industry_ids": [
+        2,
+        3
+      ]
+    },
+    {
+      "label": "Service",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Mining",
+      "industry_ids": [
+        3,
+        6
+      ]
+    },
+    {
+      "label": "Real Estate",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Manufacturing",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Retail",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Fashion",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Banking",
+      "industry_ids": [
+        1
+      ]
+    },
+    {
+      "label": "Legal",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Automobile",
+      "industry_ids": [
+        3,
+        4
+      ]
+    },
+    {
+      "label": "Pharmaceutical",
+      "industry_ids": [
+        3,
+        5
+      ]
+    },
+    {
+      "label": "Aerospace",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Defense",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Chemical",
+      "industry_ids": [
+        3,
+        6
+      ]
+    },
+    {
+      "label": "Recycling",
+      "industry_ids": [
+        3,
+        6
+      ]
+    },
+    {
+      "label": "Waste Management",
+      "industry_ids": [
+        3,
+        6
+      ]
+    },
+    {
+      "label": "Environment",
+      "industry_ids": [
+        3,
+        6
+      ]
+    },
+    {
+      "label": "Water",
+      "industry_ids": [
+        6
+      ]
+    },
+    {
+      "label": "Fishing",
+      "industry_ids": [
+        2
+      ]
+    },
+    {
+      "label": "Event",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Music",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Entertainment",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Art",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Publishing",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Printing",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Advertising",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Human Resources",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Cleaning",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Security",
+      "industry_ids": [
+        3,
+        5
+      ]
+    },
+    {
+      "label": "Sport",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Shipping",
+      "industry_ids": [
+        4
+      ]
+    },
+    {
+      "label": "Maritime",
+      "industry_ids": [
+        4
+      ]
+    },
+    {
+      "label": "Catering",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Bakery",
+      "industry_ids": [
+        2,
+        3
+      ]
+    },
+    {
+      "label": "Textile",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Leather",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Metallurgy",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Plastic",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Electronics",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Hardware",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "IT Support",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Maintenance",
+      "industry_ids": [
+        3,
+        5
+      ]
+    },
+    {
+      "label": "Distribution",
+      "industry_ids": [
+        3,
+        4
+      ]
+    },
+    {
+      "label": "NGO",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Charity",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Handicraft",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Travel",
+      "industry_ids": [
+        3,
+        4
+      ]
+    },
+    {
+      "label": "Hotel",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Restaurant",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Beverage",
+      "industry_ids": [
+        2,
+        3
+      ]
+    },
+    {
+      "label": "BTP",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Audit",
+      "industry_ids": [
+        1,
+        3
+      ]
+    },
+    {
+      "label": "Research",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Library",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Childcare",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Funeral",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Accounting",
+      "industry_ids": [
+        1
+      ]
+    },
+    {
+      "label": "Brokerage",
+      "industry_ids": [
+        1
+      ]
+    },
+    {
+      "label": "Petroleum",
+      "industry_ids": [
+        6
+      ]
+    },
+    {
+      "label": "Solar",
+      "industry_ids": [
+        6
+      ]
+    },
+    {
+      "label": "Hydro",
+      "industry_ids": [
+        6
+      ]
+    },
+    {
+      "label": "Wind",
+      "industry_ids": [
+        6
+      ]
+    },
+    {
+      "label": "Geothermal",
+      "industry_ids": [
+        6
+      ]
+    },
+    {
+      "label": "Agribusiness",
+      "industry_ids": [
+        2,
+        3
+      ]
+    },
+    {
+      "label": "Startup",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Incubator",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Lab",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "Public Administration",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Cooperative",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Wholesale",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Pawnshop",
+      "industry_ids": [
+        1
+      ]
+    },
+    {
+      "label": "Courier",
+      "industry_ids": [
+        4
+      ]
+    },
+    {
+      "label": "Notary",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Translation",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Import Export",
+      "industry_ids": [
+        3,
+        4
+      ]
+    },
+    {
+      "label": "Franchise",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Coworking",
+      "industry_ids": [
+        3
+      ]
+    },
+    {
+      "label": "Virtual Assistant",
+      "industry_ids": [
+        3,
+        5
+      ]
+    },
+    {
+      "label": "Blockchain",
+      "industry_ids": [
+        1,
+        5
+      ]
+    },
+    {
+      "label": "Cryptocurrency",
+      "industry_ids": [
+        1,
+        5
+      ]
+    },
+    {
+      "label": "E-Sports",
+      "industry_ids": [
+        3,
+        5
+      ]
+    },
+    {
+      "label": "Gaming",
+      "industry_ids": [
+        3,
+        5
+      ]
+    },
+    {
+      "label": "VR",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "AR",
+      "industry_ids": [
+        5
+      ]
+    },
+    {
+      "label": "3D Printing",
+      "industry_ids": [
+        5
+      ]
+    }
+  ]
+}
