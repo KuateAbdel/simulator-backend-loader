@@ -263,6 +263,48 @@ avec une rigueur que product-service n'a pas.
 | `penalty_*` | Renseignés, jamais laissés au hasard du serveur | — |
 | `description` | Préfixée « Jeu de données DEMO Loader FinZuu » | — |
 
+**COLLECT SEULEMENT — dit trois fois parce que c'est structurel :** le type
+est verrouillé à `COLLECT` en v1. Aucun produit LENDING ne se crée depuis le
+Loader maintenant : `perimetre_lending` est fermé jusqu'au sprint 8, et l'API
+répond 422 « LENDING hors périmètre v1 » à toute tentative — pas un choix
+d'écran, une règle du backend.
+
+**LES TROIS INTERFACES — une par `policy_type`, jamais un formulaire unique :**
+
+Le formulaire CHANGE selon le type de policy, parce que le métier change.
+`CollectPolicySchema` (13 champs mesurés, AUCUN n'est une durée) reçoit ce que
+notre builder `policy_collect()` émet — et c'est l'interface qui guide l'admin
+vers la combinaison valide au lieu de le laisser deviner :
+
+| | **CASH** (tontine, cotisation — épargne à vue) | **CASH_DAT** (dépôt à terme) | **PRODUCT** (collecte en nature — warrantage, cacao) |
+|---|---|---|---|
+| `interest_type` / `interest_rate` | MONTHLY, ≤ 24 % | MONTHLY, ≤ 24 % — typiquement plus élevé (rémunération du blocage : Epargne Bloquee 6,5 %, DAT 12 mois 8 %) | 0 % par défaut — une collecte en nature ne porte pas d'intérêt |
+| `duree_mois` | **INTERDIT** (422) — une cotisation n'a pas de terme | **OBLIGATOIRE** (6, 12…) — porté par le LOADER car le serveur n'a AUCUN champ de durée : matérialisé à la souscription dans `CollectSchema.end_date` | **INTERDIT** (422) |
+| `measure` / `measure_price` | Émis (schéma requis) mais NEUTRES — l'interface les masque et le dit | Émis, neutres, masqués | **LE CŒUR du formulaire** : KILOGRAM ou LITER choisi explicitement (`D-PRD-8` — le mil se pèse, le lait se mesure), `measure_price` significatif |
+| `amount_min` / `amount_max` | En FCFA, `0 < min < max` | En FCFA, planchers plus hauts (un DAT suppose une épargne constituée) | Bornes de la collecte |
+| `penalty_type` / `penalty_percent` | Renseignés | Renseignés | Renseignés |
+| Exemples réels du catalogue | Tontine Digitale, Compte Epargne Entreprise | Epargne Bloquee 6 Mois, Depot a Terme Entreprise 12 Mois | Warrantage Cerealier, Collecte Cacao Cooperative |
+
+```gherkin
+Étant donné policy_type=CASH et une durée saisie
+Quand je demande l'aperçu
+Alors 422 « CASH n'a pas de terme — une cotisation régulière n'expire pas »
+
+Étant donné policy_type=CASH_DAT sans durée
+Quand je demande l'aperçu
+Alors 422 « un dépôt à terme SANS terme n'est pas un dépôt à terme »
+Et le message rappelle que le serveur ne porte pas la durée : c'est le
+    Loader qui la garde et la matérialise dans CollectSchema.end_date
+
+Étant donné policy_type=PRODUCT sans measure choisie explicitement
+Quand je demande l'aperçu
+Alors 422 « la mesure est un choix métier (D-PRD-8) — jamais un défaut »
+
+Étant donné policy_type=LENDING (ou type=LENDING)
+Quand je soumets quoi que ce soit
+Alors 422 « LENDING hors périmètre v1 — sprint 8, perimetre_lending »
+```
+
 **L'UNICITÉ — la discipline que la plateforme n'a pas, et que le Loader impose :**
 
 ```gherkin
