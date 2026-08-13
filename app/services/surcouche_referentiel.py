@@ -47,10 +47,19 @@ dimension que le serveur n'a pas de champ pour porter.
 
 from __future__ import annotations
 
+import random
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.geographie import City, District, RapportGeographique, ReferentielGeo, Region
+from app.services.geographie import (
+    City,
+    District,
+    RapportGeographique,
+    ReferentielGeo,
+    Region,
+    Telco,
+)
 
 #: Prefixe des identifiants generes par la surcouche. Il rend un ajout
 #: reconnaissable a l'oeil dans n'importe quel export, et impossible a
@@ -78,6 +87,10 @@ class SurcoucheReferentiel:
     regions: dict[str, Region] = field(default_factory=dict)
     villes: dict[str, City] = field(default_factory=dict)
     quartiers: dict[str, District] = field(default_factory=dict)
+    #: `US-B7` (13/08) — les operateurs ajoutes par le Super-Admin. Meme
+    #: doctrine que les villes : le classeur est immuable, la surcouche est
+    #: reversible, et chaque ajout passe les invariants AVANT d'exister.
+    telcos: dict[str, Telco] = field(default_factory=dict)
     #: Journal des ajouts, dans l'ordre — c'est ce que le tableau de bord montre.
     journal: list[str] = field(default_factory=list)
 
@@ -166,6 +179,118 @@ class SurcoucheReferentiel:
         self.journal.append(f"ville {libelle!r} ajoutee a {region_id} ({ville.city_id})")
         return ville
 
+    def ajouter_telco(
+        self,
+        base: ReferentielGeo,
+        *,
+        pays: str,
+        network_name: str,
+        short_name: str,
+        regex_msisdn: str,
+        part_marche: float,
+        exemple_msisdn: str,
+        ussd_base_code: str = "",
+    ) -> Telco:
+        """`US-B7` — un operateur, avec les invariants qui manquaient.
+
+        QUATRE INVARIANTS, dont deux que PERSONNE ne verifiait :
+
+        1. Le pays est une cible (EF-05) et les noms sont uniques dans le pays
+           — deux operateurs homonymes rendraient `operateur_du_msisdn`
+           ambigu.
+        2. La regex COMPILE — un plan illisible est refuse a l'ajout, pas
+           decouvert au 500e client.
+        3. `exemple_msisdn` DOIT matcher la regex : la preuve que le plan est
+           utilisable, fournie par celui qui l'ajoute. Et le plan doit etre
+           COMPOSABLE : on compose un numero d'essai et on verifie qu'il
+           s'accepte lui-meme — sinon `composer_msisdn` produirait des numeros
+           que `valider_msisdn_operateur` refuserait, 2000 fois.
+        4. La SOMME des parts de marche du pays reste <= 100 — l'invariant
+           INV-18 etendu a l'ecriture : un marche a 130 % n'existe pas.
+        """
+        code = str(pays).strip().upper()
+        if base.pays(code) is None:
+            raise AjoutRefuse(
+                f"telco {network_name!r} : pays {code!r} hors des cibles — EF-05."
+            )
+        nom = str(network_name).strip()
+        court = str(short_name).strip()
+        if not nom or not court:
+            raise AjoutRefuse("telco sans nom ou sans code court — refuse")
+        existants = [
+            t for t in (*base.telcos.values(), *self.telcos.values())
+            if t.country_iso2 == code
+        ]
+        # Collision CROISEE comprise : un nouveau nom egal au CODE d'un
+        # existant (ou l'inverse) est aussi ambigu — « MTN CM » est le code de
+        # « MTN Cameroon », un operateur NOMME « MTN CM » semerait le doute.
+        for telco in existants:
+            libelles_existants = {telco.network_name, telco.short_name}
+            if {nom, court} & libelles_existants:
+                raise AjoutRefuse(
+                    f"telco {nom!r}/{court!r} : {telco.network_name!r} "
+                    f"({telco.short_name}) existe deja pour {code} — deux "
+                    "operateurs aux libelles croises rendraient l'attribution ambigue"
+                )
+
+        try:
+            motif = re.compile(regex_msisdn)
+        except re.error as erreur:
+            raise AjoutRefuse(
+                f"telco {nom!r} : regex incompilable ({erreur}) — un plan "
+                "illisible se refuse a l'ajout, pas au 500e client"
+            ) from erreur
+        if not motif.fullmatch(str(exemple_msisdn).strip()):
+            raise AjoutRefuse(
+                f"telco {nom!r} : l'exemple {exemple_msisdn!r} ne matche pas le "
+                "plan — la preuve d'utilisabilite est exigee de celui qui ajoute"
+            )
+
+        if not 0 < part_marche <= 100:
+            raise AjoutRefuse(
+                f"telco {nom!r} : part de marche {part_marche} hors de ]0, 100]"
+            )
+        somme = sum(t.part_marche for t in existants)
+        if somme + part_marche > 100:
+            raise AjoutRefuse(
+                f"telco {nom!r} : {somme:.1f} % deja attribues sur {code}, "
+                f"ajouter {part_marche:.1f} % depasserait 100 — un marche a "
+                f"{somme + part_marche:.1f} % n'existe pas (INV-18)"
+            )
+
+        telco = Telco(
+            telco_id=self._identifiant("TL", code, nom),
+            network_name=nom,
+            short_name=court,
+            ussd_base_code=str(ussd_base_code).strip(),
+            regex_msisdn=regex_msisdn,
+            part_marche=float(part_marche),
+            country_iso2=code,
+        )
+        # COMPOSABLE, pas seulement compilable : le composeur doit produire un
+        # numero que le plan accepte — l'aller-retour complet, prouve ICI.
+        # TROU DE GESTION D'ERREUR trouve par le test du 13/08 : le composeur
+        # leve ValueError sur un dialecte qu'il ne sait pas parser — sans ce
+        # rattrapage, l'ajout partait en 500 au lieu d'un refus explique.
+        try:
+            essai = telco.composer_msisdn("38101955", random.Random(0))  # noqa: S311
+        except ValueError as erreur:
+            raise AjoutRefuse(
+                f"telco {nom!r} : le plan compile mais n'est pas COMPOSABLE "
+                f"({erreur}) — la forme attendue est celle des plans reels, "
+                "ex. ^237(66\\d{7})$ : prefixe pays puis groupe de variantes"
+            ) from erreur
+        if not telco.accepte(essai):
+            raise AjoutRefuse(
+                f"telco {nom!r} : le plan compile mais n'est pas COMPOSABLE — "
+                f"le numero d'essai {essai!r} ne s'accepte pas lui-meme"
+            )
+        self.telcos[telco.telco_id] = telco
+        self.journal.append(
+            f"telco {nom!r} ajoute a {code} ({telco.telco_id}, {part_marche:.1f} %)"
+        )
+        return telco
+
     def ajouter_quartier(
         self,
         base: ReferentielGeo,
@@ -253,7 +378,7 @@ class SurcoucheReferentiel:
             nb_regions=len(base.regions) + len(self.regions),
             nb_villes=len(base.villes) + len(self.villes),
             nb_quartiers=len(base.quartiers) + len(self.quartiers),
-            nb_telcos=base.rapport.nb_telcos,
+            nb_telcos=base.rapport.nb_telcos + len(self.telcos),
             nb_devises=base.rapport.nb_devises,
             orphelins=list(base.rapport.orphelins),
         )
@@ -262,7 +387,7 @@ class SurcoucheReferentiel:
             villes={**base.villes, **self.villes},
             quartiers={**base.quartiers, **self.quartiers},
             rapport=rapport,
-            telcos=base.telcos,
+            telcos={**base.telcos, **self.telcos},
             devises=base.devises,
             pays_index=base.pays_index,
         )
@@ -271,7 +396,7 @@ class SurcoucheReferentiel:
 
     @property
     def vide(self) -> bool:
-        return not (self.regions or self.villes or self.quartiers)
+        return not (self.regions or self.villes or self.quartiers or self.telcos)
 
     def ajouts(self) -> dict[str, Any]:
         """Forme serialisable — a joindre a l'empreinte du run (`ENF-15`).
@@ -283,6 +408,7 @@ class SurcoucheReferentiel:
             "regions": {i: r.name for i, r in sorted(self.regions.items())},
             "villes": {i: v.name for i, v in sorted(self.villes.items())},
             "quartiers": {i: q.name for i, q in sorted(self.quartiers.items())},
+            "telcos": {i: t.network_name for i, t in sorted(self.telcos.items())},
             "journal": list(self.journal),
         }
 
@@ -291,7 +417,8 @@ class SurcoucheReferentiel:
             return "Surcouche : aucun ajout — le referentiel est celui du classeur"
         return (
             f"Surcouche : {len(self.regions)} region(s) · {len(self.villes)} ville(s) · "
-            f"{len(self.quartiers)} quartier(s) — le classeur n'a pas ete modifie"
+            f"{len(self.quartiers)} quartier(s) · {len(self.telcos)} telco(s) — "
+            "le classeur n'a pas ete modifie"
         )
 
     # -- Interne ------------------------------------------------------------

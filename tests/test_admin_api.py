@@ -205,6 +205,11 @@ class TestUSB5Referentiels:
         self, client: httpx.AsyncClient
     ) -> None:
         entetes = await _session_complete(client)
+        # Surcouche vierge : les autres tests y ajoutent des villes, et ce
+        # test verifie les comptes EXACTS du classeur (CR-01).
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
         reponse = await client.get("/admin/referentiels/geographie", headers=entetes)
         assert reponse.status_code == 200
         arbre = reponse.json()["pays"]
@@ -1443,3 +1448,177 @@ class TestLotEPurge:
             assert reponse.status_code == 409
         finally:
             await database.get_database().drop_collection("loader_runs")
+
+
+@pytest.fixture(autouse=True)
+def _config_service_double(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """AUCUN test d'API ne parle au VRAI config-service : les fabriques du
+    routeur sont doublees par defaut. Le double enregistre chaque geste —
+    l'unicite dans les deux sens est verifiable sur ses traces."""
+    from app.routes import admin_referentiels
+
+    traces: dict[str, Any] = {"crees": [], "rattaches": [], "villes": [], "echec": None}
+
+    class _Lecture:
+        async def lister_pays(self):  # type: ignore[no-untyped-def]
+            return [
+                {"_id": f"cfg-{code}", "iso_name": code}
+                for code in ("CM", "CI", "BF", "SN")
+            ]
+
+        async def fermer(self):  # type: ignore[no-untyped-def]
+            return None
+
+    class _Admin:
+        async def ajouter_ville(self, country_id, ville):  # type: ignore[no-untyped-def]
+            if traces["echec"]:
+                raise RuntimeError(traces["echec"])
+            traces["villes"].append((country_id, ville))
+            return {"_id": country_id, "cities": [ville]}
+
+        async def creer_telco_si_absent(self, nom, phone_regex):  # type: ignore[no-untyped-def]
+            if traces["echec"]:
+                raise RuntimeError(traces["echec"])
+            traces["crees"].append(nom)
+            return {"_id": f"tl-{nom}", "name": nom}, True
+
+        async def rattacher_telco_au_pays(self, country_id, telco_id):  # type: ignore[no-untyped-def]
+            traces["rattaches"].append((country_id, telco_id))
+            return {"_id": country_id}
+
+        async def fermer(self):  # type: ignore[no-untyped-def]
+            return None
+
+    monkeypatch.setattr(admin_referentiels, "_config_admin", lambda: _Admin())
+    monkeypatch.setattr(admin_referentiels, "_config_lecture", lambda: _Lecture())
+    return traces
+
+
+class TestUSB7AjoutDeTelco:
+    """`US-B7` — l'ALLER COMPLET : la surcouche locale PUIS config-service
+    (creation + rattachement au pays), et les quatre invariants."""
+
+    VALIDE: ClassVar[dict[str, Any]] = {
+        "pays": "CM",
+        "network_name": "Nexttel CM",
+        "short_name": "Nexttel",
+        "regex_msisdn": r"^237(66\d{7})$",
+        "part_marche": 6.0,
+        "exemple_msisdn": "237661234567",
+    }
+
+    async def _preparer(self, client: httpx.AsyncClient) -> dict[str, str]:
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        return entetes
+
+    async def test_l_ajout_enregistre_CHEZ_NOUS_puis_ENVOIE_la_bas(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        entetes = await self._preparer(client)
+        reponse = await client.post(
+            "/admin/referentiels/telcos", json=self.VALIDE, headers=entetes
+        )
+        assert reponse.status_code == 201, reponse.text
+        corps = reponse.json()
+        assert corps["telco"]["id"].startswith("SC-CM-TL-")
+        assert corps["config_service"]["statut"] == "envoye"
+        assert _config_service_double["crees"] == ["Nexttel CM"], (
+            "le telco est CREE sur config-service (GET-avant-POST du client)"
+        )
+        assert _config_service_double["rattaches"] == [("cfg-CM", "tl-Nexttel CM")], (
+            "PUIS rattache au pays — un telco non rattache n'appartient a personne"
+        )
+        # Et il participe au referentiel fusionne, avec la somme du marche.
+        assert corps["somme_parts_du_pays"] == 98.0  # 92 + 6
+        telcos = (
+            await client.get("/admin/referentiels/telcos", headers=entetes)
+        ).json()["telcos"]["CM"]
+        assert any(t["nom"] == "Nexttel CM" for t in telcos)
+
+    async def test_la_somme_des_parts_ne_depasse_JAMAIS_100(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """INV-18 etendu a l'ecriture : CM porte deja 92 % — ajouter 9 %
+        ferait 101, un marche qui n'existe pas."""
+        entetes = await self._preparer(client)
+        reponse = await client.post(
+            "/admin/referentiels/telcos",
+            json={**self.VALIDE, "part_marche": 9.0},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "101.0" in reponse.json()["detail"]
+
+    async def test_le_plan_doit_etre_UTILISABLE_pas_seulement_present(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await self._preparer(client)
+        incompilable = await client.post(
+            "/admin/referentiels/telcos",
+            json={**self.VALIDE, "regex_msisdn": "^23766[\\d{7}$"},
+            headers=entetes,
+        )
+        assert incompilable.status_code == 422
+        assert "incompilable" in incompilable.json()["detail"]
+
+        exemple_faux = await client.post(
+            "/admin/referentiels/telcos",
+            json={**self.VALIDE, "exemple_msisdn": "699999999"},
+            headers=entetes,
+        )
+        assert exemple_faux.status_code == 422
+        assert "preuve" in exemple_faux.json()["detail"]
+
+    async def test_le_doublon_est_refuse_AVANT_toute_ecriture(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """L'unicite COTE LOADER : MTN CM existe au classeur — le refus tombe
+        avant la surcouche ET avant tout envoi serveur."""
+        entetes = await self._preparer(client)
+        reponse = await client.post(
+            "/admin/referentiels/telcos",
+            json={**self.VALIDE, "network_name": "MTN CM", "short_name": "MTN2"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "existe deja" in reponse.json()["detail"]
+        assert _config_service_double["crees"] == [], "AUCUN envoi n'est parti"
+
+    async def test_un_echec_d_envoi_laisse_le_LOCAL_et_le_DIT(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """Jamais silencieux : l'ajout local reste (notre trace d'abord), et
+        le rapport porte l'echec d'envoi pour le rejouer plus tard."""
+        _config_service_double["echec"] = "config-service indisponible"
+        entetes = await self._preparer(client)
+        reponse = await client.post(
+            "/admin/referentiels/telcos", json=self.VALIDE, headers=entetes
+        )
+        assert reponse.status_code == 201, reponse.text
+        corps = reponse.json()
+        assert "echec" in corps["config_service"]["statut"]
+        assert "RuntimeError" in corps["config_service"]["motif"]
+        assert corps["telco"]["nom"] == "Nexttel CM", "le LOCAL est en place"
+
+    async def test_la_ville_aussi_fait_l_aller_complet(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """US-B4 etendu : la ville part aussi vers config-service — et SEULE
+        la ville : region et quartier restent chez nous (le serveur n'a aucun
+        champ pour eux, son `region` est continentale)."""
+        entetes = await self._preparer(client)
+        regions = (
+            await client.get("/admin/referentiels/geographie", headers=entetes)
+        ).json()["pays"]
+        region_cm = next(p for p in regions if p["pays"] == "CM")["regions"][0]["id"]
+        reponse = await client.post(
+            "/admin/referentiels/villes",
+            json={"region_id": region_cm, "nom": "Bafia"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 201, reponse.text
+        assert reponse.json()["config_service"]["statut"] == "envoye"
+        assert _config_service_double["villes"] == [("cfg-CM", "Bafia")]

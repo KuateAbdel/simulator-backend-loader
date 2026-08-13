@@ -370,6 +370,41 @@ class AdministrationConfigService:
         )
         return (reponse.data if isinstance(reponse.data, dict) else {}), True
 
+    async def rattacher_telco_au_pays(
+        self, country_id: str, telco_id: str
+    ) -> dict[str, Any]:
+        """Ajoute un operateur a `Country.telcos[]` — par relecture integrale.
+
+        MEME patron que `ajouter_ville` et pour la meme raison (`ANO-CFG-DUP`,
+        `ANO-CFG-ASYM-08`) : `UpdateCountrySchema` exige les 9 champs, et la
+        conversion objets -> identifiants est faite ici. Un telco cree mais
+        non rattache n'appartient a aucun pays — les deux gestes vont
+        ensemble (`US-B7`).
+        """
+        reponse = await self._client.get(f"/api/v1/countries/{country_id}")
+        fiche = reponse.data if isinstance(reponse.data, dict) else {}
+        if not fiche:
+            raise ValueError(f"pays {country_id} introuvable — rien n'est ecrit")
+
+        telcos = _identifiants(fiche.get("telcos"))
+        if str(telco_id) in telcos:
+            return fiche
+        telcos.append(str(telco_id))
+
+        corps = {
+            "name_en": fiche.get("name_en", ""),
+            "name_fr": fiche.get("name_fr", ""),
+            "iso_name": fiche.get("iso_name", ""),
+            "dial_code": fiche.get("dial_code", ""),
+            "region": fiche.get("region", ""),
+            "continent": fiche.get("continent", ""),
+            "cities": [str(v) for v in (fiche.get("cities") or [])],
+            "currencies": _identifiants(fiche.get("currencies")),
+            "telcos": telcos,
+        }
+        maj = await self._client.requete("PUT", f"/api/v1/countries/{country_id}", json_body=corps)
+        return maj.data if isinstance(maj.data, dict) else {}
+
     async def ajouter_ville(self, country_id: str, ville: str) -> dict[str, Any]:
         """Ajoute une ville a `Country.cities[]` — **par relecture integrale**.
 

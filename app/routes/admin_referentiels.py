@@ -52,6 +52,64 @@ def _statique() -> ReferentielStatique:
     return charger_statique()
 
 
+def _config_admin() -> Any:
+    """Fabrique du client d'administration config-service — doublee en test."""
+    from app.clients.config_service import AdministrationConfigService
+
+    return AdministrationConfigService()
+
+
+def _config_lecture() -> Any:
+    from app.clients.config_service import ConfigServiceClient
+
+    return ConfigServiceClient()
+
+
+async def _country_id(pays: str) -> str:
+    """Le country_id de config-service pour un code ISO — resolu, jamais code
+    en dur : les identifiants appartiennent au serveur."""
+    lecture = _config_lecture()
+    try:
+        for fiche in await lecture.lister_pays():
+            if str(fiche.get("iso_name", "")).strip().upper() == pays.upper():
+                identifiant = fiche.get("_id") or fiche.get("id")
+                if identifiant:
+                    return str(identifiant)
+    finally:
+        await lecture.fermer()
+    raise ValueError(f"pays {pays!r} introuvable sur config-service")
+
+
+async def _envoyer_config_service(action: str, cible_locale: str, operation: Any) -> dict[str, Any]:
+    """L'ALLER COMPLET (13/08, Yaniv) : enregistre chez nous PUIS envoye a
+    config-service. L'ordre est le write-ahead : notre trace d'abord. Un echec
+    d'envoi laisse l'ajout LOCAL en place et se DIT — jamais silencieux, et
+    l'intention journalisee sous RUN_ADMIN garde la trace des deux issues."""
+    from uuid import NAMESPACE_OID, uuid5
+
+    from app.repositories.audit_trail import AuditTrailRepository
+    from app.routes.admin_entites import RUN_ADMIN
+
+    audit = AuditTrailRepository()
+    try:
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="ConfigService",
+            entity_id=uuid5(NAMESPACE_OID, f"{action}:{cible_locale}"),
+            operation="UPDATE",
+            cible="config-service",
+            payload={"action": action, "cible": cible_locale},
+        ) as suivi:
+            fiche = await operation()
+            suivi.reussi({"resultat": "envoye"})
+        return {"statut": "envoye", "fiche_pays": bool(fiche)}
+    except Exception as erreur:
+        return {
+            "statut": "echec — l'ajout LOCAL reste en place, renvoyer plus tard",
+            "motif": f"{type(erreur).__name__}: {str(erreur)[:160]}",
+        }
+
+
 @router.get("/geographie")
 async def geographie(
     _: Annotated[SessionAdmin, Depends(admin_complet)],
@@ -150,10 +208,25 @@ async def ajouter_ville(
 
     meta = await depot.enregistrer(surcouche, par=session.email)
 
+    # L'ALLER COMPLET (13/08) : chez nous PUIS chez eux. Seule la VILLE part —
+    # region et quartier restent chez nous, config-service n'a aucun champ
+    # pour eux (son `region` est la region CONTINENTALE).
+    admin = _config_admin()
+    try:
+        pays_cible = ville.country_iso2
+
+        async def _envoi() -> Any:
+            return await admin.ajouter_ville(await _country_id(pays_cible), ville.name)
+
+        envoi = await _envoyer_config_service("ajouter_ville", ville.name, _envoi)
+    finally:
+        await admin.fermer()
+
     # RELECTURE — CFG-06 : ce qui est rendu vient de la BASE, pas de la demande.
     relue, _ = await depot.charger()
     fiche = relue.villes[ville.city_id]
     return {
+        "config_service": envoi,
         "ville": {
             "id": fiche.city_id,
             "nom": fiche.name,
@@ -184,9 +257,10 @@ async def ajouter_ville(
 async def telcos(
     _: Annotated[SessionAdmin, Depends(admin_complet)],
 ) -> dict[str, Any]:
-    """Les operateurs reels, leurs regex de numerotation et leurs parts de
-    marche (`EF-27`, `INV-18`)."""
-    referentiel = _geo()
+    """Les operateurs reels + ceux de la surcouche (US-B7), leurs regex et
+    leurs parts de marche (`EF-27`, `INV-18`)."""
+    surcouche, _meta = await SurcoucheRepository().charger()
+    referentiel = surcouche.appliquer(_geo())
     par_pays: dict[str, list[dict[str, Any]]] = {}
     for pays in sorted({r.country_iso2 for r in referentiel.regions.values()}):
         par_pays[pays] = [
@@ -199,6 +273,90 @@ async def telcos(
             for t in referentiel.telcos_du_pays(pays)
         ]
     return {"telcos": par_pays}
+
+
+class TelcoDemande(BaseModel):
+    """`US-B7` — l'ajout d'operateur. `exemple_msisdn` est la PREUVE
+    d'utilisabilite, exigee de celui qui ajoute."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pays: str = Field(min_length=2, max_length=2)
+    network_name: str = Field(min_length=2, max_length=60)
+    short_name: str = Field(min_length=2, max_length=30)
+    regex_msisdn: str = Field(min_length=4, max_length=200)
+    part_marche: float = Field(gt=0, le=100)
+    exemple_msisdn: str = Field(min_length=6, max_length=20)
+    ussd_base_code: str = Field(default="", max_length=20)
+
+
+@router.post("/telcos", status_code=201)
+async def ajouter_telco(
+    demande: TelcoDemande,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`US-B7` — l'ajout d'un operateur, sans toucher au classeur.
+
+    Les invariants vivent dans la surcouche (le meme code que le run) :
+    regex compilable ET composable, exemple conforme exige, unicite dans le
+    pays, et la SOMME des parts <= 100 (INV-18 etendu a l'ecriture). Verrou
+    EF-55, relecture depuis la base — le rite habituel.
+    """
+    await refuser_si_run_en_cours()
+
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    try:
+        telco = surcouche.ajouter_telco(
+            _geo(),
+            pays=demande.pays,
+            network_name=demande.network_name,
+            short_name=demande.short_name,
+            regex_msisdn=demande.regex_msisdn,
+            part_marche=demande.part_marche,
+            exemple_msisdn=demande.exemple_msisdn,
+            ussd_base_code=demande.ussd_base_code,
+        )
+    except AjoutRefuse as refus:
+        raise HTTPException(status_code=422, detail=str(refus)) from refus
+
+    meta = await depot.enregistrer(surcouche, par=session.email)
+
+    # L'ALLER COMPLET (13/08) : le telco est CREE sur config-service (regex
+    # ancre exige par le client) PUIS rattache au pays — un telco cree mais
+    # non rattache n'appartient a aucun pays, les deux gestes vont ensemble.
+    admin = _config_admin()
+    try:
+        async def _envoi() -> Any:
+            fiche_telco, _creee = await admin.creer_telco_si_absent(
+                telco.network_name, telco.regex_msisdn
+            )
+            identifiant = fiche_telco.get("_id") or fiche_telco.get("id")
+            return await admin.rattacher_telco_au_pays(
+                await _country_id(telco.country_iso2), str(identifiant)
+            )
+
+        envoi = await _envoyer_config_service("ajouter_telco", telco.network_name, _envoi)
+    finally:
+        await admin.fermer()
+
+    relue, _ = await depot.charger()
+    fiche = relue.telcos[telco.telco_id]
+    fusion = relue.appliquer(_geo())
+    somme = sum(t.part_marche for t in fusion.telcos_du_pays(demande.pays.upper()))
+    return {
+        "config_service": envoi,
+        "telco": {
+            "id": fiche.telco_id,
+            "nom": fiche.network_name,
+            "code": fiche.short_name,
+            "regex_msisdn": fiche.regex_msisdn,
+            "part_marche": fiche.part_marche,
+            "pays": fiche.country_iso2,
+        },
+        "somme_parts_du_pays": somme,
+        "surcouche": {"resume": relue.resume(), "version": meta["version"]},
+    }
 
 
 @router.get("/catalogue-statique")

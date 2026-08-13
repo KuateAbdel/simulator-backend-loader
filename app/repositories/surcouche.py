@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.database import COLLECTION_LOADER_CONFIGURATION, get_collection
-from app.services.geographie import City, District, Region
+from app.services.geographie import City, District, Region, Telco
 from app.services.surcouche_referentiel import SurcoucheReferentiel
 
 _ID_SINGLETON = "surcouche"
@@ -54,6 +54,7 @@ class SurcoucheRepository:
             quartiers={
                 i: District(**q) for i, q in (document.get("quartiers") or {}).items()
             },
+            telcos={i: Telco(**t) for i, t in (document.get("telcos") or {}).items()},
             journal=list(document.get("journal") or []),
         )
         return surcouche, {
@@ -73,6 +74,7 @@ class SurcoucheRepository:
                     "regions": {i: asdict(r) for i, r in surcouche.regions.items()},
                     "villes": {i: asdict(v) for i, v in surcouche.villes.items()},
                     "quartiers": {i: asdict(q) for i, q in surcouche.quartiers.items()},
+                    "telcos": {i: asdict(t) for i, t in surcouche.telcos.items()},
                     "journal": list(surcouche.journal),
                     "modifie_par": par,
                     "modifie_le": maintenant,
