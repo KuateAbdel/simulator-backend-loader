@@ -41,6 +41,7 @@ from app.services.clients_execution import (
     ORDRE_SOUSCRIPTION,
     PANIER_PAR_SEGMENT,
     SEGMENTS_ANNEXE_E,
+    SEUIL_MOBILE_MONEY_FCFA,
     SOLDE_INITIAL_MAX,
     SOLDE_INITIAL_MIN,
     ExecuteurClients,
@@ -418,53 +419,110 @@ def _executeur(
 
 
 # ---------------------------------------------------------------------------
-# solde_initial — arbitrage A-09, recommandation appliquee
+# solde_initial — A-09 FERME (SD-5) : le modele de revenu par profession
 # ---------------------------------------------------------------------------
 
 
 class TestSoldeInitial:
-    def test_un_client_dormant_tombe_dans_la_strate_la_plus_basse(self) -> None:
-        """Aucun signal d'activite -> la premiere bande de l'Annexe E."""
-        largeur = (SOLDE_INITIAL_MAX - SOLDE_INITIAL_MIN) / (len(CLES_QUICK_WIN_BINAIRES) + 1)
-        solde = solde_initial(_tirage(quick_win={}))
-        assert SOLDE_INITIAL_MIN <= solde < SOLDE_INITIAL_MIN + largeur
+    """`SD-5` — profession -> profil de revenu -> LogNormal(mu, sigma), borne.
 
-    def test_un_client_au_profil_complet_tombe_dans_la_strate_la_plus_haute(self) -> None:
-        largeur = (SOLDE_INITIAL_MAX - SOLDE_INITIAL_MIN) / (len(CLES_QUICK_WIN_BINAIRES) + 1)
-        solde = solde_initial(_tirage(quick_win=dict.fromkeys(CLES_QUICK_WIN_BINAIRES, 1)))
-        assert SOLDE_INITIAL_MAX - largeur <= solde <= SOLDE_INITIAL_MAX
+    L'HEURISTIQUE REMPLACEE : neuf signaux `quick_win` -> dix strates -> une
+    position hachee. Elle mesurait l'EQUIPEMENT (smartphone, data), pas le
+    REVENU. Le modele de JJB attache chaque profession a un profil de revenu
+    documente — « un patrimoine coherent avec son profil socio-economique »
+    devient litteral, et `A-09` se ferme.
 
-    def test_deux_clients_de_MEME_profil_n_ont_pas_le_MEME_solde(self) -> None:
-        """DEFAUT TROUVE PAR LES TESTS DE LA SOURCE INTERNE : la premiere version
-        comptait neuf booleens, donc DIX montants possibles — 2000 clients
-        auraient partage dix soldes. Le graphique plat, sur l'axe des montants.
-        La strate vient du profil ; la position DANS la strate vient d'une
-        empreinte stable du `client_id`."""
-        profil = {"IS_RGS_1": 1, "IS_SMARTPHONE_USER": 1}
-        soldes = {solde_initial(_tirage(seed=s, quick_win=profil)) for s in range(50)}
-        assert len(soldes) == 50, "chaque client a son propre solde au centime"
+    Deux professions-temoins, verifiees dans `test_referentiel_statique` :
+    « Public hospital doctor » est `bank_stable` (mu 12,15 — mediane 189 094),
+    « Traditional healer » est `micro_informal` (mu 11,65 — mediane 114 691).
+    """
 
     def test_le_solde_est_DETERMINISTE(self) -> None:
-        """`ENF-15`, et « sans invention arbitraire de montants » : le meme
-        client rend le meme solde, toujours."""
-        client = _tirage(quick_win={"IS_RGS_1": 1, "IS_SMARTPHONE_USER": 1})
-        assert solde_initial(client) == solde_initial(client)
+        """`ENF-15` : le meme client, le meme metier -> le meme solde au
+        centime, a chaque appel, sur chaque machine."""
+        a = solde_initial("CM-IND-42", "Public hospital doctor", STATIQUE)
+        b = solde_initial("CM-IND-42", "Public hospital doctor", STATIQUE)
+        assert a == b
 
-    def test_le_solde_croit_avec_le_profil(self) -> None:
-        """Un client plus actif a un patrimoine plus solide — les mots du CDC.
-        Compare a `client_id` CONSTANT pour isoler l'effet du profil de celui de
-        l'empreinte."""
-        soldes = [
-            solde_initial(_tirage(seed=1, quick_win=dict.fromkeys(CLES_QUICK_WIN_BINAIRES[:n], 1)))
-            for n in range(len(CLES_QUICK_WIN_BINAIRES) + 1)
-        ]
-        assert soldes == sorted(soldes)
-        assert len(set(soldes)) == len(soldes), "chaque signal supplementaire compte"
+    def test_ANCRE_au_client_la_signature_ne_connait_PAS_le_run(self) -> None:
+        """`CR-03` par construction : la fonction ne recoit ni `run_id` ni
+        graine de run — elle NE PEUT PAS en dependre. Deux clients distincts,
+        eux, different."""
+        assert solde_initial(
+            "CM-IND-1", "Traditional healer", STATIQUE
+        ) != solde_initial("CM-IND-2", "Traditional healer", STATIQUE)
 
-    def test_le_solde_reste_toujours_dans_les_strates_de_l_annexe_E(self) -> None:
-        for n in range(len(CLES_QUICK_WIN_BINAIRES) + 1):
-            solde = solde_initial(_tirage(quick_win=dict.fromkeys(CLES_QUICK_WIN_BINAIRES[:n], 1)))
+    def test_les_bornes_de_l_annexe_E_TIENNENT_meme_en_queue_lognormale(self) -> None:
+        """sigma 0,70 (`agri_seasonal`) produit des queues en millions ; le CDC
+        borne, donc on borne — [5 000, 1 000 000], bornes incluses, sur 2000
+        tirages du profil le plus disperse."""
+        for rang in range(2000):
+            solde = solde_initial(f"CM-AGRI-{rang}", "Cocoa farmer", STATIQUE)
             assert SOLDE_INITIAL_MIN <= solde <= SOLDE_INITIAL_MAX
+
+    def test_les_bornes_ECRETENT_reellement_deux_clients_temoins(self) -> None:
+        """Trouve par MUTATION le 13/08 : retirer l'ecretage ne faisait tomber
+        AUCUN test — sur 2000 tirages, aucune queue ne depassait les bornes par
+        hasard. Un garde-fou que rien n'exerce n'est pas un garde-fou.
+
+        Deux clients-temoins, trouves par recherche dans l'espace des ancres :
+        le tirage BRUT de `CM-AGRI-2904` vaut 1 301 591 FCFA (> MAX), celui de
+        `CM-AGRI-55219` vaut 4 161 FCFA (< MIN). L'ecretage doit les ramener
+        EXACTEMENT aux bornes de l'Annexe E."""
+        assert solde_initial("CM-AGRI-2904", "Cocoa farmer", STATIQUE) == SOLDE_INITIAL_MAX
+        assert solde_initial("CM-AGRI-55219", "Cocoa farmer", STATIQUE) == SOLDE_INITIAL_MIN
+
+    def test_chaque_client_a_SON_solde(self) -> None:
+        """Le defaut historique de l'heuristique — dix paliers partages — ne
+        doit pas revenir : 500 clients du MEME metier, 500 soldes distincts."""
+        soldes = {
+            solde_initial(f"CM-IND-{r}", "Traditional healer", STATIQUE)
+            for r in range(500)
+        }
+        assert len(soldes) == 500
+
+    def test_la_MEDIANE_du_modele_est_respectee(self) -> None:
+        """La mediane d'une LogNormal(mu, sigma) est e^mu — 189 094 FCFA pour
+        `bank_stable`. Si la mesure s'en ecarte, le modele n'est pas celui que
+        le fichier documente. Tolerance : 5 % sur 1000 clients figes."""
+        soldes = sorted(
+            solde_initial(f"CM-IND-{r}", "Public hospital doctor", STATIQUE)
+            for r in range(1000)
+        )
+        mediane = (soldes[499] + soldes[500]) / 2
+        assert abs(mediane - 189_094) / 189_094 < 0.05, f"mediane {mediane:.0f}"
+
+    def test_un_medecin_est_mieux_dote_qu_un_guerisseur(self) -> None:
+        """La hierarchie des profils doit etre VISIBLE dans les montants — en
+        mediane, jamais client par client : une distribution qui ne chevauche
+        pas ne serait pas lognormale."""
+        docteurs = sorted(
+            solde_initial(f"a-{r}", "Public hospital doctor", STATIQUE)
+            for r in range(500)
+        )
+        guerisseurs = sorted(
+            solde_initial(f"a-{r}", "Traditional healer", STATIQUE)
+            for r in range(500)
+        )
+        assert docteurs[250] > guerisseurs[250]
+
+    def test_EF_68_le_seuil_de_150_000_partage_VRAIMENT_la_population(self) -> None:
+        """`EF-68` pese `MOB_MONEY_ACCOUNT_AMOUNT` au seuil de 150 000 FCFA. Un
+        modele qui mettrait tout le monde du meme cote rendrait la regle morte.
+        Sens attendu : majorite d'un salaire stable AU-DESSUS, majorite d'un
+        revenu agricole saisonnier EN DESSOUS."""
+        stables = [
+            solde_initial(f"b-{r}", "Public hospital doctor", STATIQUE)
+            for r in range(500)
+        ]
+        agricoles = [
+            solde_initial(f"b-{r}", "Cocoa farmer", STATIQUE) for r in range(500)
+        ]
+        part_stables = sum(s >= SEUIL_MOBILE_MONEY_FCFA for s in stables) / 500
+        part_agricoles = sum(s >= SEUIL_MOBILE_MONEY_FCFA for s in agricoles) / 500
+        assert part_stables > 0.5, f"salaries au-dessus du seuil : {part_stables:.0%}"
+        assert part_agricoles < 0.5, f"agricoles au-dessus du seuil : {part_agricoles:.0%}"
+        assert part_agricoles > 0.0, "un cote entierement vide rendrait EF-68 mort"
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +532,7 @@ class TestSoldeInitial:
 
 class TestQuotaPays:
     def test_les_cibles_decoulent_du_cdc(self) -> None:
-        quota = QuotaPays(pays="CM", cible=500)
+        quota = QuotaPays(pays="CM", cible=500, statique=STATIQUE)
         assert quota.cible_corporate == 100  # EF-23 : 20 %
         assert quota.cible_individual == 400
         assert quota.cible_femmes == 333  # EF-22 : 2 femmes / 1 homme
@@ -485,14 +543,14 @@ class TestQuotaPays:
         """LE defaut mesure en deux passes : verifier sans compter laissait
         vingt arbitrages passer le meme controle. `Corp 101/100`,
         `Femmes 311/333`, `<25ans 320/300` — tous la meme cause."""
-        quota = QuotaPays(pays="CM", cible=25)
+        quota = QuotaPays(pays="CM", cible=25, statique=STATIQUE)
         reservation = quota.reserver(_tirage(genre="WOMAN", business=True))
         assert reservation is not None
         assert quota.femmes == 1, "compte immediatement, pas apres l'ecriture"
         assert quota.corporate_faits == 1
 
     def test_la_categorie_saturee_rejette(self) -> None:
-        quota = QuotaPays(pays="CM", cible=25)  # corp cible = 5
+        quota = QuotaPays(pays="CM", cible=25, statique=STATIQUE)  # corp cible = 5
         for seed in range(5):
             assert quota.reserver(_tirage(genre="MAN", business=True, seed=seed)) is not None
         assert quota.reserver(_tirage(genre="MAN", business=True, seed=99)) is None
@@ -502,7 +560,7 @@ class TestQuotaPays:
         # cible 6 -> corp 1, individual 5, femmes 4, hommes 2. Quatre femmes
         # passent en INDIVIDUAL (4 < 5) ; la cinquieme est rejetee par le GENRE,
         # pas par la categorie — c'est precisement ce que le test doit isoler.
-        quota = QuotaPays(pays="CM", cible=6)
+        quota = QuotaPays(pays="CM", cible=6, statique=STATIQUE)
         for seed in range(1, 5):
             assert quota.reserver(_tirage(genre="WOMAN", seed=seed)) is not None
         assert quota.reserver(_tirage(genre="WOMAN", seed=5)) is None, "femmes saturees"
@@ -526,7 +584,7 @@ class TestQuotaPays:
         La suite de Bresenham rend exactement `cible_jeunes` positifs sur `cible`
         rangs, repartis.
         """
-        quota = QuotaPays(pays="CM", cible=100)  # jeunes 60, corp 20, femmes 67
+        quota = QuotaPays(pays="CM", cible=100, statique=STATIQUE)  # jeunes 60, corp 20, femmes 67
         jeunes = [
             r.jeune
             for seed in range(200)
@@ -558,7 +616,7 @@ class TestQuotaPays:
 
     def test_l_agriculture_est_servie_en_premier_puis_les_trois_autres_familles(self) -> None:
         """`EF-24` : 20 % agricole, le reste en transports/commerce/services."""
-        quota = QuotaPays(pays="CM", cible=25)  # corp 5, agri 1
+        quota = QuotaPays(pays="CM", cible=25, statique=STATIQUE)  # corp 5, agri 1
         secteurs = [
             r.secteur
             for seed in range(5)
@@ -569,21 +627,21 @@ class TestQuotaPays:
         assert all(s in ("TRANSPORTS", "COMMERCE", "SERVICES") for s in secteurs[1:])
 
     def test_un_individual_n_a_pas_de_secteur(self) -> None:
-        quota = QuotaPays(pays="CM", cible=25)
+        quota = QuotaPays(pays="CM", cible=25, statique=STATIQUE)
         reservation = quota.reserver(_tirage(genre="WOMAN", business=False))
         assert reservation is not None and reservation.secteur == ""
 
     def test_rendre_defait_la_reservation_EN_ENTIER(self) -> None:
         """Un client qui echoue ne compte pas — sinon la cible se remplit de
         clients inexistants et le rapport ment sur la distribution."""
-        quota = QuotaPays(pays="CM", cible=25)
+        quota = QuotaPays(pays="CM", cible=25, statique=STATIQUE)
         reservation = quota.reserver(_tirage(genre="WOMAN", business=True))
         assert reservation is not None
         quota.rendre(reservation)
         assert (quota.faits, quota.femmes, quota.jeunes, quota.agricoles) == (0, 0, 0, 0)
 
     def test_la_reservation_est_immuable(self) -> None:
-        quota = QuotaPays(pays="CM", cible=25)
+        quota = QuotaPays(pays="CM", cible=25, statique=STATIQUE)
         reservation = quota.reserver(_tirage(genre="WOMAN"))
         assert reservation is not None
         with pytest.raises(AttributeError):
@@ -1454,8 +1512,9 @@ class TestSegmentA02:
     quinze. Nos 2000 clients viennent de la famille A, qui n'en porte aucun.
 
     Le Loader emettait donc `ANY` pour les 2000 — legitime, mais cela aplatit un
-    axe de six valeurs. La strate vient desormais des onze signaux `quick_win`
-    que la famille A porte vraiment : LA MEME que `solde_initial()`.
+    axe de six valeurs. La strate vient des onze signaux `quick_win` que la
+    famille A porte vraiment — l'axe de l'USAGE, distinct depuis `SD-5` de
+    l'axe du REVENU qui fixe le solde initial.
     """
 
     def _faker(self, signaux: int, rang: int = 1) -> Any:
@@ -1471,17 +1530,19 @@ class TestSegmentA02:
             },
         )
 
-    def test_le_segment_est_MONOTONE_avec_le_solde(self) -> None:
-        """LA propriete qui fait de ce choix une seule decision et non deux :
-        un client mieux dote ne peut pas tomber dans un segment plus bas."""
-        precedent_seg, precedent_solde = -1, -1.0
+    def test_le_segment_est_MONOTONE_avec_les_signaux(self) -> None:
+        """Un client plus actif ne peut pas tomber dans un segment plus bas.
+
+        Jusqu'a `SD-5` ce test verifiait aussi la monotonie du SOLDE sur les
+        memes signaux — propriete retiree A DESSEIN : le solde derive desormais
+        du metier (profil de revenu), plus de l'equipement. Les deux axes sont
+        distincts, et c'est documente dans `segment_client()`."""
+        precedent_seg = -1
         for signaux in range(len(CLES_QUICK_WIN_BINAIRES) + 1):
             faker = self._faker(signaux, signaux + 1)
             rang = SEGMENTS_ANNEXE_E.index(segment_client(faker))
-            solde = solde_initial(faker)
             assert rang >= precedent_seg, f"{signaux} signaux : segment en recul"
-            assert solde > precedent_solde, f"{signaux} signaux : solde en recul"
-            precedent_seg, precedent_solde = rang, solde
+            precedent_seg = rang
 
     def test_les_cinq_strates_de_l_annexe_E_sont_toutes_atteignables(self) -> None:
         atteints = {
@@ -1651,7 +1712,7 @@ class TestProfilComportementalEF67:
         poids du CDC sont des entiers dont la somme fait 100, mais arrondir
         chacun separement peut perdre une unite."""
         for cible in (1, 7, 100, 333, 500, 1000, 2000):
-            quota = QuotaPays(pays="CM", cible=cible)
+            quota = QuotaPays(pays="CM", cible=cible, statique=STATIQUE)
             assert sum(quota.cible_profils.values()) == cible, cible
 
     async def test_CR_09_la_distribution_est_EXACTE(self) -> None:
@@ -1709,12 +1770,12 @@ class TestProfilComportementalEF67:
         """`CR-03` — sinon une reprise changerait le profil du meme client, et
         `CR-09` mesurerait une distribution differente a chaque run."""
         tirage = _tirage("CM", seed=7)
-        a = QuotaPays(pays="CM", cible=1000, reference_age=date(2026, 8, 12))
-        b = QuotaPays(pays="CM", cible=1000, reference_age=date(2026, 8, 12))
+        a = QuotaPays(pays="CM", cible=1000, statique=STATIQUE, reference_age=date(2026, 8, 12))
+        b = QuotaPays(pays="CM", cible=1000, statique=STATIQUE, reference_age=date(2026, 8, 12))
         assert a.reserver(tirage).profil == b.reserver(tirage).profil  # type: ignore[union-attr]
 
     def test_aucun_profil_hors_des_quatre_valeurs_officielles(self) -> None:
-        quota = QuotaPays(pays="CM", cible=200)
+        quota = QuotaPays(pays="CM", cible=200, statique=STATIQUE)
         for seed in range(400):
             r = quota.reserver(_tirage(genre="WOMAN" if seed % 3 else "MAN", seed=seed))
             if r is not None:
@@ -1723,7 +1784,7 @@ class TestProfilComportementalEF67:
     def test_rendre_defait_AUSSI_le_profil(self) -> None:
         """Sans cela, un client echoue laisserait son profil compte, et `CR-09`
         annoncerait une distribution que la base ne porte pas."""
-        quota = QuotaPays(pays="CM", cible=100)
+        quota = QuotaPays(pays="CM", cible=100, statique=STATIQUE)
         reservation = quota.reserver(_tirage("CM", seed=1))
         assert reservation is not None
         avant = dict(quota.profils_faits)
@@ -1753,7 +1814,7 @@ class TestProfilComportementalEF67:
     @staticmethod
     def _capturer(_rapport: Any) -> list[tuple[bool, bool, str]]:
         """Rejoue les reservations pour lire genre / age / profil ensemble."""
-        quota = QuotaPays(pays="CM", cible=1000, reference_age=date(2026, 8, 12))
+        quota = QuotaPays(pays="CM", cible=1000, statique=STATIQUE, reference_age=date(2026, 8, 12))
         vus = []
         for seed in range(3000):
             if quota.faits >= quota.cible:
@@ -1864,4 +1925,97 @@ class TestOccupationsCableesSD3:
         assert len(portes) == rapport.quotas[0].cible_agricoles, (
             f"{len(portes)} CORPORATE portent un metier agricole pour un quota "
             f"de {rapport.quotas[0].cible_agricoles} — EF-24 n'est plus visible"
+        )
+
+
+class TestSoldeCableSD5:
+    """`SD-5` au niveau de l'EXECUTEUR — le cablage du solde, pas la fonction.
+
+    Meme lecon que `SD-3` : une garantie testee sur la fonction et non sur son
+    appel n'est pas une garantie. Le solde est calcule a DEUX endroits — le
+    rapport a blanc dans `_creer` (via `reservation.occupation`) et le depot
+    reel dans `_doter` (via `compose.identite.occupation`). Ces trois tests
+    verrouillent : leur egalite (`D-01`), l'ancrage au client (`CR-03`), et le
+    lien metier -> montant (le coeur du lot).
+    """
+
+    async def test_D_01_le_DRY_RUN_annonce_EXACTEMENT_ce_que_le_REAL_depose(
+        self,
+    ) -> None:
+        """« La derniere occasion de dire non » n'en est une que si le rapport a
+        blanc dit VRAI. Meme perimetre : la somme annoncee a blanc doit egaler
+        la somme des montants REELLEMENT demandes en credit — au centime.
+
+        Ce test attrape toute divergence entre les deux chemins de calcul :
+        une occupation lue differemment, un arrondi different, un ancrage
+        different."""
+        rapport_blanc = await _executeur(
+            mode=RunMode.DRY_RUN, nb_clients=200, pays_actifs=("CM",),
+            ledger=FauxLedger(), arbre=FauxArbre(),
+        ).executer()
+
+        comptes = FauxComptes()
+        await _executeur(
+            mode=RunMode.REAL, nb_clients=200, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=FauxClientService(), comptes=comptes,
+            arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+        demande_reel = sum(p["amount"] for p in comptes.credits)
+
+        assert rapport_blanc.solde_dote == pytest.approx(demande_reel), (
+            f"a blanc {rapport_blanc.solde_dote:.2f} != reel {demande_reel:.2f} — "
+            "le rapport a blanc ment, D-01 est mort"
+        )
+
+    async def test_CR_03_le_meme_perimetre_redonne_les_MEMES_montants(self) -> None:
+        """Deux runs REAL, deux `run_id` differents, meme perimetre : chaque
+        client doit recevoir LE MEME solde. Un montant ancre au run changerait
+        a la reprise — et un compte sans DELETE garderait la trace du mensonge."""
+        montants: list[list[float]] = []
+        for run in (UUID(int=7001), UUID(int=7002)):
+            comptes = FauxComptes()
+            await _executeur(
+                mode=RunMode.REAL, run_id=run, nb_clients=150, pays_actifs=("CM",),
+                ledger=FauxLedger(), clients=FauxClientService(), comptes=comptes,
+                arbre=FauxArbre(_kiosques("CM")),
+            ).executer()
+            montants.append(sorted(p["amount"] for p in comptes.credits))
+        assert montants[0] == montants[1]
+
+    async def test_le_montant_SUIT_le_metier_du_client(self) -> None:
+        """LE coeur du lot : un salaire stable dote mieux qu'un revenu agricole
+        saisonnier — EN MEDIANE, dans les montants REELLEMENT credites.
+
+        Jointure EXACTE credit -> fiche -> onboarding : le credit porte le
+        `dest_account_id`, la fiche relie ce compte a son `msisdn`, et le
+        msisdn — unique par `INV-09` — retrouve l'occupation onboardee. (La
+        jointure par NOM a ete essayee et jetee : le vivier de patronymes du
+        faux Faker rend les homonymes majoritaires.) Si `_doter` cessait de
+        lire la VRAIE occupation, les deux medianes convergeraient."""
+        clients = FauxClientService()
+        comptes = FauxComptes()
+        await _executeur(
+            mode=RunMode.REAL, nb_clients=500, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients, comptes=comptes,
+            arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+
+        msisdn_par_compte = {f["account_id"]: f["msisdn"] for f in clients.fiches}
+        occupation_par_msisdn = {
+            o["msisdn"]: o["identity"]["occupation"] for o in clients.onboardes
+        }
+        par_profil: dict[str, list[float]] = {}
+        for credit in comptes.credits:
+            msisdn = msisdn_par_compte[credit["dest_account_id"]]
+            occupation = occupation_par_msisdn[msisdn]
+            profil = STATIQUE.profil_de_la_profession(occupation).nom
+            par_profil.setdefault(profil, []).append(credit["amount"])
+
+        stables = sorted(par_profil.get("bank_stable", []))
+        saisonniers = sorted(par_profil.get("agri_seasonal", []))
+        assert len(stables) >= 30, f"{len(stables)} salaries joints — jointure cassee ?"
+        assert len(saisonniers) >= 30, f"{len(saisonniers)} agricoles joints"
+        assert stables[len(stables) // 2] > saisonniers[len(saisonniers) // 2], (
+            "la mediane des salaries ne depasse pas celle des agricoles — "
+            "le metier n'atteint plus le montant depose"
         )

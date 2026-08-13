@@ -24,7 +24,11 @@ import pytest
 from app.clients.faker_service import PAYS_FAKER, CategorieClient
 from app.core.cdc import PAYS_CIBLES
 from app.core.invariants import GENRES_EMIS
-from app.services.clients_composition import ancrer_sur_kiosque, composer
+from app.services.clients_composition import (
+    ancrer_sur_kiosque,
+    composer,
+    occupation_reelle,
+)
 from app.services.clients_execution import (
     SOLDE_INITIAL_MAX,
     SOLDE_INITIAL_MIN,
@@ -32,6 +36,7 @@ from app.services.clients_execution import (
 )
 from app.services.generateur import CLES_PROFIL_INTERNE, PATRONYMES_PAR_PAYS, Generateur
 from app.services.geographie import charger_referentiel
+from app.services.referentiel_statique import charger_statique
 from app.services.source_interne import (
     PREFIXE_INTERNE,
     SourceInterne,
@@ -175,9 +180,18 @@ class TestLeProfilSocioEconomique:
         self, source: SourceInterne
     ) -> None:
         """Un profil constant donnerait 500 Senegalais au solde identique —
-        visible au premier graphique."""
+        visible au premier graphique.
+
+        `SD-5` : le solde derive du metier (`occupation_reelle`, ancree au
+        client) via le modele de revenu — exactement la chaine que l'executeur
+        cable pour ces clients INTERNE-."""
+        statique = charger_statique()
         soldes = {
-            solde_initial(c)
+            solde_initial(
+                c.client_id,
+                occupation_reelle(None, c.client_id, statique),
+                statique,
+            )
             for seed in range(1, 300)
             if (c := await source.tirer_client("SN", CategorieClient.INDIVIDUAL, seed))
         }

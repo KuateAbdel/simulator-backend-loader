@@ -60,14 +60,14 @@ attendus : 0 » quand le REEL en aurait cree 354, parce qu'une fonction rendait
 `None` a blanc. `D-01` fait du rapport a blanc « la derniere occasion de dire
 non » — un rapport qui ne montre pas ce que le reel ferait n'en est pas un.
 
-L'ARBITRAGE `A-09` EST OUVERT, ET ISOLE DANS UNE SEULE FONCTION
----------------------------------------------------------------
+L'ARBITRAGE `A-09` EST FERME, ET LE MODELE TIENT DANS UNE SEULE FONCTION
+------------------------------------------------------------------------
 `UC-13` pt 2 fait lire le solde initial dans `MOB_MONEY_ACCOUNT_AMOUNT` — absent
-de la famille A, nul dans 4 tirages sur 7 en famille B. `solde_initial()`
-applique la recommandation du 11/08 en attendant l'arbitrage : une fonction
-DETERMINISTE des 11 champs `quick_win` que la famille A porte vraiment, bornee
-par les strates de l'Annexe E. Une seule fonction a changer si tu tranches
-autrement.
+de la famille A, nul dans 4 tirages sur 7 en famille B. Depuis `SD-5`,
+`solde_initial()` derive le montant du MODELE DE REVENU par profession du
+referentiel de JJB (LogNormal par profil de revenu), borne par l'Annexe E et
+ancre au client. Le CDC interdit « l'invention arbitraire de montants » : avec
+un modele documente par profession, il n'y a plus d'invention.
 """
 
 from __future__ import annotations
@@ -197,55 +197,59 @@ def _graine_faker(pays: str, rang: int) -> int:
     return 1 + empreinte % (GRAINE_FAKER_MAX - 1)
 
 
-def solde_initial(faker: ClientFaker) -> float:
-    """Le solde initial du compte — **arbitrage `A-09`, recommandation appliquee**.
+def solde_initial(
+    client_id: str, occupation: str, statique: ReferentielStatique
+) -> float:
+    """Le solde initial du compte — **`A-09` est FERME par ce modele** (`SD-5`).
 
     `UC-13` pt 2 le fait lire dans `MOB_MONEY_ACCOUNT_AMOUNT`. Mesure du 11/08 :
     ce champ est ABSENT de la famille A — la seule population capable de fournir
-    2000 clients — et vaut 0.0 dans 4 tirages sur 7 en famille B.
+    2000 clients — et vaut 0.0 dans 4 tirages sur 7 en famille B. Le CDC
+    interdit par ailleurs « l'invention arbitraire de montants ».
 
-    Le CDC interdit par ailleurs « l'invention arbitraire de montants ». Restait
-    donc a deriver de ce que la famille A porte VRAIMENT : les 11 champs
-    `quick_win`. Un client regulier, equipe d'un smartphone et actif sur la data
-    a un profil socio-economique plus solide qu'un client dormant — c'est
-    exactement « un patrimoine coherent avec son profil socio-economique », les
-    mots du CDC.
+    L'HEURISTIQUE QUE CE MODELE REMPLACE, ET POURQUOI ELLE ETAIT UN PIS-ALLER
+    ------------------------------------------------------------------------
+    Jusqu'au 13/08 : neuf signaux binaires `quick_win` -> dix strates -> une
+    position hachee dans la strate. C'etait la recommandation `A-09`, assumee
+    comme telle : les signaux mesuraient l'EQUIPEMENT du client (smartphone,
+    data), pas son REVENU. Un fonctionnaire sans smartphone tombait sous un
+    vendeur de rue connecte.
 
-    DEUX ETAGES, ET LE SECOND CORRIGE UN DEFAUT QUE MES TESTS ONT TROUVE
-    --------------------------------------------------------------------
-    La premiere version rendait `MIN + (presents / 9) x (MAX - MIN)`. Neuf
-    booleens ne donnent que **DIX montants possibles** : 2000 clients auraient
-    partage dix soldes distincts. Un test de la source interne l'a mesure — 8
-    valeurs sur 299 clients — et c'est exactement le graphique plat que
-    `seconds_per_day` existe pour eviter, reproduit sur l'axe des montants.
+    LE MODELE : profession -> groupe -> profil de revenu -> LogNormal(mu, sigma)
+    --------------------------------------------------------------------------
+    Le referentiel de JJB attache chaque profession a l'un de quatre profils de
+    revenu documentes, chacun avec ses parametres lognormaux :
 
-    Le solde a donc deux etages :
+        bank_stable     mu 12,15  sigma 0,28   mediane 189 094 FCFA
+        sme_formal      mu 12,05  sigma 0,40   mediane 171 099
+        micro_informal  mu 11,65  sigma 0,55   mediane 114 691
+        agri_seasonal   mu 11,50  sigma 0,70   mediane  98 716
 
-      1. LA STRATE vient du profil — les neuf signaux de `quick_win` decident
-         dans laquelle des dix bandes de l'Annexe E le client tombe. C'est le
-         « patrimoine coherent avec son profil socio-economique » du CDC.
-      2. LA POSITION DANS LA STRATE vient d'une empreinte stable du
-         `client_id`. Deux clients au meme profil n'ont pas le meme solde au
-         centime, comme dans la vraie vie.
+    « Un patrimoine coherent avec son profil socio-economique » — les mots du
+    CDC — devient litteral : le solde d'un client decoule de SON metier, par un
+    modele ecrit, source, et le meme pour tous. Il n'y a plus d'invention.
 
-    **Le second etage n'est PAS un tirage aleatoire** — c'est une fonction pure
-    du `client_id` (SHA-256 tronque). Le meme client rend toujours le meme
-    solde : `ENF-15` tient, et « sans invention arbitraire de montants » tient
-    aussi, parce qu'aucune valeur ne sort d'un generateur de hasard. Le hachage
-    n'est pas cryptographique ici, il sert d'etalement deterministe.
+    DEUX GARDE-FOUS, TOUS DEUX OBLIGATOIRES (plan SD, lot 5)
+    --------------------------------------------------------
+    1. **Les bornes de l'Annexe E restent.** Une queue lognormale peut sortir
+       des millions — sigma 0,70 en produit. Le CDC borne, donc on borne :
+       [5 000, 1 000 000] FCFA, bornes incluses.
+    2. **`EF-68` est re-mesure.** Le seuil de 150 000 FCFA pese le profil
+       comportemental ; la part de la population au-dessus change avec le
+       modele. `CR-09` reste exact par quota — la mesure figure au commit.
 
-    Borne par l'Annexe E : de 5 000 (Nano Very Low) a 1 000 000 FCFA (ReadyToGo
-    Very High), bornes incluses.
+    DETERMINISTE, ANCRE AU CLIENT (`ENF-15`, `CR-03`)
+    -------------------------------------------------
+    Le tirage est seme par `solde:{client_id}` — une fonction pure du client,
+    jamais du run. Le meme client rend le meme solde au centime, a chaque
+    execution, sur chaque machine. Le generateur pseudo-aleatoire n'introduit
+    aucun arbitraire : il est l'EVALUATION deterministe du modele documente,
+    comme l'empreinte SHA-256 l'etait pour l'heuristique precedente.
     """
-    presents = sum(1 for cle in CLES_QUICK_WIN_BINAIRES if faker.quick_win.get(cle) == 1)
-    nb_strates = len(CLES_QUICK_WIN_BINAIRES) + 1  # de 0 a 9 signaux inclus
-    largeur = (SOLDE_INITIAL_MAX - SOLDE_INITIAL_MIN) / nb_strates
-
-    empreinte = sha256(faker.client_id.encode()).digest()
-    # 24 bits suffisent a etaler une strate de ~100 000 FCFA au centime pres.
-    position = int.from_bytes(empreinte[:3], "big") / 0xFFFFFF
-
-    return round(SOLDE_INITIAL_MIN + (presents + position) * largeur, 2)
+    profil = statique.profil_de_la_profession(occupation)
+    de_ce_client = random.Random(f"solde:{client_id}")  # noqa: S311
+    montant = de_ce_client.lognormvariate(profil.mu, profil.sigma)
+    return round(min(max(montant, SOLDE_INITIAL_MIN), SOLDE_INITIAL_MAX), 2)
 
 
 #: `A-02` — les cinq strates de l'Annexe E, dans l'ordre croissant. `ANY` n'y
@@ -409,34 +413,6 @@ def age_revolu(naissance: date, reference: date | None = None) -> int:
     )
 
 
-def profil_comportemental(
-    faker: ClientFaker, segment: ClientSegment, age: int | None
-) -> str:
-    """`EF-67` / `UC-01` — le profil de CHAQUE client genere, a sa creation.
-
-    « Le Loader DOIT attribuer a **chaque client genere** un profil comportemental
-    de remboursement parmi quatre valeurs » — pas a chaque APPROVED, pas a chaque
-    pret. Le profil est une propriete du CLIENT ; un pret ne fait que la reveler.
-
-    ANCRE AU CLIENT, JAMAIS AU RUN. Meme lecon que `D-CLI-11` et `D-CLI-12` :
-    ancre sur `self._alea`, une reprise attribuerait un AUTRE profil au meme
-    client, et `CR-09` mesurerait une distribution qui change d'un run a l'autre.
-    """
-    poids = ajuster_poids_profil(
-        genre=faker.genre or "",
-        age=age,
-        segment=segment,
-        mobile_money=solde_initial(faker),
-    )
-    de_ce_client = random.Random(f"profil:{faker.client_id}")  # noqa: S311
-    tirage, cumul = de_ce_client.random(), 0.0
-    for nom in PROFILS_ORDONNES:
-        cumul += poids[nom]
-        if tirage <= cumul:
-            return nom
-    return PROFILS_ORDONNES[-1]
-
-
 def segment_client(faker: ClientFaker) -> ClientSegment:
     """Le `segment` emis a l'onboarding — `A-02`, recommandation appliquee.
 
@@ -454,16 +430,17 @@ def segment_client(faker: ClientFaker) -> ClientSegment:
     aplatit un axe de six valeurs et prive la demonstration d'un relief que le
     serveur sait porter.
 
-    LA MEME STRATE QUE LE SOLDE, PAS UNE SECONDE INVENTION
-    ------------------------------------------------------
-    `solde_initial()` derive deja une strate par client des onze signaux binaires
-    `quick_win` que la famille A porte REELLEMENT, bornee par l'Annexe E
-    (`A-09`, recommandation appliquee). Le segment est CETTE strate, projetee sur
-    les cinq valeurs de l'enum serveur.
+    LA STRATE DES SIGNAUX `quick_win`, ET ELLE SEULE DESORMAIS
+    ----------------------------------------------------------
+    Le segment derive des onze signaux binaires `quick_win` que la famille A
+    porte REELLEMENT, projetes sur les cinq valeurs de l'enum serveur.
 
-    Consequence : un client dont les signaux le placent haut a un solde eleve ET
-    un segment eleve. Une seule decision coherente au lieu de deux deconnectees —
-    et rien de neuf n'est invente, c'est le meme signal mesure.
+    Jusqu'a `SD-5`, le solde initial derivait de la MEME strate — « une seule
+    decision coherente ». Le solde vient desormais du profil de revenu de la
+    PROFESSION (`A-09` ferme) ; les deux axes sont donc distincts, et c'est
+    assume : le segment mesure l'USAGE (equipement, activite), le solde mesure
+    le REVENU (metier). Deux realites differentes dans la vraie vie aussi — un
+    fonctionnaire sans smartphone a un revenu stable et un usage faible.
 
     AUCUN CONFLIT AVEC LES PRODUITS N'EST POSSIBLE
     ----------------------------------------------
@@ -496,6 +473,12 @@ class Reservation:
     #: `EF-67` — le profil comportemental, DECIDE dans le temps sequentiel comme
     #: `jeune` et `secteur`, pour la meme raison : c'est un quota.
     profil: str = ""
+    #: `SD-5` — l'occupation, decidee ICI et plus dans `_creer`. Le solde initial
+    #: en depend desormais (profession -> profil de revenu), et `EF-68` pese ce
+    #: solde dans le temps sequentiel : une occupation decidee plus tard aurait
+    #: fait peser un solde DIFFERENT de celui depose. Une seule decision, un seul
+    #: endroit — la meme lecon que `profil`.
+    occupation: str = ""
 
 
 @dataclass(slots=True)
@@ -509,6 +492,11 @@ class QuotaPays:
 
     pays: str
     cible: int
+    #: `SD-5` — le referentiel de JJB. Le moteur de quotas en a besoin parce que
+    #: l'occupation et le solde sont decides dans le temps SEQUENTIEL (`EF-68`
+    #: pese le solde), et tous deux en derivent. Requis, sans defaut : un quota
+    #: sans referentiel ne peut pas decider.
+    statique: ReferentielStatique
 
     corporate_faits: int = 0
     individual_faits: int = 0
@@ -696,12 +684,32 @@ class QuotaPays:
         # Rien de la methodologie n'est trahi : les coefficients de
         # `_adjust_weights` restent intacts, valeur par valeur. Ils cessent
         # seulement d'etre une loterie pour devenir un ORDRE DE PREFERENCE.
-        profil = self._attribuer_profil(tirage, femme=femme, jeune=jeune)
+        # `SD-5` — l'occupation est DECIDEE ici, dans le temps sequentiel, comme
+        # `secteur` et `profil`. Le solde initial en derive desormais (profession
+        # -> profil de revenu), et `EF-68` pese ce solde juste en dessous : une
+        # occupation decidee plus tard dans `_creer` aurait fait peser un solde
+        # DIFFERENT de celui reellement depose.
+        occupation = occupation_reelle(
+            secteur or None,
+            tirage.client_id,
+            self.statique,
+            personne_morale=business,
+        )
+        profil = self._attribuer_profil(
+            tirage, femme=femme, jeune=jeune, occupation=occupation
+        )
         return Reservation(
-            business=business, femme=femme, jeune=jeune, secteur=secteur, profil=profil
+            business=business,
+            femme=femme,
+            jeune=jeune,
+            secteur=secteur,
+            profil=profil,
+            occupation=occupation,
         )
 
-    def _attribuer_profil(self, tirage: ClientFaker, *, femme: bool, jeune: bool) -> str:
+    def _attribuer_profil(
+        self, tirage: ClientFaker, *, femme: bool, jeune: bool, occupation: str
+    ) -> str:
         """Le profil du client : son rang de preference, borne par le quota.
 
         L'age vient de `date_de_naissance_du_client()`, desormais ancree au client
@@ -717,7 +725,7 @@ class QuotaPays:
             genre="WOMAN" if femme else "MAN",
             age=age_revolu(naissance, self.reference_age),
             segment=segment_client(tirage),
-            mobile_money=solde_initial(tirage),
+            mobile_money=solde_initial(tirage.client_id, occupation, self.statique),
         )
         # TIRAGE PONDERE PARMI LES PROFILS ENCORE OUVERTS — et non « le mieux
         # note d'abord ». La difference est tout, et la mesure l'a montree.
@@ -878,7 +886,8 @@ class RapportClients:
                 if self.servis_en_interne
                 else []
             ),
-            f"Solde dote     : {self.solde_dote:,.2f} (A-09 — recommandation appliquee)",
+            f"Solde dote     : {self.solde_dote:,.2f} "
+            "(A-09 ferme — modele de revenu par profession, SD-5)",
             f"Reservations liberees : {self.liberes} (ecartes ou echoues — D-FAKER-1)",
             f"Liberees a blanc      : {self.liberes_a_blanc} (aucune entite creee)",
             # LE COMPTEUR NE COMPTE QUE DES ECRITURES REELLES, jamais des
@@ -981,7 +990,7 @@ class ExecuteurClients:
             # configuration persistee avec le run (`D-10`).
             if cible == 0:
                 continue
-            quota = QuotaPays(pays=pays, cible=cible)
+            quota = QuotaPays(pays=pays, cible=cible, statique=self._statique)
             rapport.quotas.append(quota)
 
             if pays not in kiosques:
@@ -1205,9 +1214,10 @@ class ExecuteurClients:
         reelle dit — un epargnant `VERY_HIGH` diversifie, un `VERY_LOW` a une
         cotisation et rien d'autre.
 
-        Le segment vient de `segment_client()` : la meme strate que
-        `solde_initial()`, derivee des onze signaux `quick_win` de la famille A
-        (`A-02`). Un client mieux dote prend donc plus de produits, ce qui rend
+        Le segment vient de `segment_client()` : la strate des onze signaux
+        `quick_win` de la famille A (`A-02`) — l'axe de l'USAGE, distinct depuis
+        `SD-5` de l'axe du revenu qui fixe le solde. Un client plus actif prend
+        donc plus de produits, ce qui rend
         `CR-12` (« solde = initial + decaissements - remboursements ») coherent
         avec sa capacite d'epargne au lieu de la contredire.
 
@@ -1493,24 +1503,14 @@ class ExecuteurClients:
                 self._alea,
                 jeune=reservation.jeune,
                 # `SD-3` — TOUS les clients recoivent un metier reel, plus
-                # seulement les CORPORATE. Mesure du 12/08 : les 400 INDIVIDUAL
-                # d'un run de 500 portaient TOUS « Commercant », le defaut code en
-                # dur — une seule occupation distincte pour 1600 clients sur la
-                # campagne complete.
+                # seulement les CORPORATE (mesure du 12/08 : les 400 INDIVIDUAL
+                # d'un run de 500 portaient TOUS « Commercant »).
                 #
-                # `reservation.secteur` n'est renseigne que pour les CORPORATE,
-                # parce que `EF-24` parle des « professionnels ». Un INDIVIDUAL
-                # tire donc parmi les 576 professions, sans famille imposee.
-                occupation_imposee=occupation_reelle(
-                    reservation.secteur or None,
-                    faker.client_id,
-                    self._statique,
-                    # Une personne MORALE ne touche ni salaire ni pension : le
-                    # profil `bank_stable` lui est ferme. Mesure du 12/08 : sans
-                    # cette regle, 47 CORPORATE sur 100 recevaient un metier de
-                    # salarie ou de journalier.
-                    personne_morale=reservation.business,
-                ),
+                # `SD-5` — l'occupation vient de la RESERVATION, plus d'un appel
+                # ici : elle est decidee dans le temps SEQUENTIEL, parce que le
+                # solde initial en derive et que `EF-68` pese ce solde au moment
+                # des quotas. Meme lecon que `reservation.profil`.
+                occupation_imposee=reservation.occupation,
                 segment=segment,
             )
         except CompositionImpossible as erreur:
@@ -1541,7 +1541,9 @@ class ExecuteurClients:
         if not self.ecriture_reelle:
             # Ce que le REEL ecrirait, annonce meme a blanc — `D-01`.
             rapport.comptes_attendus += 1
-            rapport.solde_dote += solde_initial(faker)
+            rapport.solde_dote += solde_initial(
+                faker.client_id, reservation.occupation, self._statique
+            )
             rapport.souscriptions_prevues += len(panier)
             rapport.crees.append(f"{nom} [prevu]")
             return compose
@@ -1705,7 +1707,12 @@ class ExecuteurClients:
         desequilibrerait les quotas `EF-22`/`EF-23`/`EF-24` pour un motif
         etranger a la distribution.
         """
-        montant = solde_initial(faker)
+        # `SD-5` — l'occupation lue sur l'identite COMPOSEE, celle qui vient de
+        # `reservation.occupation` : le montant depose est exactement celui que
+        # le DRY_RUN a annonce, et c'est un test qui le garantit (`D-01`).
+        montant = solde_initial(
+            faker.client_id, compose.identite.occupation, self._statique
+        )
         nom = f"{compose.identite.first_name} {compose.identite.last_name}"
 
         if not self.ecriture_reelle:

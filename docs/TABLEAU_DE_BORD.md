@@ -18,8 +18,8 @@
 | SD-2 | Companies : `industries` ≠ `sectors`, Fondation servie, 27 formes | ✅ `7f78fca` |
 | SD-3 | Occupations : 18 → 576, règle `bank_stable`, EF-24 visible | ✅ `a2646ba` |
 | SD-4 | Dirigeants : « Dirigeant » → 20 fonctions | ✅ `7f78fca` |
-| SD-5 | `solde_initial` : heuristique → LogNormal(μ,σ) par profession, borné Annexe E, mesure EF-68 refaite — **ferme A-09** | ⬜ prochain |
-| SD-6 | Lieu de naissance : 195 pays + 50 villes, `id_place` ≠ résidence *(ancienne tâche #15)* | ⬜ |
+| SD-5 | `solde_initial` : heuristique → LogNormal(μ,σ) par profession, borné Annexe E, mesure EF-68 refaite — **A-09 FERMÉ** | ✅ 13/08 |
+| SD-6 | Lieu de naissance : 195 pays + 50 villes, `id_place` ≠ résidence *(ancienne tâche #15)* | ⬜ prochain |
 | — | Bilan de chantier ultra-détaillé des 6 lots | ⬜ |
 
 ## B. Chantier « catalogue » — les 11 changements du §8

@@ -117,7 +117,7 @@ Bloqué par **A-06** : le code source `ready_scoring/` est introuvable. Les poid
 
 | Réf | Exigence | État | La preuve |
 |---|---|---|---|
-| EF-73 | Solde initial dérivé du montant Mobile Money | ✅ | `MOB_MONEY_ACCOUNT_AMOUNT` **absent de la famille A** (mesure 11/08) — `A-09`, recommandation appliquée : fonction déterministe des 11 signaux `quick_win`, bornée par l'Annexe E. Crédité par `POST /accounts/credit`, et **le solde est relu** avant d'être compté (`FRA-218`) |
+| EF-73 | Solde initial dérivé du montant Mobile Money | ✅ | `MOB_MONEY_ACCOUNT_AMOUNT` **absent de la famille A** (mesure 11/08) — `A-09` **FERMÉ le 13/08 (SD-5)** : modèle de revenu par profession (LogNormal μ,σ du référentiel JJB), déterministe, ancré au client, borné par l'Annexe E. Crédité par `POST /accounts/credit`, et **le solde est relu** avant d'être compté (`FRA-218`) |
 | EF-74 | Créditer à chaque décaissement de prêt | ⬜ | module Vie non livré, et `CT-02` : loan-service non livré |
 | EF-75 | Débiter à chaque remboursement | ⬜ | idem |
 
