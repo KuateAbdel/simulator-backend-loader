@@ -40,7 +40,7 @@ OBJET` (faux positif expliqué). Aucun quatrième état.
 
 | # | Constat | Plan de sortie |
 |---|---|---|
-| AU-5 | `pilotage.py` à **30 %** de couverture : le moteur `executer()` n'est prouvé que par les DRY_RUN réels (hors pytest) et les routes le doublent. Ses BRIQUES sont couvertes (exécuteurs 86-99 %), l'ASSEMBLAGE ne l'est pas en CI | rendre les clients injectables dans `executer()` (fabrique paramétrable) pour un test d'assemblage complet à vide — planifié avec le durcissement pré-palier 1 |
+| ~~AU-5~~ | **CORRIGÉ le 13/08 (même jour)** : `ClientsHTTP` injectable + test d'assemblage complet en CI (`test_pilotage_assemblage.py` — huit doubles, DRY_RUN entier, run persisté avec configuration figée/rapport/mesures/checkpoints, réconciliation close, verrou EF-55 au niveau moteur). Couverture pilotage : 30 % → **83 %** (global 85 %). Le débogage a aussi attrapé une pollution inter-tests (run RUNNING résiduel) — nettoyage de sortie ajouté | — |
 | AU-6 | Le « bouchon » patronymes/prénoms (`generateur.py`) : matière Faker rejouée en dur tant que le tirage réel de noms n'existe pas — dette DÉCLARÉE dans le code depuis l'origine | disparaît quand le client Faker fournira les noms ; `D-FAKER-1` s'appliquera alors |
 | AU-7 | `ClientCompose.jeune` (propriété) relit l'âge contre `date.today()` — dérive possible en franchissant minuit. AUCUN consommateur dans le chemin réel (vérifié) | surveillée ; si un consommateur apparaît, la propriété devra prendre la référence du run |
 | AU-8 | account-service reste le seul service sans page Anatomy (`D-ACC-XXX` à extraire) — noté depuis le 8/08 | campagne d'extraction avant le palier 6 (c'est lui qui encaisse les 2000 dotations) |

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,39 @@ CLASSEUR = Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")
 LOAN_JSON = Path("docs/reference/loan_json.json")
 
 
+@dataclass(slots=True)
+class ClientsHTTP:
+    """Les huit surfaces HTTP du moteur — INJECTABLES (audit AU-5).
+
+    Le defaut (fabrique reelle) est celui de la production ; les tests
+    d'assemblage injectent des doubles et prouvent le moteur ENTIER a vide,
+    ce que seuls les DRY_RUN manuels prouvaient jusqu'ici."""
+
+    users: Any
+    faker: Any
+    clients: Any
+    companies: Any
+    comptes: Any
+    produits: Any
+    depositaires: Any
+    identites: Any
+
+    @classmethod
+    def reels(cls) -> ClientsHTTP:
+        return cls(
+            users=UserServiceClient(),
+            # Faker est en LECTURE SEULE et sans authentification : il n'entre
+            # pas dans la session ROOT partagee des neuf services FinZuu.
+            faker=FakerClient(),
+            clients=ClientServiceClient(),
+            companies=CompanyServiceClient(),
+            comptes=AccountServiceClient(),
+            produits=ProductServiceClient(),
+            depositaires=DepositaryServiceClient(),
+            identites=IdentityServiceClient(),
+        )
+
+
 async def executer(
     mode: RunMode,
     etapes: set[Etape] | None = None,
@@ -79,6 +113,7 @@ async def executer(
     configuration: ConfigurationExecution | None = None,
     sortie: Callable[[str], None] = print,
     gerer_connexion: bool = True,
+    clients_http: ClientsHTTP | None = None,
 ) -> int:
     # DEFAUT TROUVE LE 09/08 PAR LA PREMIERE ECRITURE REELLE : ce cablage
     # n'ouvrait jamais MongoDB. Le `DRY_RUN` passait — il n'ecrit rien chez
@@ -198,16 +233,16 @@ async def executer(
     # `TransitionInterdite` a la derniere ligne d'une campagne de 30 minutes.
     await depot_runs.changer_statut(run.id, RunStatus.RUNNING)
 
-    users = UserServiceClient()
-    # Faker est en LECTURE SEULE et sans authentification : il n'entre pas dans
-    # la session ROOT partagee des neuf services FinZuu.
-    faker = FakerClient()
-    clients_finaux = ClientServiceClient()
-    companies = CompanyServiceClient()
-    comptes = AccountServiceClient()
-    produits_client = ProductServiceClient()
-    depositaires = DepositaryServiceClient()
-    identites = IdentityServiceClient()
+    # AU-5 — les clients viennent du paquet injectable ; None = la production.
+    paquet = clients_http or ClientsHTTP.reels()
+    users = paquet.users
+    faker = paquet.faker
+    clients_finaux = paquet.clients
+    companies = paquet.companies
+    comptes = paquet.comptes
+    produits_client = paquet.produits
+    depositaires = paquet.depositaires
+    identites = paquet.identites
 
     audit = AuditTrailRepository()
     registre = LendersRegistryRepository()
