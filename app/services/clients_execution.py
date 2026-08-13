@@ -985,6 +985,13 @@ class ExecuteurClients:
         client_service: ClientServiceClient,
         account_service: AccountServiceClient,
         interne: SourceIdentites | None = None,
+        #: `CAT 8` / `A-12` — la carte des rattachements Produit -> Company.
+        #: None = aucun rattachement pose (runs sans etape catalogue, tests
+        #: historiques) : le panier reste ouvert, et la recette dira que le
+        #: rattachement n'est pas verifiable. Une carte NON VIDE est stricte :
+        #: une Company absente de la carte rend ses clients NON souscriptibles,
+        #: jamais souscriptibles en silence (regle de conception, §3).
+        produits_par_company: dict[UUID, set[UUID]] | None = None,
         hierarchie: OrgHierarchyRepository,
         ledger: FakerLedgerRepository,
         produits: list[ProduitSouscriptible],
@@ -1003,6 +1010,7 @@ class ExecuteurClients:
         self._generateur = generateur
         self._faker = faker
         self._interne = interne or SourceInterne()
+        self._produits_par_company = produits_par_company
         self._clients = client_service
         self._comptes = account_service
         self._hierarchie = hierarchie
@@ -1140,13 +1148,23 @@ class ExecuteurClients:
             # Kiosques sur le meme quartier, et un essai a blanc qui annoncerait
             # plus de Kiosques que de quartiers mentirait sur le reel.
             nb = min(int(haut), len(quartiers))
+            # `CAT 8` — les Kiosques reels appartiendront aux Companies
+            # porteuses ; l'essai a blanc emprunte donc les companies du
+            # RATTACHEMENT quand il existe, pour que le filtre du panier
+            # s'exerce a blanc comme en reel (D-01). Sans rattachement :
+            # identifiants jetables, comme avant.
+            porteuses_connues = sorted(self._produits_par_company or {})
             planifiees[pays] = [
                 Noeud(
                     id=uuid4(),
                     run_id=self.run_id,
                     niveau=NiveauOrganisation.KIOSQUE,
                     parent_id=uuid4(),
-                    company_id=uuid4(),
+                    company_id=(
+                        porteuses_connues[i % len(porteuses_connues)]
+                        if porteuses_connues
+                        else uuid4()
+                    ),
                     name=f"[prevu] Kiosque {quartiers[i].name}",
                     country_code=pays,
                     district_id=quartiers[i].district_id,
@@ -1199,7 +1217,10 @@ class ExecuteurClients:
         return compatibles
 
     def _panier(
-        self, collect: list[ProduitSouscriptible], compose: ClientCompose
+        self,
+        collect: list[ProduitSouscriptible],
+        compose: ClientCompose,
+        company_id: UUID | None = None,
     ) -> list[ProduitSouscriptible]:
         """`UC-13` — de UN a TROIS produits Collecte, DISTINCTS et ordonnes.
 
@@ -1267,6 +1288,14 @@ class ExecuteurClients:
         La part de hasard qui reste — ancree au client, jamais au run — ne sert
         qu'a eviter que tous les clients d'un meme segment soient identiques.
         """
+        # `CAT 8` / `A-12` — le panier vient des produits de SA Company. La
+        # carte des rattachements est STRICTE des qu'elle existe : une Company
+        # hors carte rend ses clients non souscriptibles — jamais en silence,
+        # le refus « aucun produit COLLECT compatible » porte la consequence.
+        if self._produits_par_company is not None and company_id is not None:
+            autorises = self._produits_par_company.get(company_id, set())
+            collect = [p for p in collect if p.product_id in autorises]
+
         compatibles = self._produits_compatibles(collect, compose.categorie)
         if not compatibles:
             return []
@@ -1578,7 +1607,7 @@ class ExecuteurClients:
             not in self._villes_referentiel,
         )
 
-        panier = self._panier(collect, compose)
+        panier = self._panier(collect, compose, getattr(kiosque, "company_id", None))
         if not panier:
             rapport.refuses_avant_reseau.append(
                 (

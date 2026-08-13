@@ -394,6 +394,8 @@ def _executeur(
     #: deux executions, donc les memes clients Faker meme quand la graine venait
     #: du run. Le test de mutation l'a montre — il passait avec le defaut remis.
     run_id: UUID = RUN,
+    produits_par_company: Any = None,
+    produits: Any = None,
 ) -> ExecuteurClients:
     configuration = ConfigurationExecution.defaut_cdc()
     configuration.nb_clients = nb_clients
@@ -408,13 +410,14 @@ def _executeur(
         # `SD-3` — le vrai catalogue de JJB, jamais un double. Les 576
         # professions qu'il porte partent REELLEMENT dans `identity.occupation`.
         statique=STATIQUE,
+        produits_par_company=produits_par_company,
         generateur=Generateur(run_id, reference=date(2026, 8, 11)),
         faker=faker or FauxFaker(),
         client_service=clients or ServiceInterdit(),
         account_service=comptes or FauxComptes(),
         hierarchie=arbre or FauxArbre(),
         ledger=ledger or FauxLedger(),
-        produits=_produits(),
+        produits=produits if produits is not None else _produits(),
     )
 
 
@@ -2061,3 +2064,80 @@ class TestLieuDeNaissanceCableSD6:
             "plus de la moitie des clients nes exactement ou ils habitent — "
             "la migration interne a disparu"
         )
+
+
+class TestPanierDeSaCompanyCAT8:
+    """`CAT 8` / `A-12` — le panier vient des produits de SA Company.
+
+    La carte est STRICTE des qu'elle existe : une Company hors carte rend ses
+    clients non souscriptibles, JAMAIS en silence. Sans carte (None) : le
+    comportement historique — la recette dira que le rattachement n'est pas
+    verifiable.
+    """
+
+    @staticmethod
+    def _kiosques_de(company: Any, pays: str = "CM") -> list[Any]:
+        noeuds = _kiosques(pays)
+        for noeud in noeuds:
+            object.__setattr__(noeud, "company_id", company) if hasattr(
+                noeud, "__dataclass_fields__"
+            ) else setattr(noeud, "company_id", company)
+        return noeuds
+
+    async def test_avec_la_carte_le_panier_est_BORNE_aux_produits_de_sa_company(
+        self,
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        company = _uuid4()
+        produits = _produits()
+        # SA company n'offre QUE les deux cotisations CASH (une par categorie,
+        # le produit d'entree de chacune) — les DAT et PRODUCT appartiennent a
+        # d'autres Companies.
+        autorises = {p.product_id for p in produits if p.policy_type == "CASH"}
+        assert len(autorises) == 2
+        clients = FauxClientService()
+        await _executeur(
+            mode=RunMode.REAL, nb_clients=60, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients,
+            arbre=FauxArbre(self._kiosques_de(company)),
+            produits_par_company={company: autorises},
+            produits=produits,
+        ).executer()
+        assert clients.onboardes, "des clients doivent passer"
+        for o in clients.onboardes:
+            assert UUID(str(o["product_id"])) in autorises, (
+                "le produit d'entree DOIT venir de la carte de SA Company"
+            )
+        for _msisdn, produit in clients.souscriptions:
+            assert UUID(str(produit)) in autorises, (
+                "chaque souscription aussi — jamais un produit d'une autre Company"
+            )
+
+    async def test_une_company_HORS_carte_refuse_ses_clients_jamais_en_silence(
+        self,
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        carte = {_uuid4(): {p.product_id for p in _produits()}}
+        clients = FauxClientService()
+        rapport = await _executeur(
+            mode=RunMode.REAL, nb_clients=30, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients,
+            arbre=FauxArbre(self._kiosques_de(_uuid4())),  # company INCONNUE de la carte
+            produits_par_company=carte,
+        ).executer()
+        assert clients.onboardes == [], "aucun client ne passe sans rattachement"
+        assert rapport.refuses_avant_reseau, "et le refus est DIT, jamais silencieux"
+        assert any(
+            "aucun produit COLLECT compatible" in motif
+            for _cid, motif in rapport.refuses_avant_reseau
+        )
+
+    async def test_sans_carte_le_comportement_historique_demeure(self) -> None:
+        clients = FauxClientService()
+        await _executeur(
+            mode=RunMode.REAL, nb_clients=30, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+        assert len(clients.onboardes) == 30

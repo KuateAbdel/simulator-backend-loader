@@ -261,13 +261,16 @@ class TestNiveauAgent:
     jamais de reference vers un Depositaire.
     """
 
-    def test_l_enum_porte_les_cinq_niveaux_dans_l_ordre_d_emboitement(self) -> None:
+    def test_l_enum_porte_les_six_niveaux_dans_l_ordre_d_emboitement(self) -> None:
         """L'ORDRE compte : `verifier_cr02()` verifie que chaque noeud est
-        rattache au niveau immediatement superieur. CLIENT est cinquieme — ce
-        n'est pas un niveau du CDC §6.2, qui s'arrete a l'Agent, mais le
-        rattachement Client -> Kiosque n'existe nulle part cote serveur
-        (`EF-26`), exactement l'argument qui a fait entrer l'AGENT."""
+        rattache au niveau immediatement superieur. CLIENT n'est pas un niveau
+        du CDC §6.2 mais le rattachement Client -> Kiosque n'existe nulle part
+        cote serveur (`EF-26`) — l'argument qui a fait entrer l'AGENT. PRODUIT
+        (13/08, A-12) est RACINE comme la BRANCHE : le lien Produit -> Company
+        n'existe nulle part cote serveur non plus, troisieme occurrence du
+        meme motif."""
         assert [n.value for n in NiveauOrganisation] == [
+            "PRODUIT",
             "BRANCHE",
             "AGENCE",
             "KIOSQUE",
@@ -475,3 +478,82 @@ class TestRattachementClientEF26:
         )
         anomalies = await arbre.verifier_cr02(run)
         assert any("rattache a un AGENCE" in a for a in anomalies), anomalies
+
+
+class TestRattachementProduitA12:
+    """`CAT 7` / `A-12` — le lien Produit -> Company, chez NOUS. Zero produit
+    supplementaire : des LIENS (6 produits x N porteuses), jamais des copies."""
+
+    @pytest.fixture
+    async def arbre(self):  # type: ignore[misc,no-untyped-def]
+        from app.core.database import close, connect, ensure_indexes
+        from app.core.database import get_collection as collection
+        from app.repositories.org_hierarchy import OrgHierarchyRepository
+
+        connect()
+        await ensure_indexes()
+        yield OrgHierarchyRepository()
+        await collection("org_hierarchy").delete_many(
+            {"name": {"$regex": "^DEMO_(TONT_IND|X|Y)$"}}
+        )
+        close()
+
+    async def test_le_rattachement_porte_produit_package_et_company(self, arbre) -> None:  # type: ignore[no-untyped-def]
+        run = uuid4()
+        noeud = await arbre.ajouter_produit(
+            run_id=run, company_id=uuid4(), product_id=uuid4(),
+            marqueur="DEMO_TONT_IND", package="ALL", country_code="CM",
+        )
+        assert noeud is not None
+        assert noeud.niveau is NiveauOrganisation.PRODUIT
+        assert noeud.parent_id is None, "RACINE — la Company n'est pas un noeud"
+        assert noeud.name == "DEMO_TONT_IND", (
+            "le nom du noeud est le MARQUEUR : CR-07 verifie les prefixes des "
+            "noeuds, CAT 6 est satisfait par construction"
+        )
+        assert await arbre.verifier_cr02(run) == []
+
+    async def test_le_doublon_de_lien_est_REFUSE(self, arbre) -> None:  # type: ignore[no-untyped-def]
+        run, company, produit = uuid4(), uuid4(), uuid4()
+        premier = await arbre.ajouter_produit(
+            run_id=run, company_id=company, product_id=produit,
+            marqueur="DEMO_X", package="ALL", country_code="CM",
+        )
+        second = await arbre.ajouter_produit(
+            run_id=run, company_id=company, product_id=produit,
+            marqueur="DEMO_X", package="ALL", country_code="CM",
+        )
+        assert premier is not None and second is None, (
+            "un rattachement n'est pas une quantite — le doublon est un bug"
+        )
+
+    async def test_un_meme_produit_se_rattache_a_PLUSIEURS_companies(self, arbre) -> None:  # type: ignore[no-untyped-def]
+        """La relation est n:n PAR DES LIENS : 1 produit, 3 companies =
+        3 liens, toujours 1 produit."""
+        run, produit = uuid4(), uuid4()
+        companies = [uuid4() for _ in range(3)]
+        for company in companies:
+            assert await arbre.ajouter_produit(
+                run_id=run, company_id=company, product_id=produit,
+                marqueur="DEMO_TONT_IND", package="ALL", country_code="CM",
+            ) is not None
+        carte = await arbre.produits_par_company(run)
+        assert len(carte) == 3
+        assert all(carte[c] == {produit} for c in companies)
+
+    async def test_CR02_denonce_un_lien_sans_package(self, arbre) -> None:  # type: ignore[no-untyped-def]
+        """UC-11 pt 3 : le rattachement suit la LICENCE — un lien qui ne dit
+        pas quel package l'autorise est inverifiable."""
+        from app.core.database import get_collection
+
+        run = uuid4()
+        noeud = await arbre.ajouter_produit(
+            run_id=run, company_id=uuid4(), product_id=uuid4(),
+            marqueur="DEMO_Y", package="ALL", country_code="CM",
+        )
+        assert noeud is not None
+        await get_collection("org_hierarchy").update_one(
+            {"_id": str(noeud.id)}, {"$set": {"package": None}}
+        )
+        anomalies = await arbre.verifier_cr02(run)
+        assert any("package" in a for a in anomalies)

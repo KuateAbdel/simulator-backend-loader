@@ -230,6 +230,13 @@ class OrgHierarchyNode(LoaderDocument):
         default=None,
         description="Renseigne au niveau CLIENT uniquement (client-service) — EF-26, 1er temps",
     )
+    #: `A-12` — renseigne au niveau PRODUIT uniquement. `name` porte le
+    #: MARQUEUR (DEMO_<code>) et non le nom metier : c'est un noeud technique,
+    #: et CR-07 verifie les noms de noeuds par prefixe — le choix rend CAT 6
+    #: satisfait sans modifier la recette.
+    product_id: UUID | None = Field(default=None)
+    #: Le package de licence qui AUTORISE ce rattachement (UC-11 pt 3).
+    package: str | None = Field(default=None)
 
 
 class SuperAdminAccount(LoaderDocument):

@@ -154,6 +154,61 @@ class OrgHierarchyRepository(RepositoryBase):
         await self.collection.insert_one(en_document(noeud))
         return noeud
 
+    async def ajouter_produit(
+        self,
+        run_id: UUID,
+        company_id: UUID,
+        product_id: UUID,
+        marqueur: str,
+        package: str,
+        country_code: str,
+    ) -> OrgHierarchyNode | None:
+        """`A-12` / UC-11 pt 3 — le rattachement Produit -> Company.
+
+        Le serveur ne le represente NULLE PART (« company » : zero occurrence
+        dans l'OpenAPI de product-service, mesure du 12/08). Troisieme
+        occurrence du motif EF-26/D-CLI-6 : le lien vit ici.
+
+        NOEUD RACINE comme la BRANCHE — la Company n'est pas un noeud de
+        l'arbre, `company_id` porte le lien. `name` = le MARQUEUR
+        (DEMO_<code>), pas le nom metier : noeud technique, et CR-07 verifie
+        les prefixes des noeuds — CAT 6 est satisfait par construction.
+
+        Rend None si le couple (company, produit) est deja rattache sur ce
+        run : un rattachement n'est pas une quantite, le doublon est un bug.
+        """
+        existant = await self.collection.find_one(
+            {
+                "run_id": str(run_id),
+                "niveau": NiveauOrganisation.PRODUIT.value,
+                "company_id": str(company_id),
+                "product_id": str(product_id),
+            }
+        )
+        if existant is not None:
+            return None
+        noeud = OrgHierarchyNode(
+            id=uuid4(),
+            run_id=run_id,
+            niveau=NiveauOrganisation.PRODUIT,
+            parent_id=None,
+            company_id=company_id,
+            name=marqueur,
+            country_code=country_code.upper(),
+            product_id=product_id,
+            package=package,
+        )
+        await self.collection.insert_one(en_document(noeud))
+        return noeud
+
+    async def produits_par_company(self, run_id: UUID) -> dict[UUID, set[UUID]]:
+        """La carte des rattachements — consommee par le panier (CAT 8)."""
+        carte: dict[UUID, set[UUID]] = {}
+        for noeud in await self.par_niveau(run_id, NiveauOrganisation.PRODUIT):
+            if noeud.product_id is not None:
+                carte.setdefault(noeud.company_id, set()).add(noeud.product_id)
+        return carte
+
     async def ajouter_client(
         self,
         run_id: UUID,
@@ -279,6 +334,20 @@ class OrgHierarchyRepository(RepositoryBase):
         anomalies: list[str] = []
 
         for noeud in noeuds.values():
+            if noeud.niveau is NiveauOrganisation.PRODUIT:
+                # `A-12` — noeud RACINE comme la Branche : la Company n'est pas
+                # un noeud, le lien passe par company_id. Verifiable ici :
+                # l'identifiant produit, le package qui autorise (UC-11 pt 3),
+                # et l'absence de parent.
+                if noeud.product_id is None:
+                    anomalies.append(f"Produit {noeud.name} sans product_id")
+                if not noeud.package:
+                    anomalies.append(f"Produit {noeud.name} sans package de licence (UC-11)")
+                if noeud.parent_id is not None:
+                    anomalies.append(
+                        f"Produit {noeud.name} avec un parent — le lien passe par company_id"
+                    )
+                continue
             if noeud.niveau is NiveauOrganisation.BRANCHE:
                 if not noeud.region_id:
                     anomalies.append(f"Branche {noeud.name} sans region_id")

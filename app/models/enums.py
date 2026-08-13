@@ -138,6 +138,11 @@ class NiveauOrganisation(StrEnum):
       l'autre (`D-CLI-11`).
     """
 
+    #: `CAT 7-8` / `A-12` (13/08) — le rattachement Produit -> Company. Le
+    #: serveur ne le represente NULLE PART (« company » : zero occurrence dans
+    #: l'OpenAPI de product-service, mesure du 12/08) : troisieme occurrence
+    #: du motif EF-26/D-CLI-6, meme reponse — le lien vit chez nous.
+    PRODUIT = "PRODUIT"
     BRANCHE = "BRANCHE"
     AGENCE = "AGENCE"
     KIOSQUE = "KIOSQUE"

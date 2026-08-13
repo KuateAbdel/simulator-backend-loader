@@ -28,8 +28,8 @@
 |---|---|---|
 | CAT 1-2 | **Décidé par Yaniv le 13/08** : produits RÉELS et recherchés — `Tontine Digitale` · `Compte Epargne Entreprise` · `Epargne Bloquee 6 Mois` · `Depot a Terme Entreprise 12 Mois` · `Warrantage Cerealier` · `Collecte Cacao Cooperative` (conception §4 : PAMECAS, warrantage sahélien). Marqueur `DEMO_` dans `short_name`, protocole à deux clés contre `ANO-PRD-UNIQ-01` | ✅ 13/08 |
 | CAT 3-5 | Produits environnement constatés · 12 créations | ✅ (12/08, `c53c05d`) |
-| CAT 6 | CR-07 : marqueur selon le type d'entité — s'active quand les produits entrent dans `org_hierarchy` | ⬜ avec CAT 7-8 |
-| CAT 7-8 | Rattachement Produit→Company (`org_hierarchy`) + panier depuis SA Company *(ancienne tâche #29 / A-12)* | ⬜ |
+| CAT 6 | CR-07 par type d'entité | ✅ 13/08 — **par construction** : le nœud PRODUIT porte le MARQUEUR comme `name`, CR-07 vérifie les préfixes sans modification |
+| CAT 7-8 | Rattachement Produit→Company + panier de SA Company *(ancienne #29 / A-12)* | ✅ 13/08 — niveau PRODUIT (nœud RACINE, liens n:n, ZÉRO produit créé : 6 produits × 8 porteuses = 48 liens), CR-02 les vérifie, panier STRICT dès que la carte existe (Company hors carte → refus dit), DRY fidèle (ancres planifiées empruntent les companies du rattachement) |
 | CAT 9-11 | `perimetre_lending` · `PRODUITS_ATTENDUS` fonction du périmètre · recette « hors périmètre » | ⬜ |
 
 ## C-0. DÉCISION du 13/08 (Yaniv) — HÉBERGER AVANT DE CHARGER

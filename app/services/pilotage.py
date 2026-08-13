@@ -33,6 +33,7 @@ from uuid import UUID, uuid4
 from app.clients.account_service import AccountServiceClient
 from app.clients.client_service import ClientServiceClient
 from app.clients.company_service import CompanyServiceClient
+from app.clients.contracts import ProductType
 from app.clients.depositary_service import DepositaryServiceClient
 from app.clients.faker_service import FakerClient
 from app.clients.identity_service import IdentityServiceClient
@@ -284,6 +285,9 @@ async def executer(
     # erreur de type couterait une campagne.
     porteuses: list[CompanyPorteuse] = []
     produits: list[ProduitSouscriptible] = []
+    #: `A-12` — la carte des rattachements, remplie par CATALOGUE, consommee
+    #: par CLIENTS (le panier de SA Company).
+    produits_par_company: dict[UUID, set[UUID]] = {}
     # Le rapport CLIENTS est conserve pour etre rendu EN ENTIER : l'orchestrateur
     # n'en garde qu'une ligne, et la table des quotas (`EF-22`, `EF-23`, `EF-24`)
     # est precisement ce qu'un operateur doit lire avant de dire oui (`D-01`).
@@ -303,6 +307,35 @@ async def executer(
     async def _catalogue() -> RapportEtape:
         rapport = await ex_cat.executer()
         produits.extend(rapport.souscriptibles)
+        # `CAT 7` / `A-12` — le rattachement Produit -> Company (UC-11 pt 3).
+        # ZERO produit supplementaire : des LIENS dans NOTRE org_hierarchy,
+        # un par (produit COLLECT x IMF porteuse). Les porteuses ont le
+        # package ALL, qui autorise la collecte. En DRY_RUN la carte vit en
+        # memoire (le panier s'exerce a blanc comme en reel — D-01) ; en REEL
+        # les noeuds sont persistes et CR-02 les verifie.
+        for porteuse in porteuses:
+            for produit in rapport.souscriptibles:
+                if produit.type_produit is not ProductType.COLLECT:
+                    continue
+                produits_par_company.setdefault(porteuse.company_id, set()).add(
+                    produit.product_id
+                )
+                if mode is RunMode.REAL:
+                    await hierarchie.ajouter_produit(
+                        run_id=run_id,
+                        company_id=porteuse.company_id,
+                        product_id=produit.product_id,
+                        marqueur=produit.nom,
+                        package="ALL",
+                        country_code=porteuse.country_code,
+                    )
+        if produits_par_company:
+            liens = sum(len(v) for v in produits_par_company.values())
+            sortie(
+                f"Rattachements A-12 : {liens} lien(s) produit x company "
+                f"({len(produits_par_company)} porteuse(s)) — des LIENS chez "
+                "nous, zero produit supplementaire"
+            )
         return rapport
 
     async def _depositaires() -> RapportEtape:
@@ -325,6 +358,7 @@ async def executer(
             configuration=configuration,
             referentiel=referentiel,
             statique=statique,
+            produits_par_company=produits_par_company or None,
             generateur=generateur,
             faker=faker,
             client_service=clients_finaux,
