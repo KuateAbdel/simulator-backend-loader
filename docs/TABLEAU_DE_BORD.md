@@ -32,6 +32,16 @@
 | CAT 7-8 | Rattachement Produit→Company (`org_hierarchy`) + panier depuis SA Company *(ancienne tâche #29 / A-12)* | ⬜ |
 | CAT 9-11 | `perimetre_lending` · `PRODUITS_ATTENDUS` fonction du périmètre · recette « hors périmètre » | ⬜ |
 
+## C-0. DÉCISION du 13/08 (Yaniv) — HÉBERGER AVANT DE CHARGER
+
+Le Loader est déployé sur `simul.api.fintech4esg.com` AVANT tout palier REAL.
+Raison de fond : la MongoDB du Loader (registre Faker, org_hierarchy, runs,
+configuration) est SA MÉMOIRE — charger depuis la machine de dev puis héberger
+donnerait une instance vierge, amputée du registre qui rend CR-03, la reprise,
+le dashboard et la purge possibles. La machine locale = développement
+uniquement. Protocole chirurgical : déployer → brancher les 9 services (.env)
+→ sonde E1 verte sur les 10 → DRY_RUN complet DEPUIS le serveur → paliers.
+
 ## C. La séquence REAL — l'ordre topologique d'ORCHESTRATION.md
 
 | Palier | Tâche | État |
