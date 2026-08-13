@@ -95,13 +95,17 @@ class _AuditFaux:
 
 
 def _controle(
-    hierarchie: Any = None, registre: Any = None, audit: Any = None
+    hierarchie: Any = None,
+    registre: Any = None,
+    audit: Any = None,
+    perimetre_lending: bool = False,
 ) -> ControleRecette:
     return ControleRecette(
         run_id=RUN_ID,
         hierarchie=hierarchie or _HierarchieFausse(),
         registre=registre or _RegistreFaux(),
         audit=audit or _AuditFaux(),
+        perimetre_lending=perimetre_lending,
     )
 
 
@@ -222,7 +226,16 @@ class TestRapport:
         savoir, et personne ne le fait."""
         rapport = await _controle().executer()
         assert "A-07" in _critere(rapport, "CR-09").detail
-        assert "A-04" in _critere(rapport, "CR-10").detail
+        # `CAT 11` — en MEP1 (defaut), CR-10 est HORS PERIMETRE : ce run n'a
+        # pas promis de prets. L'arbitrage A-04 reapparait au sprint 8.
+        cr10 = _critere(rapport, "CR-10")
+        from app.services.recette import Verdict
+        assert cr10.verdict is Verdict.HORS_PERIMETRE
+        assert "sprint 8" in cr10.detail
+        rapport_s8 = await _controle(perimetre_lending=True).executer()
+        cr10_s8 = _critere(rapport_s8, "CR-10")
+        assert cr10_s8.verdict is Verdict.NON_VERIFIABLE
+        assert "A-04" in cr10_s8.detail
 
 
 class TestCR04:

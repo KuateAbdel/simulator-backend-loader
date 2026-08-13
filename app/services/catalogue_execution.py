@@ -75,9 +75,10 @@ from app.services.depositaires_execution import ProduitSouscriptible
 
 logger = logging.getLogger(__name__)
 
-#: Ce que `UC-11` attend au total, une fois le catalogue en place.
+#: Ce que `UC-11` attend au total AU SPRINT 8, perimetre complet. Le compte
+#: d'un run donne est `rapport.attendus`, FONCTION de son perimetre (CAT 10) :
+#: 6 en MEP1 (collecte seule), 12 quand perimetre_lending est active.
 PRODUITS_ATTENDUS = 12
-#: Ce que le Loader CREE. La difference (2) est deja en base — `D-PRD-9`.
 CREATIONS_ATTENDUES = 12
 
 
@@ -103,6 +104,9 @@ class RapportCatalogue:
     souscriptibles: list[ProduitSouscriptible] = field(default_factory=list)
     #: Ecart entre le compte du CDC et ce qui existe reellement.
     ecart_au_cdc: str = ""
+    #: `CAT 10` — le compte attendu DE CE RUN, fonction du perimetre (6 en
+    #: MEP1, 12 au sprint 8). Pose par l'executeur avant toute creation.
+    attendus: int = CREATIONS_ATTENDUES
 
     @property
     def statut(self) -> RunStatus:
@@ -121,7 +125,7 @@ class RapportCatalogue:
     def resume(self) -> str:
         lignes = [
             f"Mode        : {self.mode.value}",
-            f"Produits crees   : {len(self.crees)} / {CREATIONS_ATTENDUES} attendus",
+            f"Produits crees   : {len(self.crees)} / {self.attendus} attendus",
             *(
                 [f"Constate (non utilise) : {c}" for c in self.constates]
                 if self.constates
@@ -163,12 +167,16 @@ class ExecuteurCatalogue:
         product_client: ProductServiceClient,
         audit: AuditTrailRepository,
         chemin_loan_json: Path,
+        #: `CAT 9` — False (MEP1) : collecte seule, les 6 LENDING prepares
+        #: mais jamais emis. True : sprint 8. Vient de la configuration (D-10).
+        perimetre_lending: bool = False,
     ) -> None:
         self.run_id = run_id
         self.mode = mode
         self._produits = product_client
         self._audit = audit
         self._chemin = chemin_loan_json
+        self._perimetre_lending = perimetre_lending
 
     @property
     def ecriture_reelle(self) -> bool:
@@ -177,7 +185,15 @@ class ExecuteurCatalogue:
     async def executer(self) -> RapportCatalogue:
         rapport = RapportCatalogue(mode=self.mode)
 
-        payloads = payloads_lending(charger_loan_json(self._chemin)) + payloads_collect()
+        # `CAT 9` — l'interrupteur du perimetre : en MEP1 (False, le defaut)
+        # les 6 LENDING sont PREPARES mais jamais emis — la collecte seule.
+        payloads = list(payloads_collect())
+        if self._perimetre_lending:
+            payloads = payloads_lending(charger_loan_json(self._chemin)) + payloads
+        # `CAT 10` — le compte attendu est une FONCTION du perimetre : 6 en
+        # MEP1, 12 au sprint 8. Le figer a 12 ferait echouer la verification
+        # d'un run parfaitement conforme (conception §7).
+        rapport.attendus = len(payloads)
         self._verifier_avant_emission(payloads)
 
         for payload in payloads:
@@ -404,9 +420,9 @@ class ExecuteurCatalogue:
         Le Loader constate l'etat de l'environnement, il ne le repare pas.
         """
         total = len(rapport.crees) + len(rapport.reutilises)
-        if total != PRODUITS_ATTENDUS and not rapport.ecart_au_cdc:
+        if total != rapport.attendus and not rapport.ecart_au_cdc:
             rapport.ecart_au_cdc = (
-                f"{total} produits au catalogue, {PRODUITS_ATTENDUS} attendus (UC-11) — "
+                f"{total} produits au catalogue, {rapport.attendus} attendus (UC-11) — "
                 f"{len(rapport.crees)} crees, {len(rapport.reutilises)} reutilises, "
                 f"{len(rapport.refuses_avant_reseau)} refuses avant reseau, "
                 f"{len(rapport.echoues)} en echec"

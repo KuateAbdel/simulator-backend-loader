@@ -181,6 +181,12 @@ class ConfigurationExecution:
 
     pays: dict[str, ConfigurationPays] = field(default_factory=dict)
     nb_clients: int = NB_CLIENTS
+    #: `CAT 9` — le perimetre LENDING est un INTERRUPTEUR, jamais un
+    #: commentaire (conception catalogue §0.2). False = MEP1 : la collecte
+    #: seule, les 6 produits de credit sont PREPARES mais jamais emis.
+    #: True = sprint 8. Il fait partie de l'empreinte D-10 : rejouer un run,
+    #: c'est rejouer son perimetre.
+    perimetre_lending: bool = False
 
     @classmethod
     def defaut_cdc(cls) -> ConfigurationExecution:
@@ -407,6 +413,7 @@ class ConfigurationExecution:
         """
         return {
             "nb_clients": self.nb_clients,
+            "perimetre_lending": self.perimetre_lending,
             "repartition_clients": self.repartir_clients(),
             "pays": {
                 code: {
@@ -430,7 +437,10 @@ class ConfigurationExecution:
         recalculent — les stocker comme verite ferait diverger la copie de la
         regle qui la produit.
         """
-        configuration = cls(nb_clients=int(empreinte.get("nb_clients", NB_CLIENTS)))
+        configuration = cls(
+            nb_clients=int(empreinte.get("nb_clients", NB_CLIENTS)),
+            perimetre_lending=bool(empreinte.get("perimetre_lending", False)),
+        )
         for code, fiche in (empreinte.get("pays") or {}).items():
             pays = ConfigurationPays(
                 code=code,

@@ -67,6 +67,36 @@ class TestLeCompteDuCdc:
         for refuse in PRODUITS_ENVIRONNEMENT:
             assert refuse not in noms_emis
 
+    @pytest.mark.asyncio
+    async def test_CAT9_le_perimetre_est_un_INTERRUPTEUR_jamais_un_commentaire(self) -> None:
+        """MEP1 (defaut) : la collecte SEULE — les 6 LENDING prepares mais
+        jamais emis. Sprint 8 : les 12. Le compte attendu suit (CAT 10)."""
+
+        class _Vide:
+            async def chercher_par_short_name(self, m):  # type: ignore[no-untyped-def]
+                return None
+
+            async def chercher_par_nom(self, n):  # type: ignore[no-untyped-def]
+                return None
+
+        mep1 = await ExecuteurCatalogue(
+            run_id=uuid4(), mode=RunMode.DRY_RUN, product_client=_Vide(),  # type: ignore[arg-type]
+            audit=None,  # type: ignore[arg-type]
+            chemin_loan_json=LOAN_JSON,
+        ).executer()
+        assert len(mep1.crees) == mep1.attendus == 6
+        assert all("[prevu]" in c for c in mep1.crees)
+        assert not any("Nano" in c or "BNPL" in c for c in mep1.crees), (
+            "AUCUN produit de credit n'est emis en MEP1 — pas meme a blanc"
+        )
+
+        sprint8 = await ExecuteurCatalogue(
+            run_id=uuid4(), mode=RunMode.DRY_RUN, product_client=_Vide(),  # type: ignore[arg-type]
+            audit=None,  # type: ignore[arg-type]
+            chemin_loan_json=LOAN_JSON, perimetre_lending=True,
+        ).executer()
+        assert len(sprint8.crees) == sprint8.attendus == 12
+
     def test_le_split_D_PRD_4_produit_six_lending_a_partir_de_quatre(self) -> None:
         """`BNPL` et `ReadyToGo` portent `Category: Any`, refuse par l'enum
         serveur (`INV-PRD-04`, HTTP 422). Chacun est dedouble."""
@@ -167,7 +197,8 @@ class TestArtefactPourLaSuite:
         )
         rapport = await executeur.executer()
         assert len(rapport.crees) == 0, "tout existe deja : rien ne doit etre cree"
-        assert len(rapport.souscriptibles) == PRODUITS_ATTENDUS
+        # `CAT 10` — MEP1 : 6 COLLECT. Le compte attendu suit le perimetre.
+        assert len(rapport.souscriptibles) == rapport.attendus == 6
         assert all(isinstance(p.product_id, UUID) for p in rapport.souscriptibles)
         assert rapport.statut is RunStatus.COMPLETED
 
@@ -287,6 +318,9 @@ class TestLeLoaderNeutraliseANOPRDUNIQ01:
             product_client=produits,
             audit=None,  # type: ignore[arg-type]
             chemin_loan_json=LOAN_JSON,
+            # « Nano » est un produit LENDING : ces scenarios exercent le
+            # perimetre du sprint 8, dit explicitement (CAT 9).
+            perimetre_lending=True,
         )
 
     @pytest.mark.asyncio

@@ -71,6 +71,10 @@ class Verdict(StrEnum):
     #: matiere n'existe pas encore. Ce n'est ni un succes ni un echec, et le
     #: confondre avec l'un des deux serait mentir.
     NON_VERIFIABLE = "NON_VERIFIABLE"
+    #: `CAT 11` — un critere HORS PERIMETRE n'est pas un manque : le run n'a
+    #: pas PROMIS de le tenir (perimetre_lending desactive en MEP1). Il ne
+    #: degrade pas le statut, la ou un NON_VERIFIABLE le degrade.
+    HORS_PERIMETRE = "HORS_PERIMETRE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +86,12 @@ class ResultatCritere:
 
     @property
     def marque(self) -> str:
-        return {Verdict.TENU: "OK  ", Verdict.VIOLE: "VIOLE", Verdict.NON_VERIFIABLE: "N/V "}[
+        return {
+            Verdict.TENU: "OK  ",
+            Verdict.VIOLE: "VIOLE",
+            Verdict.NON_VERIFIABLE: "N/V ",
+            Verdict.HORS_PERIMETRE: "HORS",
+        }[
             self.verdict
         ]
 
@@ -136,11 +145,15 @@ class ControleRecette:
         hierarchie: OrgHierarchyRepository,
         registre: LendersRegistryRepository,
         audit: AuditTrailRepository,
+        #: `CAT 11` — le perimetre du run. Un critere que le run n'a pas
+        #: PROMIS de tenir est HORS PERIMETRE, pas NON VERIFIABLE.
+        perimetre_lending: bool = False,
     ) -> None:
         self.run_id = run_id
         self._hierarchie = hierarchie
         self._registre = registre
         self._audit = audit
+        self._perimetre_lending = perimetre_lending
 
     async def executer(self) -> RapportRecette:
         rapport = RapportRecette(run_id=self.run_id)
@@ -356,8 +369,7 @@ class ControleRecette:
     # Ce qui n'est PAS verifiable, et pourquoi — jamais tu en silence
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _non_verifiables() -> list[ResultatCritere]:
+    def _non_verifiables(self) -> list[ResultatCritere]:
         return [
             ResultatCritere(
                 "CR-01",
@@ -386,8 +398,13 @@ class ControleRecette:
             ResultatCritere(
                 "CR-10",
                 "100 sequences de remboursement fideles",
-                Verdict.NON_VERIFIABLE,
-                "module Vie non livre — persistance des prets, arbitrage A-04",
+                # `CAT 11` — MEP1 est COLLECTE SEULE : ce run n'a pas promis de
+                # prets, le critere est HORS PERIMETRE, pas un manque. Au
+                # sprint 8 (perimetre_lending), il redevient exigible.
+                Verdict.NON_VERIFIABLE if self._perimetre_lending else Verdict.HORS_PERIMETRE,
+                "module Vie non livre — persistance des prets, arbitrage A-04"
+                if self._perimetre_lending
+                else "HORS PERIMETRE MEP1 — perimetre_lending desactive (sprint 8)",
             ),
             ResultatCritere(
                 "CR-12",

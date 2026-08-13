@@ -267,6 +267,8 @@ async def executer(
         product_client=produits_client,
         audit=audit,
         chemin_loan_json=LOAN_JSON,
+        # `CAT 9` — le perimetre vient de la configuration, figee D-10.
+        perimetre_lending=configuration.perimetre_lending,
     )
     ex_dep = ExecuteurDepositaires(
         run_id=run_id,
@@ -386,7 +388,11 @@ async def executer(
         sans rien modifier de ce qu'il mesure.
         """
         return await ControleRecette(
-            run_id=run_id, hierarchie=hierarchie, registre=registre, audit=audit
+            run_id=run_id,
+            hierarchie=hierarchie,
+            registre=registre,
+            audit=audit,
+            perimetre_lending=configuration.perimetre_lending,
         ).executer()
 
     async def _staff() -> RapportEtape:
@@ -439,7 +445,11 @@ async def executer(
         # rapport de recette. Il est donc rendu EN ENTIER, parce que c'est lui
         # qui prouve la generation devant un bailleur.
         verdict = await ControleRecette(
-            run_id=run_id, hierarchie=hierarchie, registre=registre, audit=audit
+            run_id=run_id,
+            hierarchie=hierarchie,
+            registre=registre,
+            audit=audit,
+            perimetre_lending=configuration.perimetre_lending,
         ).executer()
         # `US-E3` — les mesures structurees partent avec le run, comme le
         # rapport texte : le dashboard les sert sans requeter FinZuu.
