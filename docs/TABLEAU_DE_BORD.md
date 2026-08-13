@@ -50,7 +50,7 @@
 
 | Tâche | État |
 |---|---|
-| Routes de pilotage EF-50→EF-59 (config, lancement, progression, journal) | ⬜ socle CFG-01→06 ✅ |
+| Routes de pilotage EF-50→EF-59 — conception écrite (`CONCEPTION_API_SUPER_ADMIN.md`, 13/08) : 5 lots A→E, contrat OpenAPI d'abord pour Zidane | ⬜ socle CFG-01→06 ✅ |
 | Purge par préfixe `DEMO_` + verrou d'exécution (EF-65/66) | ⬜ |
 
 ## E. Backlog S4/S5 restant
