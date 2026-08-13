@@ -136,3 +136,110 @@ le lot A — Zidane maquette sur le contrat, pas sur des promesses.
   (jamais déduit), la recette juge chaque run, le DRY_RUN précède chaque REAL.
 - **Duhamel** : la méthodologie (poids ajustés Annexe D.2, cycle de vie) est
   intégrée dans le moteur (EF-67/68) et sera visible au dashboard (CR-09).
+
+---
+
+## 5. LES USER STORIES DU SUPER-ADMIN DU LOADER — complètes et datées
+
+> Ajout du 13/08 (soir), à la demande de Yaniv : « ce qu'il peut et ne peut
+> pas faire, à quel temps, et ce qu'il voit précisément ». Chaque story a un
+> identifiant `US-*` ; le frontend de Zidane et nos tests d'API pointeront
+> ces identifiants.
+
+### Le cycle de vie — QUAND chaque story est possible
+
+```
+ETAT 0  premier demarrage    → US-A1, US-A2 uniquement (rien d'autre avant)
+ETAT 1  configure, aucun run → tout SAUF les stories "pendant un run"
+ETAT 2  run EN COURS         → lecture + progression + arret ; la config et
+                               les creations d'entites sont VERROUILLEES
+ETAT 3  apres un run         → tout, y compris purge et second run (CR-03)
+```
+
+### A. Session (ÉTAT 0+)
+
+| # | Il PEUT | Il NE PEUT PAS |
+|---|---|---|
+| US-A1 | Se loguer (email + mot de passe du bootstrap) | Se créer un compte : il n'y a QU'UN admin en v1 (Phase 1 CDC) |
+| US-A2 | Être FORCÉ de changer le mot de passe au premier login | Revoir un mot de passe en clair — haché dès le bootstrap, jamais journalisé |
+| US-A3 | Se déconnecter ; session expirée = re-login | Déléguer : pas de rôles secondaires en v1 (v2 : lecteurs) |
+
+### B. Configuration & référentiels (ÉTATS 1 et 3 — JAMAIS pendant un run)
+
+| # | Il PEUT | Il NE PEUT PAS |
+|---|---|---|
+| US-B1 | Voir la configuration RÉSOLUE : chaque valeur avec son origine (défaut CDC / surcharge pays / région / ville) | Voir une valeur sans son origine — l'origine fait partie de la donnée |
+| US-B2 | Modifier les volumes : nb clients (défaut 2000), companies, branches, agences, kiosques, agents par niveau, quotas | Casser un quota du CDC : EF-22/23/24 se paramètrent DANS leurs bornes, l'API refuse hors bornes avec la référence CDC |
+| US-B3 | Activer/désactiver un pays pour le prochain run | Désactiver côté serveur par accident : Loader seul par défaut, l'action serveur est un bouton distinct et explicite (A-08) |
+| US-B4 | Ajouter une ville (région existante, 9 champs, GPS) — relue avant écriture | Modifier le classeur source : la surcouche est réversible, le classeur est immuable |
+| US-B5 | Consulter TOUS les référentiels : arbre géo 51/50/82 avec GPS, 12 telcos avec parts de marché, 576 professions par groupe et profil de revenu, 112 secteurs × 6 industries, 27 formes, 20 fonctions, 195 pays | Les éditer à la main : un référentiel se remplace par LIVRAISON de fichier (versionnée), jamais par édition de cellules |
+| US-B6 | Demander l'ajout d'un PAYS et recevoir la LISTE de ce qui manque (régions, villes, telcos, patronymes, plan de numérotation) | L'activer sans cette matière : EF-05 borne à 4 — le refus est pédagogique |
+| US-B7 | Modifier la config du re-scoring (30/60/90 j — CDC §299) et le terme des DAT | Rien pendant l'ÉTAT 2 : toute la section B est verrouillée run en cours |
+
+### C. Les runs (le « bouton Run » — ÉTATS 1 et 3)
+
+| # | Il PEUT | Il NE PEUT PAS |
+|---|---|---|
+| US-C1 | Lancer une PRÉPARATION (DRY_RUN) sur la config courante | Lancer un REAL directement : le DRY_RUN du même périmètre est un PRÉALABLE obligatoire (D-01) |
+| US-C2 | Lire le rapport à blanc : par pays 500/500, quotas, solde total qui SERA déposé, 12 produits, écarts constatés, produits étrangers refusés | — |
+| US-C3 | CONFIRMER le passage en REAL (action explicite, re-saisie du mot du run) | Confirmer si un run est déjà en cours : verrou EF-55, HTTP 409 avec l'id du run en cours |
+| US-C4 | Suivre la PROGRESSION en direct : palier courant (1→8), compteurs par pays qui montent, erreurs au fil de l'eau, ETA sur le tempo mesuré | — |
+| US-C5 | ARRÊTER proprement : fin du lot en cours, registre réconcilié, rien d'orphelin | Tuer brutalement depuis l'écran — l'arrêt sale n'existe pas dans l'API |
+| US-C6 | REPRENDRE un run interrompu : même périmètre, CR-03 reconnaît l'existant, ne crée que le manquant | Créer un doublon en reprenant : structurellement impossible (registre + GET-avant-POST + unicité triple) |
+| US-C7 | Consulter l'HISTORIQUE : chaque run avec mode, périmètre, durée, statut, rapport complet, recette CR-01→12 (TENU/VIOLÉ/NON VÉRIFIABLE avec raison), réconciliation Faker | Supprimer un run de l'historique : le journal est append-only (CR-06) |
+
+### D. Entités à l'unité (ÉTATS 1 et 3)
+
+| # | Il PEUT | Il NE PEUT PAS |
+|---|---|---|
+| US-D1 | Créer une COMPANY : il saisit type + pays + ville (+ nom s'il veut), le Loader compose TOUT le reste et montre l'APERÇU complet avant tout envoi ; à la confirmation, séquence S3-03 complète (company → licences → admin user → comptes) | Envoyer sans aperçu ; envoyer une Company qui violerait un invariant (secteur vide, ville hors pays…) — refus avant réseau, motif affiché |
+| US-D2 | Créer un PRODUIT COLLECT : nom métier, type, catégorie, bornes, taux — aperçu puis envoi avec marqueur short_name et protocole deux clés | Créer un produit LENDING en v1 (interrupteur perimetre_lending, sprint 8) ; dépasser 24 % (refus BEAC/COBAC avant réseau) |
+| US-D3 | Voir le résultat RELU depuis la plateforme après création (jamais déduit — FRA-218) | Supprimer une entité créée : les services n'ont pas de DELETE — l'API le DIT au lieu de le cacher |
+
+### E. VISUALISATION — ce qu'il voit, écran par écran
+
+**E1 — Vue d'ensemble (l'atterrissage après login)**
+- 9 pastilles de santé des services FinZuu (vert/rouge, latence du dernier /health)
+- l'état du Loader : run en cours OU dernier run (statut, date, durée)
+- les 4 pays avec leurs compteurs vivants : clients / cible, companies, kiosques
+- les alertes ouvertes (écarts CDC, entités non purgeables, anomalies FRA-*)
+
+**E2 — Écosystème (le drill-down)**
+- l'arbre navigable : pays → company → branch → agence → kiosque → clients
+  rattachés (org_hierarchy, la donnée que la plateforme ne sait pas montrer)
+- fiche entité au clic : tout ce que NOUS savons (y compris ce que le serveur
+  ne porte pas : quartier, GPS, licences, journal de ses écritures)
+
+**E3 — Population (la démonstration devant bailleur)**
+- pyramide des âges (60 % < 25 ans visible), ratio femmes/hommes 2:1
+- occupations : nuage/top des 576 métiers, part agriculture (EF-24 : 20 %)
+- soldes : histogramme lognormal, médiane, part ≥ 150 000 FCFA (EF-68)
+- 4 profils comportementaux : 50/25/13/12 mesuré vs cible (CR-09)
+- lieux de naissance : carte/États des ~10 % nés à l'étranger
+
+**E4 — Run en cours / rapport de run**
+- barre des 8 paliers avec le palier actif, compteurs par pays en direct
+- le rapport final tel qu'il existe aujourd'hui en console, mais structuré :
+  quotas, solde doté, souscriptions UC-13, refusés avant réseau AVEC motifs
+- la recette : les 13 critères CR, chacun TENU/VIOLÉ/NON VÉRIFIABLE + raison
+
+**E5 — Traçabilité**
+- le registre Faker : chaque client_id consommé, son état, son entité
+- le journal d'audit : chaque intention d'écriture, réussie/échouée, horodatée
+- la réconciliation : « aucune intention orpheline » ou la liste exacte
+
+### F. Purge (ÉTAT 3)
+
+| # | Il PEUT | Il NE PEUT PAS |
+|---|---|---|
+| US-F1 | PRÉPARER : voir la liste exacte de ce que le marqueur retrouve, par service, avec le compte | Purger sans préparation |
+| US-F2 | CONFIRMER : exécution journalisée, rapport relu | Purger identity/account/depositary : AUCUN DELETE — la liste des résidus marqués lui est montrée, jamais cachée |
+
+### G. Les interdits TRANSVERSAUX (ce que l'admin ne peut JAMAIS faire)
+
+1. Contourner un invariant INV-* — aucune route « écriture brute » n'existe.
+2. Écrire sur une entité partagée non marquée (leçon A-10).
+3. Provoquer un doublon — registre, GET-avant-POST, unicité triple.
+4. Lancer deux générations simultanées (EF-55).
+5. Voir un secret en clair (mots de passe hachés, credentials .env jamais exposés par l'API).
+6. Toucher au crédit avant le sprint 8 (perimetre_lending).
