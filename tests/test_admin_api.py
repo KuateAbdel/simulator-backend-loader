@@ -15,7 +15,7 @@ a chaque session de test — jamais la base de developpement.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import pytest
