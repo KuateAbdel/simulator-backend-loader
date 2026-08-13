@@ -1,0 +1,267 @@
+"""
+app/routes/admin_dashboard.py
+=============================
+Lot C — la VISUALISATION (`US-E1`, `US-E2`, `US-E4`).
+
+La regle de source, gravee dans le backlog : les compteurs viennent de NOS
+collections — jamais vingt requetes paginees vers FinZuu a chaque affichage.
+La seule exception est la SANTE des services (`US-E1`), qui est par nature
+une question posee a eux : neuf sondes `/health` legeres, en parallele,
+plafonnees a 3 s chacune.
+
+`US-E3` (les distributions de population) N'EST PAS ICI — dit franchement :
+les attributs des clients (age, metier, solde) ne sont PAS persistes chez
+nous, ils partent au serveur. Les servir exigera que le moteur range ses
+MESURES structurees avec le run (comme il range deja son rapport texte) —
+c'est la tranche suivante, pas un oubli.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import Annotated, Any
+from uuid import UUID
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.core.config import settings
+from app.models.enums import NiveauOrganisation
+from app.repositories.audit_trail import AuditTrailRepository
+from app.repositories.faker_ledger import FakerLedgerRepository
+from app.repositories.loader_runs import LoaderRunRepository
+from app.repositories.org_hierarchy import OrgHierarchyRepository
+from app.routes.dependances import SessionAdmin, admin_complet
+
+router = APIRouter(prefix="/admin/dashboard", tags=["admin — dashboard"])
+
+#: Les neuf services FinZuu + Faker — le perimetre exact du sondage E1.
+SERVICES_SONDES: tuple[tuple[str, str], ...] = (
+    ("user-service", settings.user_service_base),
+    ("config-service", settings.config_service_base),
+    ("identity-service", settings.identity_service_base),
+    ("account-service", settings.account_service_base),
+    ("company-service", settings.company_service_base),
+    ("product-service", settings.product_service_base),
+    ("depositary-service", settings.depositary_service_base),
+    ("client-service", settings.client_service_base),
+    ("collect-service", settings.collect_service_base),
+    ("faker", settings.faker_base_url),
+)
+
+
+async def _sonder(client: httpx.AsyncClient, nom: str, base: str) -> dict[str, Any]:
+    """Une sonde — jamais d'exception propagee : un service mort est une
+    DONNEE du tableau de bord, pas une panne du tableau de bord."""
+    debut = time.monotonic()
+    try:
+        reponse = await client.get(f"{base}/health")
+        latence = round((time.monotonic() - debut) * 1000)
+        return {
+            "nom": nom,
+            "etat": "up" if reponse.status_code < 500 else "down",
+            "http": reponse.status_code,
+            "latence_ms": latence,
+        }
+    except httpx.HTTPError as erreur:
+        return {
+            "nom": nom,
+            "etat": "down",
+            "http": None,
+            "latence_ms": round((time.monotonic() - debut) * 1000),
+            "erreur": type(erreur).__name__,
+        }
+
+
+async def _dernier_run() -> Any:
+    runs = await LoaderRunRepository().lister(limite=1)
+    return runs[0] if runs else None
+
+
+@router.get("")
+async def vue_d_ensemble(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`US-E1` — l'atterrissage : sante des services, dernier run, compteurs
+    et alertes. Tout sauf la sante vient de NOS collections."""
+    async with httpx.AsyncClient(timeout=3.0) as sonde:
+        services = await asyncio.gather(
+            *(_sonder(sonde, nom, base) for nom, base in SERVICES_SONDES)
+        )
+
+    run = await _dernier_run()
+    compteurs: dict[str, Any] = {}
+    alertes: list[str] = []
+    if run is not None:
+        arbre = OrgHierarchyRepository()
+        ledger = FakerLedgerRepository()
+        audit = AuditTrailRepository()
+        for niveau in NiveauOrganisation:
+            compteurs[niveau.value.lower() + "s"] = len(
+                await arbre.par_niveau(run.id, niveau)
+            )
+        compteurs["faker_par_pays"] = await ledger.compter_par_pays(run.id)
+        compteurs["ecritures_par_type"] = await audit.compter_par_type(run.id)
+
+        orphelines = await audit.intentions_orphelines(run.id)
+        if orphelines:
+            alertes.append(
+                f"{len(orphelines)} intention(s) orpheline(s) au journal — des "
+                "ecritures dont on ignore si le serveur les a appliquees"
+            )
+        reservations = await ledger.reservations_orphelines(run.id)
+        if reservations:
+            alertes.append(
+                f"{len(reservations)} reservation(s) Faker orpheline(s) — "
+                "client revendique, rien produit"
+            )
+        if run.status.value in ("RUNNING", "PAUSED"):
+            alertes.append(f"run {run.id} encore {run.status.value} (verrou EF-55 actif)")
+
+    return {
+        "services": list(services),
+        "dernier_run": None
+        if run is None
+        else {
+            "run_id": str(run.id),
+            "mode": run.mode.value,
+            "statut": run.status.value,
+            "nb_checkpoints": len(run.checkpoints),
+        },
+        "compteurs": compteurs,
+        "alertes": alertes,
+    }
+
+
+@router.get("/ecosysteme")
+async def ecosysteme(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    run_id: UUID | None = None,
+) -> dict[str, Any]:
+    """`US-E2` — l'arbre navigable : la structure que la plateforme elle-meme
+    ne sait pas montrer, parce que `org_hierarchy` est a nous.
+
+    Quatre lectures par niveau puis assemblage en memoire — jamais une requete
+    par noeud : 80 kiosques et 2000 clients tiendraient mal autrement.
+    """
+    if run_id is None:
+        run = await _dernier_run()
+        if run is None:
+            return {"run_id": None, "branches": [], "note": "aucun run en base"}
+        run_id = run.id
+
+    arbre = OrgHierarchyRepository()
+    par_niveau = {
+        niveau: await arbre.par_niveau(run_id, niveau) for niveau in NiveauOrganisation
+    }
+    if not any(par_niveau.values()):
+        raise HTTPException(status_code=404, detail=f"aucun noeud pour le run {run_id}")
+
+    enfants_de: dict[UUID | None, list[Any]] = {}
+    for noeuds in par_niveau.values():
+        for noeud in noeuds:
+            enfants_de.setdefault(noeud.parent_id, []).append(noeud)
+
+    def _kiosque(noeud: Any) -> dict[str, Any]:
+        rattaches = enfants_de.get(noeud.id, [])
+        agents = [n for n in rattaches if n.niveau is NiveauOrganisation.AGENT]
+        clients = [n for n in rattaches if n.niveau is NiveauOrganisation.CLIENT]
+        return {
+            "id": str(noeud.id),
+            "nom": noeud.name,
+            "quartier": noeud.district_id,
+            "depositary_id": str(noeud.depositary_id) if noeud.depositary_id else None,
+            "nb_agents": len(agents),
+            "nb_clients": len(clients),
+        }
+
+    def _agence(noeud: Any) -> dict[str, Any]:
+        return {
+            "id": str(noeud.id),
+            "nom": noeud.name,
+            "ville": noeud.city_id,
+            "kiosques": [
+                _kiosque(k)
+                for k in enfants_de.get(noeud.id, [])
+                if k.niveau is NiveauOrganisation.KIOSQUE
+            ],
+        }
+
+    branches = [
+        {
+            "id": str(b.id),
+            "nom": b.name,
+            "pays": b.country_code,
+            "region": b.region_id,
+            "company_id": str(b.company_id),
+            "agences": [
+                _agence(a)
+                for a in enfants_de.get(b.id, [])
+                if a.niveau is NiveauOrganisation.AGENCE
+            ],
+        }
+        for b in par_niveau[NiveauOrganisation.BRANCHE]
+    ]
+    return {
+        "run_id": str(run_id),
+        "comptes": {n.value.lower() + "s": len(v) for n, v in par_niveau.items()},
+        "branches": branches,
+    }
+
+
+@router.get("/tracabilite")
+async def tracabilite(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    run_id: UUID | None = None,
+) -> dict[str, Any]:
+    """`US-E4` — « d'ou vient cette entite ? » : le registre Faker et le
+    journal d'intentions, avec leurs reconciliations."""
+    if run_id is None:
+        run = await _dernier_run()
+        if run is None:
+            return {"run_id": None, "note": "aucun run en base"}
+        run_id = run.id
+
+    ledger = FakerLedgerRepository()
+    audit = AuditTrailRepository()
+    intentions = await audit.exporter_run(run_id)
+    orphelines_audit = await audit.intentions_orphelines(run_id)
+    orphelines_faker = await ledger.reservations_orphelines(run_id)
+
+    return {
+        "run_id": str(run_id),
+        "registre_faker": {
+            "par_pays": await ledger.compter_par_pays(run_id),
+            "reservations_orphelines": [
+                {"client_id": o.id, "pays": o.country_code, "seed": o.seed}
+                for o in orphelines_faker[:50]
+            ],
+        },
+        "journal": {
+            "ecritures_par_type": await audit.compter_par_type(run_id),
+            "nb_entrees": len(intentions),
+            "intentions_orphelines": [
+                {
+                    "entity_type": e.entity_type,
+                    "entity_id": str(e.entity_id),
+                    "cible": (e.after or {}).get("cible", "?"),
+                }
+                for e in orphelines_audit[:50]
+            ],
+            "dernieres_entrees": [
+                {
+                    "entity_type": e.entity_type,
+                    "action": e.action,
+                    "horodatage": e.timestamp.isoformat(),
+                }
+                for e in intentions[-20:]
+            ],
+        },
+        "reconciliation": (
+            "aucune intention orpheline — le journal est clos"
+            if not orphelines_audit and not orphelines_faker
+            else f"{len(orphelines_audit)} intention(s) et "
+            f"{len(orphelines_faker)} reservation(s) a verifier a la main"
+        ),
+    }

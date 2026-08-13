@@ -55,6 +55,7 @@ from app.core.config import settings
 from app.routes import (
     admin_auth,
     admin_configuration,
+    admin_dashboard,
     admin_referentiels,
     admin_runs,
     health,
@@ -102,4 +103,5 @@ app.include_router(health.router)
 app.include_router(admin_auth.router)
 app.include_router(admin_configuration.router)
 app.include_router(admin_referentiels.router)
+app.include_router(admin_dashboard.router)
 app.include_router(admin_runs.router)

@@ -793,3 +793,136 @@ class TestLotBRuns:
             "DELETE", f"/admin/runs/{run_id}", headers=entetes
         )
         assert suppression.status_code == 405
+
+
+class TestLotCDashboard:
+    """`US-E1`/`US-E2`/`US-E4` — la visualisation, depuis NOS collections.
+
+    Les sondes /health sont DOUBLEES (le reseau n'entre pas dans un test) ;
+    l'arbre, le registre et le journal sont de VRAIS documents inseres dans
+    la base de test — le dashboard lit exactement ce que le run ecrirait.
+    """
+
+    @staticmethod
+    def _doubler_sondes(monkeypatch: pytest.MonkeyPatch) -> None:
+        from app.routes import admin_dashboard
+
+        async def fausse_sonde(client, nom, base):
+            return {"nom": nom, "etat": "up", "http": 200, "latence_ms": 7}
+
+        monkeypatch.setattr(admin_dashboard, "_sonder", fausse_sonde)
+
+    @staticmethod
+    async def _semer_un_run() -> Any:
+        """Un run avec un arbre minimal REEL : branche > agence > kiosque >
+        agent + client — inseres par les repositories, jamais a la main."""
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+        from app.repositories.org_hierarchy import OrgHierarchyRepository
+
+        await database.get_database().drop_collection("loader_runs")
+        await database.get_database().drop_collection("org_hierarchy")
+        run = LoaderRun(
+            _id=_uuid4(), sim_start_date=_date(2026, 2, 14),
+            sim_end_date=_date(2026, 8, 13), status=RunStatus.PARTIAL,
+        )
+        await LoaderRunRepository().remplacer(run)
+
+        arbre = OrgHierarchyRepository()
+        company = _uuid4()
+        branche = await arbre.ajouter_branche(
+            run_id=run.id, company_id=company, name="DEMO_Branche Littoral",
+            country_code="CM", region_id="CM-REG-01",
+        )
+        agence = await arbre.ajouter_agence(
+            run_id=run.id, branche_id=branche.id, company_id=company,
+            name="DEMO_Agence Douala", country_code="CM", city_id="CM-CT-01",
+        )
+        kiosque = await arbre.ajouter_kiosque(
+            run_id=run.id, agence_id=agence.id, company_id=company,
+            name="DEMO_Kiosque Bepanda", country_code="CM",
+            district_id="CM-DIS-01", depositary_id=_uuid4(),
+        )
+        assert kiosque is not None
+        await arbre.ajouter_agent(
+            run_id=run.id, kiosque_id=kiosque.id, company_id=company,
+            name="DEMO_Agent 1", country_code="CM", user_id=_uuid4(),
+        )
+        await arbre.ajouter_client(
+            run_id=run.id, kiosque_id=kiosque.id, company_id=company,
+            country_code="CM", msisdn="+237650000001", client_id=_uuid4(),
+        )
+        return run
+
+    async def test_US_E1_la_vue_d_ensemble_sonde_et_compte(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_sondes(monkeypatch)
+        entetes = await _session_complete(client)
+        await self._semer_un_run()
+        reponse = await client.get("/admin/dashboard", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert len(corps["services"]) == 10, "les 9 services FinZuu + Faker"
+        assert all(s["etat"] == "up" for s in corps["services"])
+        assert corps["compteurs"]["branches"] == 1
+        assert corps["compteurs"]["kiosques"] == 1
+        assert corps["compteurs"]["clients"] == 1
+        assert corps["dernier_run"]["statut"] == "PARTIAL"
+
+    async def test_US_E2_l_arbre_est_NAVIGABLE_et_assemble(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        await self._semer_un_run()
+        reponse = await client.get("/admin/dashboard/ecosysteme", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        branche = corps["branches"][0]
+        assert branche["pays"] == "CM"
+        kiosque = branche["agences"][0]["kiosques"][0]
+        assert kiosque["nom"] == "DEMO_Kiosque Bepanda"
+        assert kiosque["nb_agents"] == 1
+        assert kiosque["nb_clients"] == 1, (
+            "le rattachement EF-26 doit etre VISIBLE dans l'arbre — c'est la "
+            "structure que la plateforme ne sait pas montrer"
+        )
+
+    async def test_US_E2_un_run_sans_arbre_est_un_404(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        entetes = await _session_complete(client)
+        reponse = await client.get(
+            f"/admin/dashboard/ecosysteme?run_id={_uuid4()}", headers=entetes
+        )
+        assert reponse.status_code == 404
+
+    async def test_US_E4_la_tracabilite_reconcilie(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        from app.repositories.audit_trail import AuditTrailRepository
+
+        entetes = await _session_complete(client)
+        run = await self._semer_un_run()
+        await database.get_database().drop_collection("audit_trail")
+        await database.get_database().drop_collection("faker_consumption_ledger")
+        from uuid import uuid4 as _uuid4
+
+        async with AuditTrailRepository().intention(
+            run.id, entity_type="Company", entity_id=_uuid4(),
+            operation="CREATE", cible="company-service", payload={"name": "x"},
+        ) as suivi:
+            suivi.reussi({"ok": True})
+
+        reponse = await client.get("/admin/dashboard/tracabilite", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["journal"]["nb_entrees"] >= 1
+        assert corps["journal"]["intentions_orphelines"] == []
+        assert "journal est clos" in corps["reconciliation"]
