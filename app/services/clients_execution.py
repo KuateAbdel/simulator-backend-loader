@@ -119,7 +119,7 @@ from app.services.clients_composition import (
     CompositionImpossible,
     ancrer_sur_kiosque,
     composer,
-    occupation_du_secteur,
+    occupation_reelle,
 )
 from app.services.generateur import (
     CLES_PROFIL_INTERNE,
@@ -127,6 +127,7 @@ from app.services.generateur import (
     date_de_naissance_du_client,
 )
 from app.services.geographie import ReferentielGeo
+from app.services.referentiel_statique import ReferentielStatique
 from app.services.source_interne import (
     SourceIdentites,
     SourceInterne,
@@ -930,6 +931,9 @@ class ExecuteurClients:
         mode: RunMode,
         configuration: ConfigurationExecution,
         referentiel: ReferentielGeo,
+        #: `SD-3` — le catalogue de JJB. C'est lui qui fournit les 576 professions
+        #: reelles, la ou le Loader en inventait dix-huit.
+        statique: ReferentielStatique,
         generateur: Generateur,
         faker: FakerClient,
         client_service: ClientServiceClient,
@@ -943,6 +947,7 @@ class ExecuteurClients:
         self.mode = mode
         self._configuration = configuration
         self._referentiel = referentiel
+        self._statique = statique
         self._generateur = generateur
         self._faker = faker
         self._interne = interne or SourceInterne()
@@ -1487,10 +1492,24 @@ class ExecuteurClients:
                 self._referentiel,
                 self._alea,
                 jeune=reservation.jeune,
-                occupation_imposee=(
-                    occupation_du_secteur(reservation.secteur, self._alea)
-                    if reservation.secteur
-                    else None
+                # `SD-3` — TOUS les clients recoivent un metier reel, plus
+                # seulement les CORPORATE. Mesure du 12/08 : les 400 INDIVIDUAL
+                # d'un run de 500 portaient TOUS « Commercant », le defaut code en
+                # dur — une seule occupation distincte pour 1600 clients sur la
+                # campagne complete.
+                #
+                # `reservation.secteur` n'est renseigne que pour les CORPORATE,
+                # parce que `EF-24` parle des « professionnels ». Un INDIVIDUAL
+                # tire donc parmi les 576 professions, sans famille imposee.
+                occupation_imposee=occupation_reelle(
+                    reservation.secteur or None,
+                    faker.client_id,
+                    self._statique,
+                    # Une personne MORALE ne touche ni salaire ni pension : le
+                    # profil `bank_stable` lui est ferme. Mesure du 12/08 : sans
+                    # cette regle, 47 CORPORATE sur 100 recevaient un metier de
+                    # salarie ou de journalier.
+                    personne_morale=reservation.business,
                 ),
                 segment=segment,
             )

@@ -38,16 +38,20 @@ from app.core.invariants import GENRES_EMIS, InvariantViole
 from app.models.domain import OrgHierarchyNode
 from app.models.enums import NiveauOrganisation
 from app.services.clients_composition import (
+    GROUPES_PAR_FAMILLE_CDC,
     OCCUPATIONS_PAR_SECTEUR,
+    PROFIL_INTERDIT_AUX_PERSONNES_MORALES,
     AncrageGeographique,
     CompositionImpossible,
     ancrer_sur_kiosque,
     composer,
     langue_de_la_region,
     occupation_du_secteur,
+    occupation_reelle,
 )
 from app.services.generateur import Generateur
 from app.services.geographie import charger_referentiel
+from app.services.referentiel_statique import charger_statique
 
 CLASSEUR = Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")
 REFERENTIEL = charger_referentiel(CLASSEUR)
@@ -119,6 +123,9 @@ def _composer(faker: ClientFaker, pays_kiosque: str | None = None, **kwargs: Any
     kwargs.setdefault("jeune", True)
     alea = random.Random(1)
     return composer(faker, ancrage, _generateur(), REFERENTIEL, alea, **kwargs)
+
+
+STATIQUE = charger_statique()
 
 
 class TestLaGeographieDeriveDuKiosque:
@@ -476,3 +483,112 @@ class TestLesGarantiesDeStructure:
                 random.Random(1),
                 jeune=True,
             )
+
+
+class TestOccupationsReellesSD3:
+    """`SD-3` — 18 metiers inventes remplaces par les 576 de JJB.
+
+    LE DEFAUT QUE CE LOT FERME, mesure du 12/08 sur 500 clients :
+
+        INDIVIDUAL — 400 clients, **1 SEULE occupation distincte**
+            Commercant   400  (100,0 %)
+
+    Les 1600 clients individuels de la campagne portaient TOUS « Commercant », le
+    defaut code en dur du generateur. C'est le champ qu'un bailleur lit en premier.
+    """
+
+    def test_les_quatre_familles_du_CDC_survivent(self) -> None:
+        """`EF-24` nomme « agriculture » et « transports, commerce et services ».
+        Le vocabulaire du CDC reste le CONTRAT ; le fichier n'est que la MATIERE."""
+        assert set(GROUPES_PAR_FAMILLE_CDC) == {
+            "AGRICULTURE",
+            "TRANSPORTS",
+            "COMMERCE",
+            "SERVICES",
+        }
+
+    def test_chaque_groupe_declare_EXISTE_dans_le_referentiel(self) -> None:
+        """Vingt-et-un libelles de groupe sont cites ; si JJB en renomme un, le
+        Loader chercherait un groupe inexistant."""
+        connus = set(STATIQUE.groupes)
+        for famille, groupes in GROUPES_PAR_FAMILLE_CDC.items():
+            manquants = [g for g in groupes if g not in connus]
+            assert manquants == [], f"{famille} : {manquants}"
+
+    def test_les_VINGT_ET_UN_groupes_sont_couverts_sans_doublon(self) -> None:
+        """Un groupe oublie serait 46 professions perdues ; un groupe dans deux
+        familles ferait qu'un metier appartient a deux familles du CDC."""
+        tous = [g for groupes in GROUPES_PAR_FAMILLE_CDC.values() for g in groupes]
+        assert len(tous) == len(set(tous)), "un groupe est dans deux familles"
+        assert set(tous) == set(STATIQUE.groupes), "un groupe n'est dans aucune famille"
+
+    def test_l_AGRICULTURE_porte_assez_de_metiers_pour_EF_24(self) -> None:
+        metiers = STATIQUE.professions_des_groupes(
+            GROUPES_PAR_FAMILLE_CDC["AGRICULTURE"]
+        )
+        assert len(metiers) >= 100, f"{len(metiers)} metiers agricoles"
+
+    def test_un_INDIVIDUAL_tire_parmi_les_576(self) -> None:
+        """`EF-24` parle des « professionnels » : les CORPORATE. Un INDIVIDUAL n'a
+        aucun quota d'activite au CDC, donc aucune famille imposee."""
+        vus = {occupation_reelle(None, f"CM-IND-{r}", STATIQUE) for r in range(300)}
+        assert len(vus) > 150, f"{len(vus)} metiers distincts pour 300 clients"
+        assert vus <= set(STATIQUE.professions)
+
+    def test_un_CORPORATE_reste_dans_sa_famille(self) -> None:
+        for famille, groupes in GROUPES_PAR_FAMILLE_CDC.items():
+            admis = set(STATIQUE.professions_des_groupes(groupes))
+            for rang in range(40):
+                metier = occupation_reelle(
+                    famille, f"CM-BIZ-{famille}-{rang}", STATIQUE, personne_morale=True
+                )
+                assert metier in admis, (famille, metier)
+
+    def test_une_PERSONNE_MORALE_n_est_JAMAIS_salariee(self) -> None:
+        """Le fichier donne la regle dans sa propre definition : `bank_stable` =
+        « Regular and predictable SALARY, PENSION or institutional PAYROLL ». Cela
+        decrit un salarie, pas une entreprise.
+
+        Mesure du 12/08 avant cette regle : **47 CORPORATE sur 100** recevaient un
+        metier de salarie ou de journalier — « Dock labourer paid casually »,
+        « Government accountant ».
+        """
+        for famille in GROUPES_PAR_FAMILLE_CDC:
+            for rang in range(60):
+                metier = occupation_reelle(
+                    famille, f"biz-{famille}-{rang}", STATIQUE, personne_morale=True
+                )
+                profil = STATIQUE.profil_de_la_profession(metier).nom
+                assert profil != PROFIL_INTERDIT_AUX_PERSONNES_MORALES, (metier, profil)
+
+    def test_un_INDIVIDUAL_peut_ETRE_salarie(self) -> None:
+        """La regle ne vaut que pour les personnes morales : un particulier
+        fonctionnaire est un client de microfinance parfaitement ordinaire."""
+        profils = {
+            STATIQUE.profil_de_la_profession(
+                occupation_reelle(None, f"ind-{r}", STATIQUE)
+            ).nom
+            for r in range(200)
+        }
+        assert PROFIL_INTERDIT_AUX_PERSONNES_MORALES in profils
+
+    def test_ANCREE_au_client_jamais_au_run(self) -> None:
+        """`CR-03` — une reprise ne doit pas changer le metier d'un client."""
+        assert occupation_reelle(None, "CM-IND-42", STATIQUE) == occupation_reelle(
+            None, "CM-IND-42", STATIQUE
+        )
+        assert occupation_reelle("AGRICULTURE", "CM-BIZ-7", STATIQUE) == occupation_reelle(
+            "AGRICULTURE", "CM-BIZ-7", STATIQUE
+        )
+
+    def test_une_famille_INCONNUE_est_REFUSEE(self) -> None:
+        """« transports, commerce et services » n'est pas une liste ouverte."""
+        with pytest.raises(CompositionImpossible, match="hors de la taxonomie EF-24"):
+            occupation_reelle("PECHE HAUTURIERE", "x", STATIQUE)
+
+    def test_le_defaut_Commercant_a_DISPARU(self) -> None:
+        """Il servait 100 % des INDIVIDUAL. Aucun client ne doit plus le recevoir
+        par defaut — et « Commercant » n'existe meme pas dans le referentiel, qui
+        est en anglais."""
+        vus = {occupation_reelle(None, f"c{r}", STATIQUE) for r in range(200)}
+        assert "Commercant" not in vus

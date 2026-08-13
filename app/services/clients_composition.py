@@ -142,6 +142,7 @@ from app.core.invariants import valider_devise_pays, valider_msisdn_operateur
 from app.models.domain import OrgHierarchyNode
 from app.services.generateur import Generateur, IdentiteGeneree
 from app.services.geographie import ReferentielGeo
+from app.services.referentiel_statique import ReferentielStatique
 
 #: Faker parle `WOMAN`/`MAN`, la plateforme `FEMALE`/`MALE`. Le serveur ne valide
 #: rien (`D-IDN-1`) : cette table est le seul filtre du systeme.
@@ -530,6 +531,138 @@ def _canal(faker: ClientFaker) -> SubscriptionChannel:
         if faker.quick_win.get("IS_SMARTPHONE_USER") == 1
         else SubscriptionChannel.USSD
     )
+
+
+#: `SD-3` — la correspondance des 21 groupes de JJB vers les QUATRE familles du
+#: CDC. C'est la couche anti-corruption appliquee une fois de plus : **le
+#: vocabulaire du CDC reste le CONTRAT, le fichier n'est que la MATIERE.**
+#:
+#: `EF-24` nomme « agriculture » et « transports, commerce et services ». Ces
+#: quatre familles ne disparaissent pas : elles deviennent des VUES sur les 576
+#: professions.
+#:
+#: Comptes mesures le 12/08 : AGRICULTURE 140 · TRANSPORTS 27 · COMMERCE 63 ·
+#: SERVICES 346. Contre 5 · 4 · 4 · 5 auparavant.
+GROUPES_PAR_FAMILLE_CDC: Final[dict[str, tuple[str, ...]]] = {
+    "AGRICULTURE": (
+        "Agronomy and crop farming",
+        "Livestock and animal production",
+        "Fishing and aquaculture",
+        "Forestry and forest products",
+    ),
+    "TRANSPORTS": ("Informal transport and logistics",),
+    "COMMERCE": (
+        "Informal commerce and street trade",
+        "Formal trade, hospitality and personal-service SMEs",
+    ),
+    "SERVICES": (
+        "Public administration and government",
+        "Education and research",
+        "Health and social services",
+        "Banking, insurance and formal financial services",
+        "Large formal enterprises and regulated utilities",
+        "NGOs, international organizations and religious institutions",
+        "Registered professional and business services",
+        "Technology, media and creative formal businesses",
+        "Formal manufacturing, construction and repair SMEs",
+        "Informal food, hospitality and household production",
+        "Informal crafts, construction and repair",
+        "Informal personal, digital and entertainment services",
+        "Extractive and other irregular primary activities",
+        "Pensions and non-occupational stable income",
+    ),
+}
+
+
+#: `SD-3` — le profil de revenu qu'une personne MORALE ne peut pas porter.
+#:
+#: C'est le fichier de JJB qui donne la regle, dans sa propre definition :
+#:
+#:     bank_stable : « Regular and predictable SALARY, PENSION or institutional
+#:                     PAYROLL, generally paid through a bank account »
+#:
+#: Un salaire, une pension, une paie institutionnelle : cela decrit un SALARIE,
+#: pas une entreprise. Les trois autres profils decrivent bien des activites —
+#: « Formal SME OWNER », « informal MICRO-ENTREPRENEUR », un agriculteur.
+#:
+#: DEFAUT MESURE LE 12/08 avant cette regle : 47 CORPORATE sur 100 recevaient un
+#: metier de salarie ou de journalier — « Dock labourer paid casually »,
+#: « Government accountant ». Une personne morale n'est ni l'un ni l'autre.
+#:
+#: Ce que la regle NE resout PAS, et il faut le dire : le fichier range dans
+#: `micro_informal` a la fois le « micro-entrepreneur » et le « casual worker ».
+#: Un conducteur de moto-taxi peut etre une Entreprise Individuelle — une des 27
+#: formes juridiques — donc le garder est juste ; un journalier occasionnel reste
+#: possible. Une precision plus fine exigerait un statut d'emploi par profession,
+#: que le fichier ne fournit pas. On ne l'invente pas.
+PROFIL_INTERDIT_AUX_PERSONNES_MORALES: Final = "bank_stable"
+
+
+def occupation_reelle(
+    famille: str | None,
+    ancre: str,
+    statique: ReferentielStatique,
+    *,
+    personne_morale: bool = False,
+) -> str:
+    """L'occupation d'un client — parmi les **576 professions** de JJB.
+
+    LE DEFAUT QUE CETTE FONCTION FERME, mesure le 12/08 sur 500 clients :
+
+        INDIVIDUAL — 400 clients, **1 SEULE occupation distincte**
+            Commercant   400  (100,0 %)
+        CORPORATE  — 100 clients, 18 occupations distinctes
+
+    Les 1600 clients individuels de la campagne recevaient TOUS « Commercant », le
+    defaut code en dur du generateur. Le champ `occupation` de leur fiche — celui
+    qu'un bailleur lit en premier — portait la meme valeur mille six cents fois.
+
+    DEUX POPULATIONS, DEUX SOURCES, ET C'EST LE CDC QUI LES SEPARE
+    -------------------------------------------------------------
+    `EF-24` dit « 20 % des **professionnels** en agriculture ». Les professionnels
+    sont les CORPORATE : c'est a eux que le quota s'applique, et `famille` porte
+    alors sa decision.
+
+    Les INDIVIDUAL n'ont aucun quota d'activite au CDC. Leur occupation est donc
+    tiree **uniformement parmi les 576 professions**. Ce choix est le seul qui
+    n'introduise **aucun chiffre invente** : la distribution obtenue est une
+    consequence mecanique de la composition du fichier, mesurable et reproductible.
+
+    > **Point ouvert, declare et non tranche** (`A-13`) : une clientele de
+    > microfinance n'est PAS la population generale — elle est majoritairement
+    > informelle, ce que le tirage uniforme sous-estime. Ponderer les profils
+    > exigerait des chiffres sourcés que ni le CDC ni le fichier ne fournissent.
+    > On ne les invente pas.
+
+    Ancre au CLIENT, jamais au run (`CR-03`) : une reprise ne doit pas changer le
+    metier d'un client.
+    """
+    de_ce_client = random.Random(f"occupation:{ancre}")  # noqa: S311
+    if famille:
+        groupes = GROUPES_PAR_FAMILLE_CDC.get(famille.strip().upper())
+        if not groupes:
+            raise CompositionImpossible(
+                f"famille {famille!r} hors de la taxonomie EF-24 "
+                f"{sorted(GROUPES_PAR_FAMILLE_CDC)} — le CDC nomme quatre familles, "
+                "et « transports, commerce et services » n'est pas une liste ouverte."
+            )
+        candidates = statique.professions_des_groupes(groupes)
+    else:
+        candidates = tuple(sorted(statique.professions))
+
+    if personne_morale:
+        retenues = tuple(
+            p
+            for p in candidates
+            if statique.profil_de_la_profession(p).nom
+            != PROFIL_INTERDIT_AUX_PERSONNES_MORALES
+        )
+        # Un repli explicite : si une famille ne contenait QUE du salariat, mieux
+        # vaut un metier imparfait qu'un client sans occupation. Le cas ne se
+        # produit pas sur le fichier actuel — les quatre familles portent toutes
+        # des activites — mais une livraison future pourrait le creer.
+        candidates = retenues or candidates
+    return de_ce_client.choice(candidates)
 
 
 def occupation_du_secteur(secteur: str, alea: random.Random) -> str:

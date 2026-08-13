@@ -35,6 +35,7 @@ from app.core.cdc import PROFILS_COMPORTEMENTAUX, TOLERANCE_DISTRIBUTION_POINTS
 from app.core.configuration import ConfigurationExecution
 from app.models.enums import EtatConsommationFaker, RunMode, RunStatus
 from app.repositories.faker_ledger import ConsommationIncoherente
+from app.services.clients_composition import GROUPES_PAR_FAMILLE_CDC
 from app.services.clients_execution import (
     CLES_QUICK_WIN_BINAIRES,
     ORDRE_SOUSCRIPTION,
@@ -51,9 +52,11 @@ from app.services.clients_execution import (
 from app.services.depositaires_execution import ProduitSouscriptible
 from app.services.generateur import Generateur
 from app.services.geographie import charger_referentiel
+from app.services.referentiel_statique import charger_statique
 from app.services.source_interne import est_interne
 
 CLASSEUR = Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")
+STATIQUE = charger_statique()
 REFERENTIEL = charger_referentiel(CLASSEUR)
 #: Fige : les seeds derivent du run_id, donc tout le deroule est deterministe.
 RUN = UUID(int=42)
@@ -401,6 +404,9 @@ def _executeur(
         mode=mode,
         configuration=configuration,
         referentiel=REFERENTIEL,
+        # `SD-3` — le vrai catalogue de JJB, jamais un double. Les 576
+        # professions qu'il porte partent REELLEMENT dans `identity.occupation`.
+        statique=STATIQUE,
         generateur=Generateur(run_id, reference=date(2026, 8, 11)),
         faker=faker or FauxFaker(),
         client_service=clients or ServiceInterdit(),
@@ -1762,3 +1768,100 @@ class TestProfilComportementalEF67:
 
 def _part(profils: list[str], nom: str) -> float:
     return profils.count(nom) / (len(profils) or 1)
+
+
+class TestOccupationsCableesSD3:
+    """`SD-3` au niveau de l'EXECUTEUR — le cablage, pas la fonction.
+
+    Trouve par MUTATION le 12/08 : passer `personne_morale=False` dans
+    `_creer` ne faisait echouer AUCUN test, parce que tous appelaient
+    `occupation_reelle()` directement. Une garantie testee sur la fonction et non
+    sur son appel n'est pas une garantie.
+    """
+
+    async def _onboardes(self, cible: int = 500) -> list[dict[str, Any]]:
+        clients = FauxClientService()
+        await _executeur(
+            mode=RunMode.REAL, nb_clients=cible, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+        return clients.onboardes
+
+    @staticmethod
+    def _par_categorie(onboardes: list[dict[str, Any]]) -> dict[str, list[str]]:
+        par: dict[str, list[str]] = {"INDIVIDUAL": [], "CORPORATE": []}
+        for o in onboardes:
+            cat = o["category"]
+            par[cat.value if hasattr(cat, "value") else str(cat)].append(
+                o["identity"]["occupation"]
+            )
+        return par
+
+    async def test_aucun_CORPORATE_n_est_SALARIE(self) -> None:
+        """LA mutation non attrapee. Mesure du 12/08 avant la regle : 47 CORPORATE
+        sur 100 portaient un metier de salarie ou de journalier."""
+        par = self._par_categorie(await self._onboardes())
+        salaries = [
+            m
+            for m in par["CORPORATE"]
+            if STATIQUE.profil_de_la_profession(m).nom == "bank_stable"
+        ]
+        assert salaries == [], (
+            f"{len(salaries)} personnes morales salariees : {salaries[:4]} — "
+            "le fichier definit `bank_stable` comme « salary, pension or "
+            "institutional payroll », ce qu'une entreprise ne touche pas"
+        )
+
+    async def test_les_INDIVIDUAL_ne_sont_plus_TOUS_Commercant(self) -> None:
+        """Le defaut mesure : 400 clients, UNE occupation distincte."""
+        par = self._par_categorie(await self._onboardes())
+        individuels = par["INDIVIDUAL"]
+        assert len(set(individuels)) > 150, (
+            f"{len(set(individuels))} metiers distincts pour {len(individuels)} "
+            "clients — la fiche que le bailleur lit en premier"
+        )
+        assert "Commercant" not in individuels
+
+    async def test_chaque_client_porte_un_metier_DU_REFERENTIEL(self) -> None:
+        """`occupation` est un champ libre de 200 caracteres qu'aucun service ne
+        valide. La seule barriere est la notre."""
+        for o in await self._onboardes(200):
+            metier = o["identity"]["occupation"]
+            assert metier in STATIQUE.professions, metier
+
+    async def test_EF_24_tient_toujours(self) -> None:
+        """Le quota agricole ne doit pas avoir bouge : la famille reste decidee
+        par le moteur de quotas, seule la profession concrete change."""
+        clients = FauxClientService()
+        rapport = await _executeur(
+            mode=RunMode.REAL, nb_clients=500, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+        quota = rapport.quotas[0]
+        assert quota.agricoles == quota.cible_agricoles
+        assert quota.corporate_faits == quota.cible_corporate
+
+    async def test_EF_24_est_VISIBLE_sur_les_fiches(self) -> None:
+        """Trouve par MUTATION le 13/08 : ne plus passer `reservation.secteur` a
+        `occupation_reelle` ne faisait echouer AUCUN test. Le quota agricole
+        restait exact au rapport — mais plus un seul CORPORATE ne portait un
+        metier agricole. `EF-24` aurait ete tenu en METADONNEE et invisible sur
+        les fiches, celles que le bailleur lit.
+
+        Le compte des metiers agricoles parmi les CORPORATE doit EGALER le quota :
+        les quatre familles sont disjointes, donc un CORPORATE hors AGRICULTURE ne
+        peut pas porter un metier agricole par accident."""
+        clients = FauxClientService()
+        rapport = await _executeur(
+            mode=RunMode.REAL, nb_clients=500, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+        agricoles = set(
+            STATIQUE.professions_des_groupes(GROUPES_PAR_FAMILLE_CDC["AGRICULTURE"])
+        )
+        par = self._par_categorie(clients.onboardes)
+        portes = [m for m in par["CORPORATE"] if m in agricoles]
+        assert len(portes) == rapport.quotas[0].cible_agricoles, (
+            f"{len(portes)} CORPORATE portent un metier agricole pour un quota "
+            f"de {rapport.quotas[0].cible_agricoles} — EF-24 n'est plus visible"
+        )

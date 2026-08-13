@@ -260,6 +260,7 @@ async def executer(
             mode=mode,
             configuration=configuration,
             referentiel=referentiel,
+            statique=statique,
             generateur=generateur,
             faker=faker,
             client_service=clients_finaux,
