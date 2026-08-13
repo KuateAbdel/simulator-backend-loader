@@ -137,7 +137,7 @@ class ProduitCollecte:
     #: dans le nom, cherche des vrais produits ». Le nom devient entierement
     #: metier ; la reversibilite (`CR-07`/`EF-63`) passe dans `short_name` via
     #: `marqueur`. Explicite et non derive du nom : deux noms peuvent partager
-    #: leurs initiales (« Cotisation Commercants » / « Collecte Cacao »), un
+    #: leurs initiales (« Compte Epargne Entreprise » / « Collecte Cacao »), un
     #: code declare ne collisionne jamais en silence.
     code: str = ""
 
@@ -183,34 +183,41 @@ class ProduitCollecte:
 
 
 #: Catalogue COLLECT cible — croisement complet PolicyType x Category (D-PRD-9).
-#: Les noms sont REELS : « Collecte Cacao » est un produit d'export camerounais,
-#: coherent avec « plastique » deja en base. Jamais « Produit Test 1 ».
+#: Les noms sont REELS ET RECHERCHES (conception §4) : « Tontine Digitale » et
+#: « Epargne Bloquee » sont des produits PAMECAS commercialises au Senegal, le
+#: warrantage est le standard agricole sahelien, le cacao est l'export
+#: camerounais. Jamais « Produit Test 1 », jamais un derive du jeu d'essai.
 CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
     # NOTRE produit d'entree, et non celui de l'environnement — decision de
     # Yaniv du 12/08 : « on ne peut pas batir un truc pourri comme le service
     # le fait ». Voir `PRODUITS_ENVIRONNEMENT` plus bas pour ce qu'on refuse.
     ProduitCollecte(
-        "Cotisation Individuelle 20000/mois",
+        # PAMECAS (Senegal) commercialise REELLEMENT « Tontine digitale » — et la
+        # tontine est le systeme d'epargne collective central des quatre pays.
+        # Depots a vue = 55,5 % des depots UEMOA : c'est LE produit d'entree.
+        "Tontine Digitale",
         PolicyType.CASH,
         ProductCategory.INDIVIDUAL,
         PolicyMeasure.KILOGRAM,
         1000.0,
         1000000.0,
         5.0,
-        code="COTIS_IND",
+        code="TONT_IND",
     ),
     ProduitCollecte(
-        "Cotisation Commercants",
+        "Compte Epargne Entreprise",
         PolicyType.CASH,
         ProductCategory.CORPORATE,
         PolicyMeasure.KILOGRAM,
         5000.0,
         2000000.0,
         5.0,
-        code="COTIS_CORP",
+        code="CEE_CORP",
     ),
     ProduitCollecte(
-        "Depot a Terme 6 Mois",
+        # « Epargne Bloquee » est le nom REEL du depot a terme individuel chez
+        # PAMECAS (4-5 % annuel, sortie anticipee possible).
+        "Epargne Bloquee 6 Mois",
         PolicyType.CASH_DAT,
         ProductCategory.INDIVIDUAL,
         PolicyMeasure.KILOGRAM,
@@ -218,7 +225,7 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         5000000.0,
         6.5,
         duree_mois=6,
-        code="DAT6_IND",
+        code="EPB6_IND",
     ),
     ProduitCollecte(
         "Depot a Terme Entreprise 12 Mois",
@@ -232,22 +239,26 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         code="DAT12_CORP",
     ),
     ProduitCollecte(
-        "Collecte Plastique",
+        # Le WARRANTAGE est le produit agricole standard du Sahel : le paysan
+        # stocke sa recolte en magasin, le stock est la garantie, 6 a 8 mois,
+        # ~5 700 tonnes sur 300 magasins au Burkina (BAD, 2020). C'est
+        # EXACTEMENT la semantique de PolicyType.PRODUCT : une collecte en
+        # nature, mesuree. Et il sert EF-24 — le client type est un paysan.
+        "Warrantage Cerealier",
         PolicyType.PRODUCT,
-        # `LITER` et non `KILOGRAM` : le plastique de recuperation se mesure au
-        # volume, et c'est aussi ce que porte le produit de l'environnement.
-        # `D-PRD-8` — la mesure est un choix metier, jamais un defaut.
+        # Le mil et le sorgho se PESENT — `D-PRD-8`, la mesure est un choix
+        # metier explicite, jamais un defaut.
         ProductCategory.INDIVIDUAL,
-        PolicyMeasure.LITER,
+        PolicyMeasure.KILOGRAM,
         100.0,
         500000.0,
         0.0,
-        code="PLAST_IND",
+        code="WAR_IND",
     ),
     # D-PRD-8 : `measure` toujours choisi explicitement. Le cacao se pese —
     # KILOGRAM est un choix metier, pas la valeur que la WebApp injecte en dur.
     ProduitCollecte(
-        "Collecte Cacao",
+        "Collecte Cacao Cooperative",
         PolicyType.PRODUCT,
         ProductCategory.CORPORATE,
         PolicyMeasure.KILOGRAM,

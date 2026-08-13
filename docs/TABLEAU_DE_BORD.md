@@ -26,7 +26,7 @@
 
 | # | Tâche | État |
 |---|---|---|
-| CAT 1-2 | **Décidé par Yaniv le 13/08** : noms 100 % métier, marqueur `DEMO_` dans `short_name` + protocole à deux clés contre `ANO-PRD-UNIQ-01` (jamais consommer un homonyme étranger, jamais le doubler) | ✅ 13/08 |
+| CAT 1-2 | **Décidé par Yaniv le 13/08** : produits RÉELS et recherchés — `Tontine Digitale` · `Compte Epargne Entreprise` · `Epargne Bloquee 6 Mois` · `Depot a Terme Entreprise 12 Mois` · `Warrantage Cerealier` · `Collecte Cacao Cooperative` (conception §4 : PAMECAS, warrantage sahélien). Marqueur `DEMO_` dans `short_name`, protocole à deux clés contre `ANO-PRD-UNIQ-01` | ✅ 13/08 |
 | CAT 3-5 | Produits environnement constatés · 12 créations | ✅ (12/08, `c53c05d`) |
 | CAT 6 | CR-07 : marqueur selon le type d'entité — s'active quand les produits entrent dans `org_hierarchy` | ⬜ avec CAT 7-8 |
 | CAT 7-8 | Rattachement Produit→Company (`org_hierarchy`) + panier depuis SA Company *(ancienne tâche #29 / A-12)* | ⬜ |
@@ -38,7 +38,7 @@
 |---|---|---|
 | 1 | Rôles : 11 `group_id` (seul module réversible) | ⬜ |
 | 2 | Organisation : 16 Lenders, licences, Admin Users, 4 comptes (S3-03) | ⏸ paliers 1 + décisions catalogue |
-| 3 | Catalogue : 12 créations `DEMO_` | ⬜ |
+| 3 | Catalogue : 12 créations, noms réels, marqueur `short_name` | ⬜ |
 | 4 | Dépositaires : 40-80 nœuds, Agents (S3-06) | ⬜ |
 | 5 | Staff & Agents : 60-100 users, 11 rôles | ⏸ **A-05** |
 | 6 | Clients : 2000, quotas, EF-26 deux temps | ⬜ SD-3 ✅ prêt |

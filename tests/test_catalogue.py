@@ -208,13 +208,33 @@ class TestCatalogueCollect:
             "produit de l'environnement : le GET-avant-POST le retrouverait"
         )
 
-    def test_les_noms_sont_reels_jamais_generiques(self) -> None:
-        """Le CDC et la demo exigent des noms metier credibles."""
+    def test_les_noms_sont_reels_RECHERCHES_jamais_generiques(self) -> None:
+        """Conception §4 — « du metier, pas des etiquettes techniques », et
+        chaque nom est ANCRE dans une realite verifiable : `Tontine Digitale`
+        et `Epargne Bloquee` sont des produits PAMECAS commercialises au
+        Senegal ; le warrantage est le standard agricole sahelien (~5 700
+        tonnes sur 300 magasins au Burkina, BAD 2020) ; le cacao est l'export
+        camerounais. Demande explicite de Yaniv le 13/08 : « va chercher les
+        vrais produits qu'on peut vraiment mettre dans le systeme »."""
         noms = [p.nom for p in CATALOGUE_COLLECT]
-        assert "Collecte Cacao" in noms, "produit d'export camerounais reel"
-        assert "Depot a Terme 6 Mois" in noms
+        assert noms == [
+            "Tontine Digitale",
+            "Compte Epargne Entreprise",
+            "Epargne Bloquee 6 Mois",
+            "Depot a Terme Entreprise 12 Mois",
+            "Warrantage Cerealier",
+            "Collecte Cacao Cooperative",
+        ]
         for nom in noms:
             assert "Test" not in nom and "Produit 1" not in nom
+            assert "20000/mois" not in nom, "un derive du jeu d'essai n'est pas un produit"
+
+    def test_le_warrantage_se_PESE(self) -> None:
+        """Le mil et le sorgho se mesurent au KILOGRAM — `D-PRD-8`, la mesure
+        est un choix metier explicite. L'ancien « Collecte Plastique » se
+        mesurait au litre ; le warrantage qui le remplace se pese."""
+        warrantage = next(p for p in CATALOGUE_COLLECT if "Warrantage" in p.nom)
+        assert warrantage.measure is PolicyMeasure.KILOGRAM
 
     def test_le_catalogue_cible_compte_12_produits(self, produits) -> None:  # type: ignore[no-untyped-def]
         """6 LENDING + 6 COLLECT — la volumetrie du CDC."""
@@ -290,8 +310,8 @@ class TestTermeDuDepotATerme:
         """`catalogue_execution` construit `ProduitSouscriptible` tantot depuis un
         payload (nom prefixe `DEMO_`), tantot depuis une fiche serveur (nom
         d'origine). Les deux doivent rendre le meme terme."""
-        assert duree_mois_du_produit("Depot a Terme 6 Mois") == 6
-        assert duree_mois_du_produit(f"{PREFIXE_DONNEES}Depot a Terme 6 Mois") == 6
+        assert duree_mois_du_produit("Epargne Bloquee 6 Mois") == 6
+        assert duree_mois_du_produit(f"{PREFIXE_DONNEES}Epargne Bloquee 6 Mois") == 6
         assert duree_mois_du_produit(f"{PREFIXE_DONNEES}Depot a Terme Entreprise 12 Mois") == 12
 
     def test_un_produit_sans_terme_rend_None_et_ne_leve_pas(self) -> None:
