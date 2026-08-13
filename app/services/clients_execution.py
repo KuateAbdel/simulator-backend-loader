@@ -16,7 +16,9 @@ le point de terminaison, et ils sont des regles A L'INTERIEUR de lui.
 
 L'ORDRE DES TROIS ECRITURES SUIT L'IRREVERSIBILITE, PAS LES DEPENDANCES
 ----------------------------------------------------------------------
-    1. client-service    le SEUL des trois a exposer un `DELETE`
+    1. client-service    AUCUNE mutation sauf `PATCH /language` (mesure —
+                         cet en-tete disait « le seul a exposer un DELETE »,
+                         c'etait FAUX, corrige le 13/08 en ecrivant la purge)
     2. identity-service  AUCUN `DELETE` — la piece KYC est definitive
     3. account-service   AUCUN `DELETE` — le compte est definitif
 

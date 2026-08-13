@@ -57,6 +57,7 @@ from app.routes import (
     admin_configuration,
     admin_dashboard,
     admin_entites,
+    admin_purge,
     admin_referentiels,
     admin_runs,
     health,
@@ -106,4 +107,5 @@ app.include_router(admin_configuration.router)
 app.include_router(admin_referentiels.router)
 app.include_router(admin_dashboard.router)
 app.include_router(admin_entites.router)
+app.include_router(admin_purge.router)
 app.include_router(admin_runs.router)

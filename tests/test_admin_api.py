@@ -1320,3 +1320,126 @@ class TestUSD1CompanyALUnite:
             )
         assert appels[0]["patronyme"] == appels[1]["patronyme"]
         assert appels[0]["telephone"] == appels[1]["telephone"]
+
+
+class TestLotEPurge:
+    """`US-F1`/`US-F2` — la purge honnete : supprime le reversible, LISTE le
+    permanent avec son verdict mesure."""
+
+    @staticmethod
+    def _doubler_users(monkeypatch: pytest.MonkeyPatch, *, echec_sur: str | None = None):
+        from uuid import uuid4 as _uuid4
+
+        from app.routes import admin_purge
+
+        etat = {
+            "groupes": [
+                {"_id": str(_uuid4()), "name": "DEMO_AGENT"},
+                {"_id": str(_uuid4()), "name": "DEMO_MANAGER"},
+                {"_id": str(_uuid4()), "name": "CUSTOMER"},
+            ],
+            "supprimes": [],
+        }
+
+        class _Users:
+            async def lister_groupes(self):
+                return list(etat["groupes"])
+
+            async def supprimer_groupe(self, groupe_id):
+                nom = next(
+                    g["name"] for g in etat["groupes"] if g["_id"] == str(groupe_id)
+                )
+                if echec_sur and nom == echec_sur:
+                    raise RuntimeError("panne simulee")
+                etat["supprimes"].append(nom)
+
+            async def fermer(self):
+                return None
+
+        monkeypatch.setattr(admin_purge, "_client_users", lambda: _Users())
+        return etat
+
+    async def test_US_F1_preparer_montre_les_DEUX_colonnes_sans_ecrire(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        etat = self._doubler_users(monkeypatch)
+        entetes = await _session_complete(client)
+        reponse = await client.post("/admin/purge/preparer", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        noms = [g["nom"] for g in corps["purgeable"]["groupes"]]
+        assert noms == ["DEMO_AGENT", "DEMO_MANAGER"], (
+            "CUSTOMER n'est pas a nous — jamais dans la colonne purgeable"
+        )
+        assert "D-DEP-3" in corps["residus_marques"]["depositaires"]["verdict"]
+        assert "D-DEP-8" in corps["residus_marques"]["depositaires"]["verdict"]
+        assert "PATCH langue" in corps["residus_marques"]["clients"]["verdict"]
+        assert etat["supprimes"] == [], "preparer n'ecrit JAMAIS"
+
+    async def test_US_F2_confirmer_supprime_les_notres_et_journalise(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.repositories.audit_trail import AuditTrailRepository
+        from app.routes.admin_entites import RUN_ADMIN
+
+        etat = self._doubler_users(monkeypatch)
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("audit_trail")
+        reponse = await client.post(
+            "/admin/purge/confirmer",
+            json={"supprimer_groupes": True},
+            headers=entetes,
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json()["supprimes"] == ["DEMO_AGENT", "DEMO_MANAGER"]
+        assert etat["supprimes"] == ["DEMO_AGENT", "DEMO_MANAGER"], (
+            "CUSTOMER intact — on ne supprime que le marque"
+        )
+        journal = await AuditTrailRepository().exporter_run(RUN_ADMIN)
+        assert sum(1 for e in journal if e.action == "DELETE") == 2, (
+            "chaque suppression est journalisee sous RUN_ADMIN"
+        )
+        assert "residus_marques" in reponse.json(), "le rapport REDIT les residus"
+
+    async def test_US_F2_un_echec_n_arrete_pas_la_purge(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_users(monkeypatch, echec_sur="DEMO_AGENT")
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/purge/confirmer",
+            json={"supprimer_groupes": True},
+            headers=entetes,
+        )
+        assert reponse.status_code == 200
+        assert reponse.json()["supprimes"] == ["DEMO_MANAGER"]
+        assert reponse.json()["echecs"][0]["groupe"] == "DEMO_AGENT"
+
+    async def test_le_verrou_EF_55_couvre_aussi_la_purge(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        self._doubler_users(monkeypatch)
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        await LoaderRunRepository().remplacer(
+            LoaderRun(
+                _id=_uuid4(), sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1), status=RunStatus.RUNNING,
+            )
+        )
+        try:
+            reponse = await client.post(
+                "/admin/purge/confirmer",
+                json={"supprimer_groupes": True},
+                headers=entetes,
+            )
+            assert reponse.status_code == 409
+        finally:
+            await database.get_database().drop_collection("loader_runs")
