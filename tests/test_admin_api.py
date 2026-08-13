@@ -1127,8 +1127,8 @@ class TestUSD2ProduitALUnite:
     async def test_la_creation_POSTe_RELIT_et_inscrit_au_registre(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from app.routes.admin_entites import RUN_ADMIN
         from app.repositories.audit_trail import AuditTrailRepository
+        from app.routes.admin_entites import RUN_ADMIN
 
         posts = self._doubler_produits(
             monkeypatch,
