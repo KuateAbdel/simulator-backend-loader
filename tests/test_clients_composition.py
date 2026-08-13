@@ -717,3 +717,76 @@ class TestLieuDeNaissanceSD6:
         )
         assert identite.place_of_birth == "Douala"
         assert identite.id_place == "Douala"
+
+
+class TestINV18RepartitionParOperateur:
+    """`INV-18` — la population reproduit le MARCHE, pas une loterie uniforme.
+
+    Le mecanisme (roue ponderee par `part_marche`, ancree au client) est livre
+    depuis EF-27/S4-01 — mais AUCUN test ne mesurait la distribution : une
+    garantie que rien n'exerce n'est pas une garantie. Ces tests la fixent.
+    """
+
+    @staticmethod
+    def _distribution(pays: str, n: int = 2000) -> dict[str, float]:
+        generateur = Generateur(uuid4(), reference=date(2026, 8, 13))
+        comptes: dict[str, int] = {}
+        for i in range(n):
+            msisdn, telco = generateur.msisdn(pays, REFERENTIEL, f"{pays}-INV18-{i}")
+            comptes[telco.short_name] = comptes.get(telco.short_name, 0) + 1
+        return {nom: c / n for nom, c in comptes.items()}
+
+    def test_le_Cameroun_ressemble_au_marche_camerounais(self) -> None:
+        """MTN 46 · Orange 43 · Blue 3 (somme 92) -> parts normalisees
+        attendues ~50,0 / 46,7 / 3,3 %. Tolerance 3 points — le tirage est
+        DETERMINISTE (ancres figees), l'ecart mesure ne bouge jamais."""
+        operateurs = {t.short_name: t.part_marche for t in REFERENTIEL.telcos_du_pays("CM")}
+        total = sum(operateurs.values())
+        mesure = self._distribution("CM")
+        for nom, part in operateurs.items():
+            attendu = part / total
+            assert abs(mesure.get(nom, 0.0) - attendu) < 0.03, (
+                f"{nom} : {mesure.get(nom, 0.0):.1%} mesure pour {attendu:.1%} "
+                "attendu — la roue ponderee ne suit plus le marche"
+            )
+
+    def test_le_petit_operateur_EXISTE_sans_peser_un_tiers(self) -> None:
+        """L'anti-uniforme : Blue CM (3 % du marche) doit apparaitre — le
+        marche entier compte — mais JAMAIS peser ~33 % comme dans une loterie
+        uniforme. C'est le test que la mutation « tirage uniforme » fait
+        tomber."""
+        mesure = self._distribution("CM")
+        petit = min(mesure.values())
+        assert 0.0 < petit < 0.10, (
+            f"le plus petit operateur pese {petit:.1%} — un tiers signifierait "
+            "un tirage uniforme, zero signifierait un marche ampute"
+        )
+
+    def test_les_QUATRE_pays_suivent_leur_marche(self) -> None:
+        """La fidelite des PARTS, pays par pays — et pas la « dominance » :
+        quand le marche est serre (MTN 46 vs Orange 43 au CM), le premier d'un
+        echantillon fini peut legitimement s'inverser ; les parts, elles,
+        doivent coller. Premiere version de ce test ecrite sur la dominance,
+        tombee pour cette raison exacte — le test etait faux, pas le code."""
+        for pays in ("CM", "CI", "BF", "SN"):
+            operateurs = {
+                t.short_name: t.part_marche for t in REFERENTIEL.telcos_du_pays(pays)
+            }
+            total = sum(operateurs.values())
+            mesure = self._distribution(pays, n=1500)
+            for nom, part in operateurs.items():
+                attendu = part / total
+                assert abs(mesure.get(nom, 0.0) - attendu) < 0.035, (
+                    f"{pays}/{nom} : {mesure.get(nom, 0.0):.1%} pour {attendu:.1%}"
+                )
+
+    def test_l_operateur_est_ANCRE_au_client(self) -> None:
+        """CR-03 (correction du 12/08) : meme matiere client, meme operateur,
+        meme numero — sur DEUX runs differents."""
+        a = Generateur(uuid4(), reference=date(2026, 8, 13)).msisdn(
+            "CM", REFERENTIEL, "CM-INV18-ancre"
+        )
+        b = Generateur(uuid4(), reference=date(2026, 8, 13)).msisdn(
+            "CM", REFERENTIEL, "CM-INV18-ancre"
+        )
+        assert a[0] == b[0] and a[1].short_name == b[1].short_name

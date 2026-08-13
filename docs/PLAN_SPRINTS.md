@@ -63,7 +63,7 @@ Rien n'est masqué. Chaque ligne porte sa preuve et son sprint.
 | `INV-15` | **Devise ↔ zone monétaire** — `XAF` = CEMAC (CM), `XOF` = UEMOA (CI, BF, SN). Ma liste close `{XAF, XOF}` était **trop permissive** | référentiel | ✅ fait |
 | `INV-16` | **Situation familiale ↔ âge** — un veuf de 18 ans passe | mesure 09/08 | ✅ fait |
 | `INV-17` | **Champs vides** — `city`, `region`, `country`, GPS persistés à `null` | mesure 09/08 | ✅ fait |
-| `INV-18` | **Répartition par opérateur** — le référentiel porte les parts de marché réelles (MTN CM 46 %, Orange CM 43 %…), jamais utilisées | référentiel | **S4** |
+| `INV-18` | **Répartition par opérateur** — parts de marché réelles. Le MÉCANISME (roue pondérée, ancrée au client) était livré avec EF-27/S4-01 — cette ligne était PÉRIMÉE ; la GARANTIE (distribution mesurée + mutation) est fixée le 13/08 | référentiel | ✅ fait |
 
 > **`INV-14` — la décision qui en découle.** Appliquer `EF-27` aux MSISDN de
 > Faker rejetterait **100 % des 2 000 clients**. Le Loader **compose donc son

@@ -67,7 +67,7 @@ uniquement. Protocole chirurgical : déployer → brancher les 9 services (.env)
 
 | Tâche | État |
 |---|---|
-| INV-18 — MSISDN pondérés par parts de marché opérateur | ⬜ |
+| INV-18 — MSISDN pondérés par parts de marché | ✅ 13/08 — le mécanisme existait (EF-27), la GARANTIE mesurée manquait : 4 tests de distribution (CM ±3 pts sur 46/43/3, les 4 pays ±3,5 pts, anti-uniforme, ancrage CR-03), mutation « tirage uniforme » attrapée |
 | P-01 — index inverse (client→produit, client→kiosque) | ⬜ |
 | P-02 — plafonds KYC BCEAO | ⬜ s'écrit AVEC le module Vie |
 | P-03 — float de l'agent | ⬜ s'écrit AVEC le module Vie |
