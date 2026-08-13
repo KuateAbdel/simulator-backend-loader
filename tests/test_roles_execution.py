@@ -101,7 +101,9 @@ class TestPermissionsParRole:
 class TestExecution:
     async def test_dry_run_n_ecrit_rien_mais_annonce(self) -> None:
         double = UserClientDouble()
-        rapport = await ExecuteurRoles(mode=RunMode.DRY_RUN, user_client=double).executer()
+        rapport = await ExecuteurRoles(
+            mode=RunMode.DRY_RUN, user_client=double, audit=None, run_id=None
+        ).executer()
 
         assert double.ecritures == []
         assert len(rapport.crees) == 11, "les 11 roles metier — seul CUSTOMER preexiste"
@@ -110,7 +112,9 @@ class TestExecution:
 
     async def test_customer_est_reutilise_jamais_recree(self) -> None:
         double = UserClientDouble()
-        rapport = await ExecuteurRoles(mode=RunMode.REAL, user_client=double).executer()
+        rapport = await ExecuteurRoles(
+            mode=RunMode.REAL, user_client=double, audit=None, run_id=None
+        ).executer()
 
         assert "CUSTOMER" in rapport.reutilises
         assert all(e["nom"] != "CUSTOMER" for e in double.ecritures)
@@ -118,7 +122,9 @@ class TestExecution:
     async def test_l_idempotence_reutilise_ce_qui_existe_deja(self) -> None:
         """Un second run ne recree rien — ce n'est pas un echec."""
         double = UserClientDouble(groupes=[r.nom for r in ROLES_METIER])
-        rapport = await ExecuteurRoles(mode=RunMode.REAL, user_client=double).executer()
+        rapport = await ExecuteurRoles(
+            mode=RunMode.REAL, user_client=double, audit=None, run_id=None
+        ).executer()
 
         assert double.ecritures == []
         assert len(rapport.reutilises) == 12
@@ -127,12 +133,16 @@ class TestExecution:
     async def test_les_roles_portent_company_id_vide(self) -> None:
         """Role GLOBAL — jamais duplique par Company (D-06)."""
         double = UserClientDouble()
-        await ExecuteurRoles(mode=RunMode.REAL, user_client=double).executer()
+        await ExecuteurRoles(
+            mode=RunMode.REAL, user_client=double, audit=None, run_id=None
+        ).executer()
         assert all(e["company_id"] == "" for e in double.ecritures)
 
     async def test_un_echec_journalise_et_poursuit(self) -> None:
         double = UserClientDefaillant()
-        rapport = await ExecuteurRoles(mode=RunMode.REAL, user_client=double).executer()
+        rapport = await ExecuteurRoles(
+            mode=RunMode.REAL, user_client=double, audit=None, run_id=None
+        ).executer()
 
         assert rapport.statut is RunStatus.FAILED, "aucun role cree"
         assert len(rapport.echoues) == 11
@@ -141,12 +151,16 @@ class TestExecution:
     async def test_customer_absent_est_signale_pas_cree(self) -> None:
         """D-09 suppose sa presence. S'il manque, c'est un fait a signaler."""
         double = UserClientDouble(groupes=["ROOT", "GUEST"])
-        rapport = await ExecuteurRoles(mode=RunMode.REAL, user_client=double).executer()
+        rapport = await ExecuteurRoles(
+            mode=RunMode.REAL, user_client=double, audit=None, run_id=None
+        ).executer()
 
         assert any(nom == "CUSTOMER" for nom, _ in rapport.echoues)
         assert all(e["nom"] != "CUSTOMER" for e in double.ecritures)
 
     async def test_le_rapport_signale_l_arbitrage_a05(self) -> None:
         double = UserClientDouble()
-        rapport = await ExecuteurRoles(mode=RunMode.DRY_RUN, user_client=double).executer()
+        rapport = await ExecuteurRoles(
+            mode=RunMode.DRY_RUN, user_client=double, audit=None, run_id=None
+        ).executer()
         assert "A-05" in rapport.resume()

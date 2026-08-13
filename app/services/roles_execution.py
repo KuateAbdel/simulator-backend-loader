@@ -70,10 +70,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
+from uuid import UUID, uuid4
 
 from app.clients.contracts import TagGroupe, UserType
 from app.clients.user_service import UserServiceClient
 from app.models.enums import RunMode, RunStatus
+from app.repositories.audit_trail import AuditTrailRepository
 
 logger = logging.getLogger(__name__)
 
@@ -254,9 +257,24 @@ class ExecuteurRoles:
     partie des groupes existe deja.
     """
 
-    def __init__(self, *, mode: RunMode, user_client: UserServiceClient) -> None:
+    def __init__(
+        self,
+        *,
+        mode: RunMode,
+        user_client: UserServiceClient,
+        audit: AuditTrailRepository | None,
+        run_id: UUID | None,
+    ) -> None:
+        # `audit` et `run_id` sont REQUIS a l'appel, meme pour dire None —
+        # jamais un defaut silencieux. Trou constate le 13/08 : les groupes
+        # etaient la SEULE ecriture non journalisee du moteur, et comme ils ne
+        # portent AUCUN prefixe (decision Yaniv — les noms de roles sont
+        # fonctionnels), un groupe non journalise devenait INVISIBLE a la
+        # reconciliation : ni purgeable, ni reconnaissable comme notre.
         self.mode = mode
         self._users = user_client
+        self._audit = audit
+        self.run_id = run_id
 
     @property
     def ecriture_reelle(self) -> bool:
@@ -296,22 +314,65 @@ class ExecuteurRoles:
                 continue
 
             try:
-                await self._users.creer_groupe(
-                    nom=role.nom,
-                    description=role.description,
-                    tag=role.tag,
-                    permissions=attribuees,
-                    company_id="",
-                )
+                reponse = await self._creer_journalise(role, attribuees)
             except Exception as erreur:
                 motif = f"{type(erreur).__name__}: {erreur}"[:200]
                 logger.warning("role %s en echec : %s", role.nom, motif)
                 rapport.echoues.append((role.nom, motif))
                 continue
 
+            if not UserServiceClient.identifiant(reponse):
+                # Un groupe cree dont on ignore l'identifiant est un groupe
+                # PERDU pour la reconciliation — sans prefixe, le registre est
+                # notre seule memoire. C'est un echec, pas un succes discret.
+                rapport.echoues.append(
+                    (role.nom, "identifiant absent de la reponse — groupe intracable")
+                )
+                continue
+
             rapport.crees.append(f"{role.nom} ({len(attribuees)} permissions)")
 
         return rapport
+
+    async def _creer_journalise(
+        self, role: RoleMetier, permissions: list[str]
+    ) -> dict[str, Any]:
+        """`POST` du groupe encadre par le write-ahead — comme les produits.
+
+        Le RESULTAT `SUCCES` porte le `group_id` rendu par le serveur : c'est
+        LA ligne qui inscrit le groupe dans notre registre (les groupes n'ont
+        aucun marqueur — decision Yaniv 13/08 — donc sans elle, le groupe
+        cree est irrecuperablement etranger a nos propres yeux).
+        """
+        if self._audit is None or self.run_id is None:
+            return await self._users.creer_groupe(
+                nom=role.nom,
+                description=role.description,
+                tag=role.tag,
+                permissions=permissions,
+                company_id="",
+            )
+        async with self._audit.intention(
+            self.run_id,
+            entity_type="Group",
+            entity_id=uuid4(),
+            operation="CREATE",
+            cible="user-service POST /api/v1/groupes/create",
+            payload={"name": role.nom, "tag": role.tag.value},
+        ) as suivi:
+            reponse = await self._users.creer_groupe(
+                nom=role.nom,
+                description=role.description,
+                tag=role.tag,
+                permissions=permissions,
+                company_id="",
+            )
+            identifiant = UserServiceClient.identifiant(reponse)
+            if identifiant:
+                suivi.reussi({"group_id": identifiant, "name": role.nom})
+            else:
+                suivi.echoue("identifiant absent de la reponse serveur")
+        return reponse
 
 
 def _permissions_du_role(role: RoleMetier, disponibles: list[str]) -> list[str]:

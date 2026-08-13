@@ -69,6 +69,32 @@ async def _session_complete(client: httpx.AsyncClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {reponse.json()['access_token']}"}
 
 
+async def _registre_vierge() -> None:
+    """Repart d'un journal vide — le registre est DERIVE du journal."""
+    await database.get_database().drop_collection("audit_trail")
+
+
+async def _inscrire_groupe_au_registre(groupe_id: str, nom: str) -> None:
+    """Seme une creation write-ahead au journal — la forme EXACTE qu'emet
+    `ExecuteurRoles._creer_journalise` en REAL. C'est ce qui rend un groupe
+    « a nous » : AUCUN prefixe sur les groupes, le registre seul fait foi."""
+    from uuid import uuid4
+
+    from app.repositories.audit_trail import AuditTrailRepository
+    from app.routes.admin_entites import RUN_ADMIN
+
+    audit = AuditTrailRepository()
+    async with audit.intention(
+        RUN_ADMIN,
+        entity_type="Group",
+        entity_id=uuid4(),
+        operation="CREATE",
+        cible="user-service POST /api/v1/groupes/create",
+        payload={"name": nom},
+    ) as suivi:
+        suivi.reussi({"group_id": groupe_id, "name": nom})
+
+
 class TestUSA1Connexion:
     async def test_login_valide_rend_un_jeton_a_duree_limitee(
         self, client: httpx.AsyncClient
@@ -1337,10 +1363,12 @@ class TestLotEPurge:
 
         from app.routes import admin_purge
 
+        # Noms FONCTIONNELS, sans prefixe — decision Yaniv 13/08. Les deux
+        # premiers seront inscrits au registre par les tests ; CUSTOMER jamais.
         etat = {
             "groupes": [
-                {"_id": str(_uuid4()), "name": "DEMO_AGENT"},
-                {"_id": str(_uuid4()), "name": "DEMO_MANAGER"},
+                {"_id": str(_uuid4()), "name": "Agent"},
+                {"_id": str(_uuid4()), "name": "Marchand"},
                 {"_id": str(_uuid4()), "name": "CUSTOMER"},
             ],
             "supprimes": [],
@@ -1368,13 +1396,17 @@ class TestLotEPurge:
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         etat = self._doubler_users(monkeypatch)
+        await _registre_vierge()
+        for groupe in etat["groupes"][:2]:
+            await _inscrire_groupe_au_registre(groupe["_id"], groupe["name"])
         entetes = await _session_complete(client)
         reponse = await client.post("/admin/purge/preparer", headers=entetes)
         assert reponse.status_code == 200, reponse.text
         corps = reponse.json()
         noms = [g["nom"] for g in corps["purgeable"]["groupes"]]
-        assert noms == ["DEMO_AGENT", "DEMO_MANAGER"], (
-            "CUSTOMER n'est pas a nous — jamais dans la colonne purgeable"
+        assert noms == ["Agent", "Marchand"], (
+            "CUSTOMER n'est pas au registre — jamais dans la colonne purgeable, "
+            "et la reconnaissance n'a besoin d'AUCUN prefixe"
         )
         assert "D-DEP-3" in corps["residus_marques"]["depositaires"]["verdict"]
         assert "D-DEP-8" in corps["residus_marques"]["depositaires"]["verdict"]
@@ -1388,17 +1420,19 @@ class TestLotEPurge:
         from app.routes.admin_entites import RUN_ADMIN
 
         etat = self._doubler_users(monkeypatch)
+        await _registre_vierge()
+        for groupe in etat["groupes"][:2]:
+            await _inscrire_groupe_au_registre(groupe["_id"], groupe["name"])
         entetes = await _session_complete(client)
-        await database.get_database().drop_collection("audit_trail")
         reponse = await client.post(
             "/admin/purge/confirmer",
             json={"supprimer_groupes": True},
             headers=entetes,
         )
         assert reponse.status_code == 200, reponse.text
-        assert reponse.json()["supprimes"] == ["DEMO_AGENT", "DEMO_MANAGER"]
-        assert etat["supprimes"] == ["DEMO_AGENT", "DEMO_MANAGER"], (
-            "CUSTOMER intact — on ne supprime que le marque"
+        assert reponse.json()["supprimes"] == ["Agent", "Marchand"]
+        assert etat["supprimes"] == ["Agent", "Marchand"], (
+            "CUSTOMER intact — on ne supprime que ce que le registre reconnait"
         )
         journal = await AuditTrailRepository().exporter_run(RUN_ADMIN)
         assert sum(1 for e in journal if e.action == "DELETE") == 2, (
@@ -1409,7 +1443,10 @@ class TestLotEPurge:
     async def test_US_F2_un_echec_n_arrete_pas_la_purge(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        self._doubler_users(monkeypatch, echec_sur="DEMO_AGENT")
+        etat = self._doubler_users(monkeypatch, echec_sur="Agent")
+        await _registre_vierge()
+        for groupe in etat["groupes"][:2]:
+            await _inscrire_groupe_au_registre(groupe["_id"], groupe["name"])
         entetes = await _session_complete(client)
         reponse = await client.post(
             "/admin/purge/confirmer",
@@ -1417,8 +1454,8 @@ class TestLotEPurge:
             headers=entetes,
         )
         assert reponse.status_code == 200
-        assert reponse.json()["supprimes"] == ["DEMO_MANAGER"]
-        assert reponse.json()["echecs"][0]["groupe"] == "DEMO_AGENT"
+        assert reponse.json()["supprimes"] == ["Marchand"]
+        assert reponse.json()["echecs"][0]["groupe"] == "Agent"
 
     async def test_le_verrou_EF_55_couvre_aussi_la_purge(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
@@ -1448,6 +1485,384 @@ class TestLotEPurge:
             assert reponse.status_code == 409
         finally:
             await database.get_database().drop_collection("loader_runs")
+
+
+class TestInventaireReconciliation:
+    """La famille 5 — « voir NOS donnees la-bas, avec NOS statuts » (vision
+    Yaniv 13/08 soir). Quatre statuts par croisement registre x plateforme :
+    a_nous, disparu_la_bas, marque_mais_inconnu, etranger. Le DELETE
+    individuel d'un groupe est la seule action — et chaque issue d'erreur
+    (403, 404, 409, 502) est un critere Gherkin teste ici."""
+
+    @staticmethod
+    def _doubler_users(
+        monkeypatch: pytest.MonkeyPatch,
+        groupes: list[dict[str, str]],
+        *,
+        panne: bool = False,
+        suppression_muette: bool = False,
+    ) -> dict[str, Any]:
+        from app.routes import admin_inventaire
+
+        etat: dict[str, Any] = {"groupes": list(groupes), "supprimes": []}
+
+        class _Users:
+            async def lister_groupes(self):  # type: ignore[no-untyped-def]
+                return list(etat["groupes"])
+
+            async def supprimer_groupe(self, groupe_id):  # type: ignore[no-untyped-def]
+                if panne:
+                    raise RuntimeError("panne simulee")
+                if suppression_muette:
+                    return None  # 200 sans agir — le config-service sait le faire
+                etat["groupes"] = [
+                    g for g in etat["groupes"] if g["_id"] != str(groupe_id)
+                ]
+                etat["supprimes"].append(str(groupe_id))
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_inventaire, "_client_users", lambda: _Users())
+        return etat
+
+    async def test_sans_jeton_l_inventaire_repond_401(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        reponse = await client.get("/admin/inventaire/groupes")
+        assert reponse.status_code == 401
+
+    async def test_groupes_les_trois_statuts_sans_aucun_prefixe(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Un groupe du registre present = a_nous ; un groupe du registre
+        ABSENT la-bas = disparu_la_bas (signale, jamais recree en douce) ;
+        CUSTOMER = etranger. La reconnaissance ignore totalement les noms."""
+        from uuid import uuid4 as _uuid4
+
+        notre, disparu = str(_uuid4()), str(_uuid4())
+        self._doubler_users(
+            monkeypatch,
+            [
+                {"_id": notre, "name": "Agent"},
+                {"_id": str(_uuid4()), "name": "CUSTOMER"},
+            ],
+        )
+        await _registre_vierge()
+        await _inscrire_groupe_au_registre(notre, "Agent")
+        await _inscrire_groupe_au_registre(disparu, "Kiosque")
+        entetes = await _session_complete(client)
+
+        reponse = await client.get("/admin/inventaire/groupes", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert [g["nom"] for g in corps["a_nous"]] == ["Agent"]
+        assert [g["nom"] for g in corps["disparu_la_bas"]] == ["Kiosque"]
+        assert [g["nom"] for g in corps["etranger"]] == ["CUSTOMER"]
+        assert corps["comptes"] == {
+            "a_nous": 1,
+            "disparu_la_bas": 1,
+            "marque_mais_inconnu": 0,
+            "etranger": 1,
+        }
+        assert corps["anomalies"] == 1, "le disparu EST une anomalie, comptee"
+
+    async def test_delete_d_un_groupe_a_nous_verifie_par_relecture(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        from app.repositories.audit_trail import AuditTrailRepository
+        from app.routes.admin_entites import RUN_ADMIN
+
+        notre = str(_uuid4())
+        etat = self._doubler_users(monkeypatch, [{"_id": notre, "name": "Agent"}])
+        await _registre_vierge()
+        await _inscrire_groupe_au_registre(notre, "Agent")
+        entetes = await _session_complete(client)
+
+        reponse = await client.delete(
+            f"/admin/inventaire/groupes/{notre}", headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json() == {"supprime": "Agent", "verifie_par_relecture": True}
+        assert etat["supprimes"] == [notre]
+        journal = await AuditTrailRepository().exporter_run(RUN_ADMIN)
+        operations = [
+            (e.after or {}).get("operation")
+            for e in journal
+            if e.action == "INTENTION" and e.entity_type == "Group"
+        ]
+        assert "DELETE" in operations, "l'intention est ecrite AVANT l'acte"
+
+        # Et le registre l'a OUBLIE : il n'est plus ni a_nous ni disparu.
+        relecture = await client.get("/admin/inventaire/groupes", headers=entetes)
+        assert relecture.json()["comptes"]["a_nous"] == 0
+        assert relecture.json()["comptes"]["disparu_la_bas"] == 0
+
+    async def test_delete_d_un_groupe_etranger_403_meme_bien_nomme(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Le nom ne protege pas, le registre si : un groupe nomme comme un
+        de nos roles mais hors registre reste ETRANGER — 403, jamais touche."""
+        from uuid import uuid4 as _uuid4
+
+        etranger = str(_uuid4())
+        etat = self._doubler_users(monkeypatch, [{"_id": etranger, "name": "Agent"}])
+        await _registre_vierge()
+        entetes = await _session_complete(client)
+
+        reponse = await client.delete(
+            f"/admin/inventaire/groupes/{etranger}", headers=entetes
+        )
+        assert reponse.status_code == 403
+        assert "ETRANGER" in reponse.json()["detail"]
+        assert etat["supprimes"] == [], "rien n'a ete tente sur le serveur"
+
+    async def test_delete_d_un_groupe_inconnu_404(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        self._doubler_users(monkeypatch, [])
+        entetes = await _session_complete(client)
+        reponse = await client.delete(
+            f"/admin/inventaire/groupes/{_uuid4()}", headers=entetes
+        )
+        assert reponse.status_code == 404
+
+    async def test_delete_sous_run_409_avant_toute_lecture(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        self._doubler_users(monkeypatch, [])
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        await LoaderRunRepository().remplacer(
+            LoaderRun(
+                _id=_uuid4(), sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1), status=RunStatus.RUNNING,
+            )
+        )
+        try:
+            reponse = await client.delete(
+                f"/admin/inventaire/groupes/{_uuid4()}", headers=entetes
+            )
+            assert reponse.status_code == 409
+        finally:
+            await database.get_database().drop_collection("loader_runs")
+
+    async def test_delete_en_panne_502_et_l_echec_est_journalise(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        from app.repositories.audit_trail import AuditTrailRepository
+        from app.routes.admin_entites import RUN_ADMIN
+
+        notre = str(_uuid4())
+        self._doubler_users(
+            monkeypatch, [{"_id": notre, "name": "Agent"}], panne=True
+        )
+        await _registre_vierge()
+        await _inscrire_groupe_au_registre(notre, "Agent")
+        entetes = await _session_complete(client)
+
+        reponse = await client.delete(
+            f"/admin/inventaire/groupes/{notre}", headers=entetes
+        )
+        assert reponse.status_code == 502
+        assert "RuntimeError" in reponse.json()["detail"]
+        journal = await AuditTrailRepository().exporter_run(RUN_ADMIN)
+        statuts = [
+            (e.after or {}).get("statut")
+            for e in journal
+            if e.action == "RESULTAT" and e.entity_type == "Group"
+        ]
+        assert "ECHEC" in statuts, "l'echec aussi laisse une trace"
+        # Le groupe n'a PAS quitte le registre : il est toujours a nous.
+        relecture = await client.get("/admin/inventaire/groupes", headers=entetes)
+        assert relecture.json()["comptes"]["a_nous"] == 1
+
+    async def test_delete_ou_le_serveur_repond_sans_agir_502(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Famille 2b : 200 sans effet. La RELECTURE le confond — jamais
+        « supprime » sur la seule foi du code HTTP."""
+        from uuid import uuid4 as _uuid4
+
+        notre = str(_uuid4())
+        self._doubler_users(
+            monkeypatch,
+            [{"_id": notre, "name": "Agent"}],
+            suppression_muette=True,
+        )
+        await _registre_vierge()
+        await _inscrire_groupe_au_registre(notre, "Agent")
+        entetes = await _session_complete(client)
+
+        reponse = await client.delete(
+            f"/admin/inventaire/groupes/{notre}", headers=entetes
+        )
+        assert reponse.status_code == 502
+        assert "repondu sans agir" in reponse.json()["detail"]
+
+    async def test_produits_les_quatre_statuts(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Registre = journal (catalogue) UNION `produits_admin` ; marqueur
+        dans short_name. Le DEMO_ inconnu de nos registres est SIGNALE."""
+        from uuid import uuid4 as _uuid4
+
+        from app.repositories.audit_trail import AuditTrailRepository
+        from app.routes import admin_inventaire
+        from app.routes.admin_entites import RUN_ADMIN
+
+        du_run, de_l_admin, disparu = str(_uuid4()), str(_uuid4()), str(_uuid4())
+        plateforme = [
+            {"_id": du_run, "name": "Tontine Digitale", "short_name": "DEMO_TONTINE"},
+            {"_id": de_l_admin, "name": "Warrantage", "short_name": "DEMO_WAR"},
+            {"_id": str(_uuid4()), "name": "Poubelle", "short_name": "DEMO_MYSTERE"},
+            {"_id": str(_uuid4()), "name": "Cotisation 20000/mois", "short_name": "COTIS"},
+        ]
+
+        class _Produits:
+            async def inventaire(self):  # type: ignore[no-untyped-def]
+                return list(plateforme)
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_inventaire, "_client_produits", lambda: _Produits())
+
+        await _registre_vierge()
+        audit = AuditTrailRepository()
+        for pid, nom in ((du_run, "Tontine Digitale"), (disparu, "Epargne Bloquee")):
+            async with audit.intention(
+                RUN_ADMIN, entity_type="Product", entity_id=_uuid4(),
+                operation="CREATE", cible="product-service",
+                payload={"name": nom},
+            ) as suivi:
+                suivi.reussi({"product_id": pid})
+        await database.get_database()["loader_configuration"].update_one(
+            {"_id": "produits_admin"},
+            {"$set": {"produits": [
+                {"name": "Warrantage", "short_name": "DEMO_WAR", "product_id": de_l_admin}
+            ]}},
+            upsert=True,
+        )
+        entetes = await _session_complete(client)
+
+        reponse = await client.get("/admin/inventaire/produits", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert sorted(p["nom"] for p in corps["a_nous"]) == [
+            "Tontine Digitale", "Warrantage",
+        ]
+        assert [p["nom"] for p in corps["disparu_la_bas"]] == ["Epargne Bloquee"]
+        assert [p["short_name"] for p in corps["marque_mais_inconnu"]] == [
+            "DEMO_MYSTERE"
+        ]
+        assert [p["nom"] for p in corps["etranger"]] == ["Cotisation 20000/mois"]
+        assert corps["anomalies"] == 2
+
+    async def test_companies_reconnues_par_le_registre_des_lenders(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        from app.routes import admin_inventaire
+
+        notre, disparue = str(_uuid4()), str(_uuid4())
+        plateforme = [
+            {"_id": notre, "name": "Baobab Finance", "short_name": "DEMO_BAOBAB"},
+            {"_id": str(_uuid4()), "name": "Orpheline", "short_name": "DEMO_ORPHE"},
+            {"_id": str(_uuid4()), "name": "Vraie Banque", "short_name": "VB"},
+        ]
+
+        class _Companies:
+            async def lister_companies(self):  # type: ignore[no-untyped-def]
+                return list(plateforme)
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(
+            admin_inventaire, "_client_companies", lambda: _Companies()
+        )
+        registre = database.get_database()["lenders_registry"]
+        await registre.delete_many({})
+        await registre.insert_many(
+            [
+                {"_id": str(_uuid4()), "company_id": notre, "lender_type": "IMF"},
+                {"_id": str(_uuid4()), "company_id": disparue, "lender_type": "IMF"},
+            ]
+        )
+        entetes = await _session_complete(client)
+        try:
+            reponse = await client.get("/admin/inventaire/companies", headers=entetes)
+            assert reponse.status_code == 200, reponse.text
+            corps = reponse.json()
+            assert [c["nom"] for c in corps["a_nous"]] == ["Baobab Finance"]
+            assert [c["id"] for c in corps["disparu_la_bas"]] == [disparue]
+            assert [c["short_name"] for c in corps["marque_mais_inconnu"]] == [
+                "DEMO_ORPHE"
+            ]
+            assert [c["nom"] for c in corps["etranger"]] == ["Vraie Banque"]
+            assert corps["anomalies"] == 2, (
+                "une company du registre absente la-bas est GRAVE — comptee"
+            )
+        finally:
+            await registre.delete_many({})
+
+
+class TestJournalisationDesRoles:
+    """Le trou du 13/08, ferme et prouve de bout en bout : les groupes crees
+    en REAL par `ExecuteurRoles` etaient la SEULE ecriture non journalisee du
+    moteur — sans prefixe ni journal, ils devenaient invisibles a la
+    reconciliation. Ici : executer REAL -> le registre les connait."""
+
+    async def test_un_run_REAL_inscrit_chaque_groupe_au_registre(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        from app.models.enums import RunMode
+        from app.repositories.audit_trail import AuditTrailRepository
+        from app.services.inventaire import registre_groupes
+        from app.services.roles_execution import ExecuteurRoles
+
+        class _Users:
+            async def lister_permissions(self):  # type: ignore[no-untyped-def]
+                return ["USER_USER_CREATE"]
+
+            async def lister_groupes(self):  # type: ignore[no-untyped-def]
+                return [{"name": "CUSTOMER"}]
+
+            async def creer_groupe(self, **kwargs):  # type: ignore[no-untyped-def]
+                return {"_id": str(_uuid4()), "name": kwargs["nom"]}
+
+        await _registre_vierge()
+        rapport = await ExecuteurRoles(
+            mode=RunMode.REAL,
+            user_client=_Users(),  # type: ignore[arg-type]
+            audit=AuditTrailRepository(),
+            run_id=_uuid4(),
+        ).executer()
+
+        registre = await registre_groupes()
+        assert len(rapport.crees) == 11
+        assert len(registre) == 11, (
+            "chaque groupe cree est au registre — c'est notre SEULE memoire, "
+            "les groupes ne portent aucun prefixe"
+        )
+        assert sorted(registre.values())[0], "le nom accompagne l'identifiant"
 
 
 @pytest.fixture(autouse=True)

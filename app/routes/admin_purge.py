@@ -18,7 +18,7 @@ service (les disciplines D-*) :
   config-service           PARTAGE — on n'y purge jamais (A-08)
 
 La purge honnete fait donc DEUX choses, et les dit toutes les deux :
-  1. elle SUPPRIME ce qui est reversible (les groupes DEMO_) ;
+  1. elle SUPPRIME ce qui est reversible (NOS groupes, reconnus par le registre) ;
   2. elle LISTE les residus marques — jamais caches, avec le verdict et le
      fait mesure qui l'explique.
 
@@ -35,7 +35,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 
-from app.core.cdc import PREFIXE_DONNEES
 from app.core.database import get_collection
 from app.repositories.audit_trail import AuditTrailRepository
 from app.routes.admin_entites import RUN_ADMIN
@@ -44,6 +43,7 @@ from app.routes.dependances import (
     admin_complet,
     refuser_si_run_en_cours,
 )
+from app.services.inventaire import STATUT_A_NOUS, classer_groupes
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +71,17 @@ def _client_users() -> Any:
     return UserServiceClient()
 
 
-async def _groupes_marques(client: Any) -> list[dict[str, Any]]:
-    groupes = await client.lister_groupes()
+async def _groupes_a_nous(client: Any) -> list[dict[str, Any]]:
+    """NOS groupes, reconnus PAR LE REGISTRE — jamais par prefixe.
+
+    Les groupes ne portent AUCUN marqueur (decision Yaniv 13/08 : les noms de
+    roles sont fonctionnels — `Super-Admin`, `Admin`...). La premiere version
+    de cette fonction filtrait sur `DEMO_` : elle n'aurait JAMAIS rien trouve,
+    et la purge aurait ete un mensonge silencieux. La reconnaissance est celle
+    de la reconciliation : creations journalisees moins suppressions."""
+    classement = await classer_groupes(await client.lister_groupes())
     return [
-        {"id": str(g.get("_id") or g.get("id")), "nom": str(g.get("name", ""))}
-        for g in groupes
-        if str(g.get("name", "")).startswith(PREFIXE_DONNEES)
+        {"id": g["id"], "nom": g["nom"]} for g in classement[STATUT_A_NOUS]
     ]
 
 
@@ -118,14 +123,14 @@ async def preparer(
 ) -> dict[str, Any]:
     """`US-F1` — l'inventaire, AUCUNE ecriture.
 
-    Deux colonnes, toutes deux chiffrees : le purgeable (groupes DEMO_ releves
-    sur le serveur) et les residus marques (nos collections), chacun avec le
+    Deux colonnes, toutes deux chiffrees : le purgeable (NOS groupes,
+    reconnus par le registre) et les residus marques (nos collections), chacun avec le
     verdict mesure qui l'explique. Rien n'est cache — c'est la condition pour
     decider en connaissance de cause.
     """
     client = _client_users()
     try:
-        groupes = await _groupes_marques(client)
+        groupes = await _groupes_a_nous(client)
     finally:
         await client.fermer()
     return {
@@ -154,7 +159,7 @@ async def confirmer(
     demande: ConfirmationPurge,
     _: Annotated[SessionAdmin, Depends(admin_complet)],
 ) -> dict[str, Any]:
-    """`US-F2` — l'execution : seuls les groupes DEMO_ sont supprimes, chaque
+    """`US-F2` — l'execution : seuls NOS groupes (registre) sont supprimes, chaque
     suppression journalisee sous RUN_ADMIN. Le rapport final redit les
     residus — la purge ne les fait pas disparaitre du compte-rendu."""
     await refuser_si_run_en_cours()
@@ -165,7 +170,7 @@ async def confirmer(
         audit = AuditTrailRepository()
         client = _client_users()
         try:
-            for groupe in await _groupes_marques(client):
+            for groupe in await _groupes_a_nous(client):
                 try:
                     await client.supprimer_groupe(groupe["id"])
                 except Exception as erreur:

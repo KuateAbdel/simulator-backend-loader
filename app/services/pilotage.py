@@ -296,7 +296,9 @@ async def executer(
     rapports_clients: list[RapportClients] = []
 
     async def _roles() -> RapportEtape:
-        return await ExecuteurRoles(mode=mode, user_client=users).executer()
+        return await ExecuteurRoles(
+            mode=mode, user_client=users, audit=audit, run_id=run_id
+        ).executer()
 
     async def _organisation() -> RapportEtape:
         # La fenetre vient du run, pas d'un recalcul local : elle est FIGEE au
