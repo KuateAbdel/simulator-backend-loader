@@ -52,7 +52,7 @@ from fastapi import FastAPI
 
 from app.core import database
 from app.core.config import settings
-from app.routes import admin_auth, admin_referentiels, health
+from app.routes import admin_auth, admin_configuration, admin_referentiels, health
 from app.services.bootstrap import amorcer_super_admin
 
 logger = logging.getLogger(__name__)
@@ -94,4 +94,5 @@ app.include_router(health.router)
 # Lot A de l'API Super-Admin (US-A1..A4, US-B5) — le contrat OpenAPI que le
 # frontend de Zidane consomme est publie sur /docs des ce lot.
 app.include_router(admin_auth.router)
+app.include_router(admin_configuration.router)
 app.include_router(admin_referentiels.router)

@@ -227,3 +227,207 @@ class TestUSB5Referentiels:
         telcos = reponse.json()["telcos"]
         assert len(telcos["CM"]) >= 3
         assert all(t["regex_msisdn"] for pays in telcos.values() for t in pays)
+
+
+class TestUSB1ConfigurationResolue:
+    async def test_l_etat_initial_est_le_CDC_version_0(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Sans document : le contrat, pas une erreur."""
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_configuration")
+        reponse = await client.get("/admin/configuration", headers=entetes)
+        assert reponse.status_code == 200
+        corps = reponse.json()
+        assert corps["version"] == 0
+        assert corps["nb_clients"] == {"valeur": 2000, "origine": "défaut CDC"}
+        assert corps["conforme_au_cdc"] is True
+        assert set(corps["repartition_clients"]) == {"CM", "CI", "BF", "SN"}
+        assert all(v == 500 for v in corps["repartition_clients"].values())
+
+    async def test_une_surcharge_pays_porte_son_ORIGINE(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """LE critere Gherkin d'US-B1 : SN surcharge a 300 -> origine
+        « surcharge pays », les autres -> « défaut CDC »."""
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_configuration")
+        await client.put(
+            "/admin/configuration",
+            json={"pays": {"SN": {"clients": 300}}},
+            headers=entetes,
+        )
+        corps = (await client.get("/admin/configuration", headers=entetes)).json()
+        sn = corps["pays"]["SN"]["quantites"]["clients"]
+        cm = corps["pays"]["CM"]["quantites"]["clients"]
+        assert sn == {"valeur": 300, "origine": "surcharge pays"}
+        assert cm["origine"].startswith("défaut CDC")
+        # 2000 - 300 = 1700 repartis sur les 3 autres : 567/567/566.
+        assert sum(corps["repartition_clients"].values()) == 2000
+
+    async def test_les_quotas_contractuels_sont_AFFICHES_non_parametrables(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        corps = (await client.get("/admin/configuration", headers=entetes)).json()
+        assert corps["quotas_contractuels"]["part_femmes"]["origine"].startswith("EF-22")
+        assert corps["quotas_contractuels"]["part_corporate"]["origine"].startswith("EF-23")
+
+
+class TestUSB2ModifierLesVolumes:
+    async def test_la_valeur_est_persistee_et_RELUE_a_l_identique(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_configuration")
+        reponse = await client.put(
+            "/admin/configuration", json={"nb_clients": 1000}, headers=entetes
+        )
+        assert reponse.status_code == 200
+        assert reponse.json()["nb_clients"]["valeur"] == 1000
+        assert reponse.json()["version"] == 1
+        relu = (await client.get("/admin/configuration", headers=entetes)).json()
+        assert relu["nb_clients"] == {"valeur": 1000, "origine": "paramétré"}
+        assert relu["modifie_par"] == EMAIL
+
+    async def test_un_quota_contractuel_est_un_422_citant_l_exigence(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Gherkin US-B2 : « femmes a 10 % -> 422 citant EF-22 ». Les quotas
+        du CDC ne sont PAS des reglages — extra="forbid", champ inconnu."""
+        entetes = await _session_complete(client)
+        reponse = await client.put(
+            "/admin/configuration",
+            json={"pays": {"CM": {"part_femmes": 0.10}}},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+
+    async def test_une_fourchette_invalide_est_un_422_avec_la_regle(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        reponse = await client.put(
+            "/admin/configuration",
+            json={"pays": {"CM": {"companies": [9, 3]}}},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "min <= max" in reponse.json()["detail"]
+
+    async def test_des_cibles_pays_au_dela_du_total_sont_REFUSEES(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """« On ne corrige jamais en silence » — le depassement est un refus."""
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_configuration")
+        reponse = await client.put(
+            "/admin/configuration",
+            json={"nb_clients": 100, "pays": {"CM": {"clients": 80}, "SN": {"clients": 90}}},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "depassent le total" in reponse.json()["detail"]
+
+    async def test_un_pays_hors_cibles_est_un_422_EF_05(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        reponse = await client.put(
+            "/admin/configuration",
+            json={"pays": {"GA": {"clients": 10}}},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "EF-05" in reponse.json()["detail"]
+
+    async def test_le_verrou_EF_55_rend_409_pendant_un_run(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Gherkin US-B2 : run EN_COURS -> 409 avec l'identifiant du run."""
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        run = LoaderRun(
+            _id=_uuid4(),
+            sim_start_date=_date(2026, 2, 1),
+            sim_end_date=_date(2026, 8, 1),
+            status=RunStatus.RUNNING,
+        )
+        await LoaderRunRepository().remplacer(run)
+        try:
+            reponse = await client.put(
+                "/admin/configuration", json={"nb_clients": 500}, headers=entetes
+            )
+            assert reponse.status_code == 409
+            assert str(run.id) in reponse.json()["detail"]
+            assert "EF-55" in reponse.json()["detail"]
+        finally:
+            await database.get_database().drop_collection("loader_runs")
+
+
+class TestUSB3EtatDesPays:
+    async def test_desactiver_cote_loader_ne_touche_jamais_config_service(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Gherkin US-B3 : 3 pays actifs apres desactivation, et AUCUN appel
+        reseau — le module des routes n'importe meme pas le client
+        config-service, l'appel est impossible par construction."""
+        import app.routes.admin_configuration as module
+
+        assert "config_service" not in str(vars(module).keys())
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_configuration")
+        reponse = await client.put(
+            "/admin/configuration/pays/SN",
+            json={"actif": False, "motif": "hors perimetre de ce test"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 200
+        corps = reponse.json()
+        assert corps["pays"]["SN"]["actif"] is False
+        assert corps["pays"]["SN"]["motif_inactivite"] == "hors perimetre de ce test"
+        assert corps["repartition_clients"]["SN"] == 0
+        assert sum(corps["repartition_clients"].values()) == 2000, (
+            "les 2000 se repartissent sur les 3 pays restants"
+        )
+
+    async def test_reactiver_efface_le_motif(self, client: httpx.AsyncClient) -> None:
+        entetes = await _session_complete(client)
+        await client.put(
+            "/admin/configuration/pays/SN",
+            json={"actif": False, "motif": "x"},
+            headers=entetes,
+        )
+        corps = (
+            await client.put(
+                "/admin/configuration/pays/SN", json={"actif": True}, headers=entetes
+            )
+        ).json()
+        assert corps["pays"]["SN"]["actif"] is True
+        assert corps["pays"]["SN"]["motif_inactivite"] == ""
+
+    async def test_le_dernier_pays_actif_est_INDESACTIVABLE(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_configuration")
+        for code in ("CM", "CI", "BF"):
+            await client.put(
+                f"/admin/configuration/pays/{code}",
+                json={"actif": False, "motif": "test"},
+                headers=entetes,
+            )
+        reponse = await client.put(
+            "/admin/configuration/pays/SN",
+            json={"actif": False, "motif": "le dernier"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "dernier pays actif" in reponse.json()["detail"]

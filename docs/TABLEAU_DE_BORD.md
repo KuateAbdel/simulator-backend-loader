@@ -50,7 +50,7 @@
 
 | Tâche | État |
 |---|---|
-| Routes de pilotage EF-50→EF-59 — conception + backlog canonique (page Confluence 67665922). **Lot A tranche 1 LIVRÉE le 13/08** : auth complète US-A1/A2/A4 (JWT 4 h, deux portées, email RFC validé, reset opérateur) + référentiels lecture US-B5 (géographie 51/50/82, telcos, catalogue JJB). Reste : US-B1→B4 (config), lots B→E | 🟡 en cours |
+| Routes de pilotage EF-50→EF-59 — conception + backlog canonique (page Confluence 67665922). **Lot A LIVRÉ le 13/08** (sauf US-B4) : auth US-A1/A2/A4 + référentiels lecture US-B5 + configuration US-B1/B2/B3 (vue résolue avec origines, volumes bornés, quotas EF-22/23 verrouillés, verrou EF-55 en 409, pays activables — jamais config-service). Reste : US-B4 (ville — exige la persistance de la surcouche), lots B→E | 🟡 en cours |
 | Purge par préfixe `DEMO_` + verrou d'exécution (EF-65/66) | ⬜ |
 
 ## E. Backlog S4/S5 restant

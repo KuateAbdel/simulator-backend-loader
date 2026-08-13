@@ -28,7 +28,7 @@ from app.models.enums import NiveauOrganisation, RunStatus
 MongoDocument = dict[str, Any]
 
 # --------------------------------------------------------------------------
-# Noms des 6 collections proprietaires. Aucune autre collection n'est creee
+# Noms des 7 collections proprietaires. Aucune autre collection n'est creee
 # par le Loader (cf. app/models/domain.py).
 # --------------------------------------------------------------------------
 COLLECTION_FAKER_CONSUMPTION_LEDGER: Final = "faker_consumption_ledger"
@@ -39,6 +39,12 @@ COLLECTION_SUPER_ADMIN_ACCOUNTS: Final = "super_admin_accounts"
 #: Sixieme collection — arbre operationnel Branche/Agence/Kiosque cote Loader.
 #: Consequence de la decision (b) du 08/08 : sans elle, CR-02 est invérifiable.
 COLLECTION_ORG_HIERARCHY: Final = "org_hierarchy"
+#: Septieme collection — la configuration COURANTE editee par le Super-Admin
+#: (US-B1/B2/B3, 13/08). Document singleton versionne : le prochain run lance
+#: par l'API l'utilisera, et `LoaderRun.configuration` (D-10) continue d'en
+#: figer l'empreinte PAR RUN — la collection porte l'intention, le run porte
+#: le fait.
+COLLECTION_LOADER_CONFIGURATION: Final = "loader_configuration"
 
 _client: AsyncIOMotorClient[MongoDocument] | None = None
 

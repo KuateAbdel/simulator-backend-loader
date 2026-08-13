@@ -421,6 +421,32 @@ class ConfigurationExecution:
             "ecarts_au_cdc": self.ecarts_au_cdc(),
         }
 
+    @classmethod
+    def depuis_empreinte(cls, empreinte: dict[str, Any]) -> ConfigurationExecution:
+        """Reconstruit une configuration depuis sa forme persistee (`US-B1/B2`).
+
+        L'inverse exact d'`empreinte()` pour les champs SOURCES. Les champs
+        DERIVES (`repartition_clients`, `ecarts_au_cdc`) sont ignores : ils se
+        recalculent — les stocker comme verite ferait diverger la copie de la
+        regle qui la produit.
+        """
+        configuration = cls(nb_clients=int(empreinte.get("nb_clients", NB_CLIENTS)))
+        for code, fiche in (empreinte.get("pays") or {}).items():
+            pays = ConfigurationPays(
+                code=code,
+                actif=bool(fiche.get("actif", True)),
+                motif_inactivite=str(fiche.get("motif_inactivite", "")),
+                surcharge=_deserialiser(fiche.get("surcharge") or {}),
+                regions={
+                    nom: _deserialiser(s) for nom, s in (fiche.get("regions") or {}).items()
+                },
+                villes={
+                    nom: _deserialiser(s) for nom, s in (fiche.get("villes") or {}).items()
+                },
+            )
+            configuration.pays[code] = pays
+        return configuration
+
     def resume(self) -> str:
         lignes = [
             f"Pays actifs   : {', '.join(self.pays_actifs) or 'AUCUN'}",
@@ -452,6 +478,23 @@ def _serialiser(surcharge: Surcharge) -> dict[str, Any]:
         )
         if (valeur := getattr(surcharge, champ)) is not None
     }
+
+
+def _deserialiser(document: dict[str, Any]) -> Surcharge:
+    """L'inverse de `_serialiser` — les tuples redeviennent des tuples (Mongo
+    les persiste en listes)."""
+    champs: dict[str, Any] = {}
+    for nom in ("companies", "kiosques", "staff"):
+        valeur = document.get(nom)
+        if valeur is not None:
+            champs[nom] = (int(valeur[0]), int(valeur[1]))
+    for nom in ("clients", "branches", "agences", "agents"):
+        if document.get(nom) is not None:
+            champs[nom] = int(document[nom])
+    for nom in ("part_femmes", "part_corporate"):
+        if document.get(nom) is not None:
+            champs[nom] = float(document[nom])
+    return Surcharge(**champs)
 
 
 def _proche(a: float, b: float, tolerance: float = 1e-9) -> bool:
