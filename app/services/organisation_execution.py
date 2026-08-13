@@ -342,6 +342,9 @@ class ExecuteurOrganisation:
             latitude=adresse.latitude,
             longitude=adresse.longitude,
             referentiel=self._referentiel,
+            # `SD-6` — le dirigeant aussi a un lieu de naissance : la meme
+            # regle que les clients, pas une population a deux vitesses.
+            statique=self._statique,
         )
         devise = self._devise_du_pays(pays)
 

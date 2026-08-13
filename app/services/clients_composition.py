@@ -348,6 +348,10 @@ def composer(
     occupation_imposee: str | None = None,
     segment: ClientSegment | None = None,
     profil_comportemental: str | None = None,
+    #: `SD-6` — le referentiel de JJB, pour le lieu de naissance (195 pays).
+    #: Optionnel pour les appelants d'avant le lot ; l'executeur le passe
+    #: TOUJOURS, et un test au niveau executeur le garantit.
+    statique: ReferentielStatique | None = None,
 ) -> ClientCompose:
     """Traduit un client Faker en client onboardable. **Aucun appel reseau.**
 
@@ -446,6 +450,7 @@ def composer(
         latitude=ancrage.latitude,
         longitude=ancrage.longitude,
         referentiel=referentiel,
+        statique=statique,
     )
 
     return ClientCompose(

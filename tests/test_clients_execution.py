@@ -2019,3 +2019,45 @@ class TestSoldeCableSD5:
             "la mediane des salaries ne depasse pas celle des agricoles — "
             "le metier n'atteint plus le montant depose"
         )
+
+
+class TestLieuDeNaissanceCableSD6:
+    """`SD-6` au niveau de l'EXECUTEUR — le cablage, pas la fonction.
+
+    La lecon des mutations SD-3/SD-5, appliquee d'avance : si `_creer` cessait
+    de passer `statique` a `composer()`, la composition retomberait sans bruit
+    sur le comportement historique (ne la ou il reside) et AUCUN test de
+    fonction ne tomberait. Celui-ci tombe.
+    """
+
+    async def test_les_fiches_onboardees_portent_un_VRAI_lieu_de_naissance(self) -> None:
+        clients = FauxClientService()
+        await _executeur(
+            mode=RunMode.REAL, nb_clients=300, pays_actifs=("CM",),
+            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+        ).executer()
+        villes_cm = {
+            v.name.title()
+            for r in REFERENTIEL.regions_du_pays("CM")
+            for v in REFERENTIEL.villes_de_region(r.region_id)
+        }
+        naissances = [o["identity"]["place_of_birth"] for o in clients.onboardes]
+        assert all(naissances), "un place_of_birth vide repartirait a null au serveur"
+
+        etrangers = [n for n in naissances if n not in villes_cm]
+        part = len(etrangers) / len(naissances)
+        assert 0.04 < part < 0.18, (
+            f"{part:.1%} nes a l'etranger — hors de la bande attendue autour de "
+            "10 % (UN DESA 2020) : le cablage du referentiel statique est suspect"
+        )
+        for etranger in etrangers:
+            assert etranger in set(STATIQUE.pays.values()), etranger
+
+        residents_natifs = [
+            o for o in clients.onboardes
+            if o["identity"]["place_of_birth"] == o["identity"]["address"]["city"]
+        ]
+        assert len(residents_natifs) < len(clients.onboardes) / 2, (
+            "plus de la moitie des clients nes exactement ou ils habitent — "
+            "la migration interne a disparu"
+        )

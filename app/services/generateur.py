@@ -44,6 +44,7 @@ from app.core.invariants import (
     valider_coherence_territoriale,
     valider_coherence_ville_pays,
 )
+from app.services.referentiel_statique import PAYS_CIBLES_LIBELLES
 
 #: Formes juridiques reellement observees chez Faker, et leur frequence.
 #:
@@ -150,6 +151,12 @@ def prenom(genre: str, index: int) -> str:
         )
     return liste[index % len(liste)]
 
+
+#: `SD-6` — la part de la population nee A L'ETRANGER. Le CDC ne fixe aucune
+#: proportion ; l'ONU (UN DESA 2020) situe la part de population nee a
+#: l'etranger entre ~2 % (SN, CM, BF) et ~10 % (CI). Borne haute regionale,
+#: en constante documentee — jamais un quota du CDC.
+PART_NAISSANCES_ETRANGERES: Final = 0.10
 
 #: Les onze cles du bloc `quick_win` de Faker (famille A), mesurees
 #: exhaustivement le 11/08. Elles decrivent la regularite d'usage, l'usage data,
@@ -277,6 +284,10 @@ class IdentiteGeneree:
     nationality: str
     id_number: str
     id_place: str
+    #: `SD-6` (tache #15) — le lieu de naissance. Le contrat serveur porte
+    #: `place_of_birth` et le persistait a `null` (mesure du 09/08) : un champ
+    #: que le referentiel sait remplir ne reste pas vide.
+    place_of_birth: str
     id_expire_on: date
     phone: str
     email: str
@@ -297,6 +308,7 @@ class IdentiteGeneree:
             "nationality": self.nationality,
             "id_number": self.id_number,
             "id_place": self.id_place,
+            "place_of_birth": self.place_of_birth,
             "id_expire_on": self.id_expire_on.isoformat(),
             "phone": self.phone,
             "email": self.email,
@@ -494,6 +506,7 @@ class Generateur:
         latitude: float | None = None,
         longitude: float | None = None,
         referentiel: object | None = None,
+        statique: object | None = None,
     ) -> IdentiteGeneree:
         """Complete une identite Faker avec ce qui lui manque.
 
@@ -501,6 +514,13 @@ class Generateur:
         est decide par l'appelant, qui seul connait l'etat de sa distribution.
         """
         pays = country_code.upper()
+        naissance_lieu, delivrance = self._lieu_de_naissance(
+            pays,
+            ville,
+            ancre=ancre_client,
+            referentiel=referentiel,
+            statique=statique,
+        )
         return IdentiteGeneree(
             identity_id=uuid4(),
             first_name=first_name,
@@ -513,16 +533,93 @@ class Generateur:
             # Defaut trouve par la campagne d'ecriture, invisible hors ligne.
             nationality=pays,
             id_number=self.numero_piece(pays),
-            # `id_place` = la ville de residence. Elle est desormais GARANTIE
-            # dans le pays par `valider_coherence_territoriale` ci-dessus : une
-            # piece senegalaise ne peut plus etre delivree a Douala.
-            id_place=_sans_accents(ville).title(),
+            # `SD-6` — `id_place` n'est PLUS la ville de residence : la piece
+            # est delivree pres du lieu de naissance pour ceux nes au pays, et
+            # a la residence pour la minorite nee a l'etranger. Dans les deux
+            # cas c'est une ville DU pays de nationalite — « une piece
+            # senegalaise ne peut pas etre delivree a Douala » reste garanti.
+            id_place=delivrance,
+            place_of_birth=naissance_lieu,
             id_expire_on=self._expiration_piece(),
             phone=telephone,
             email=self.email(first_name, last_name),
             occupation=occupation or "Commercant",
             adresse=self.adresse(quartier, ville, region, pays, latitude, longitude, referentiel),
         )
+
+    def _lieu_de_naissance(
+        self,
+        pays: str,
+        ville_residence: str,
+        *,
+        ancre: str,
+        referentiel: object | None,
+        statique: object | None,
+    ) -> tuple[str, str]:
+        """`SD-6` (tache #15) — le couple (`place_of_birth`, `id_place`).
+
+        LE DEFAUT FERME : `place_of_birth` restait a `null` sur le serveur, et
+        `id_place` etait la ville de residence pour 2000 clients sur 2000 —
+        une population entiere nee exactement la ou elle habite, ce qui
+        n'existe dans aucun pays reel.
+
+        DEUX SOUS-POPULATIONS, ANCREES AU CLIENT (`CR-03`)
+        --------------------------------------------------
+        - **Majorite, nee AU pays** : une ville tiree parmi TOUTES les villes
+          du pays au referentiel. La migration interne en decoule
+          mecaniquement — avec ~12 villes par pays, la plupart des clients
+          n'habitent pas leur ville natale, sans qu'aucun quota l'impose.
+          La piece est delivree pres du lieu de naissance : `id_place` = la
+          ville natale.
+        - **Minorite (10 %), nee A L'ETRANGER** : un pays tire parmi les 195
+          de `Lieu2Nationalite.csv` (libelle francais — l'ecosysteme est
+          francophone), hors des quatre pays cibles. La NATIONALITE reste
+          celle de la residence : c'est la diaspora de retour, et sa piece
+          nationale est delivree la ou elle reside — `id_place` = la ville de
+          residence. La coherence piece <-> nationalite est donc structurelle
+          dans les deux branches.
+
+        LES 10 % : l'ONU (UN DESA 2020) situe la part de population nee a
+        l'etranger entre ~2 % (SN, CM, BF) et ~10 % (CI, l'un des premiers
+        pays d'immigration d'Afrique de l'Ouest). Le CDC ne fixe rien : on
+        retient la borne haute regionale, en constante documentee — un chiffre
+        visible dans une demo, jamais un quota du CDC.
+
+        CE QUI EST DELIBEREMENT HORS CHAMP, ET DECLARE : les nationalites
+        ETRANGERES. Un Malien residant a Abidjan existe dans la vraie vie,
+        mais le CDC definit une population des quatre pays cibles, et une
+        nationalite etrangere entrainerait piece, msisdn et devise d'un pays
+        sans referentiel. On ne l'invente pas.
+
+        Sans `referentiel` ou `statique` (appelants d'avant `SD-6`), le
+        comportement historique demeure : ne la ou il reside.
+        """
+        residence = _sans_accents(ville_residence).title()
+        regions_du_pays = getattr(referentiel, "regions_du_pays", None)
+        villes_de_region = getattr(referentiel, "villes_de_region", None)
+        pays_connus = getattr(statique, "pays", None)
+        if regions_du_pays is None or villes_de_region is None or not pays_connus:
+            return residence, residence
+
+        de_ce_client = random.Random(f"naissance:{ancre}")  # noqa: S311
+        if de_ce_client.random() < PART_NAISSANCES_ETRANGERES:
+            locaux = set(PAYS_CIBLES_LIBELLES.values())
+            etrangers = sorted(
+                libelle_fr
+                for libelle_en, libelle_fr in pays_connus.items()
+                if libelle_en not in locaux
+            )
+            return de_ce_client.choice(etrangers), residence
+
+        villes = sorted(
+            ville.name
+            for region in regions_du_pays(pays)
+            for ville in villes_de_region(region.region_id)
+        )
+        if not villes:
+            return residence, residence
+        naissance = _sans_accents(de_ce_client.choice(villes)).title()
+        return naissance, naissance
 
     def numero_piece(self, country_code: str) -> str:
         """D-CLI-3 : alphanumerique MAJUSCULES strict, et UNIQUE (`INV-09`).

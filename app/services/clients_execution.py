@@ -1512,6 +1512,9 @@ class ExecuteurClients:
                 # des quotas. Meme lecon que `reservation.profil`.
                 occupation_imposee=reservation.occupation,
                 segment=segment,
+                # `SD-6` — le lieu de naissance vient du referentiel de JJB
+                # (195 pays) combine aux villes du Loader_Base.
+                statique=self._statique,
             )
         except CompositionImpossible as erreur:
             rapport.refuses_avant_reseau.append((faker.client_id, str(erreur)[:200]))

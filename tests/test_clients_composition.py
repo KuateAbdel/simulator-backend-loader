@@ -51,7 +51,7 @@ from app.services.clients_composition import (
 )
 from app.services.generateur import Generateur
 from app.services.geographie import charger_referentiel
-from app.services.referentiel_statique import charger_statique
+from app.services.referentiel_statique import PAYS_CIBLES_LIBELLES, charger_statique
 
 CLASSEUR = Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")
 REFERENTIEL = charger_referentiel(CLASSEUR)
@@ -592,3 +592,128 @@ class TestOccupationsReellesSD3:
         est en anglais."""
         vus = {occupation_reelle(None, f"c{r}", STATIQUE) for r in range(200)}
         assert "Commercant" not in vus
+
+
+class TestLieuDeNaissanceSD6:
+    """`SD-6` (tache #15) — le lieu de naissance, et `id_place` libere.
+
+    LE DEFAUT FERME : `place_of_birth` restait a `null` sur le serveur
+    (mesure du 09/08 — champ accepte, jamais envoye), et `id_place` etait la
+    ville de residence pour 2000 clients sur 2000. Une population entiere nee
+    exactement la ou elle habite n'existe dans aucun pays reel.
+    """
+
+    @staticmethod
+    def _identite(ancre: str, ville: str = "Douala", region: str = "Littoral") -> Any:
+        return Generateur(uuid4(), reference=date(2026, 8, 13)).identite(
+            first_name="Salif",
+            last_name="Tamadou",
+            gender="MALE",
+            country_code="CM",
+            ville=ville,
+            region=region,
+            quartier="Bepanda",
+            telephone="+237650000001",
+            jeune=False,
+            ancre_client=ancre,
+            occupation="Cocoa farmer",
+            referentiel=REFERENTIEL,
+            statique=STATIQUE,
+        )
+
+    def _population(self, n: int = 400) -> list[Any]:
+        return [self._identite(f"CM-IND-{r}") for r in range(n)]
+
+    def test_place_of_birth_n_est_JAMAIS_vide(self) -> None:
+        """Le serveur le persiste a null quand on l'omet — plus jamais."""
+        assert all(i.place_of_birth for i in self._population(100))
+
+    def test_ANCRE_au_client_jamais_au_run(self) -> None:
+        """`CR-03` — deux runs differents (deux Generateur, deux run_id), le
+        meme client : le meme lieu de naissance."""
+        assert (
+            self._identite("CM-IND-42").place_of_birth
+            == self._identite("CM-IND-42").place_of_birth
+        )
+
+    def test_la_MAJORITE_est_nee_dans_une_ville_du_pays(self) -> None:
+        villes_cm = {
+            v.name.title()
+            for r in REFERENTIEL.regions_du_pays("CM")
+            for v in REFERENTIEL.villes_de_region(r.region_id)
+        }
+        population = self._population()
+        locaux = [i for i in population if i.place_of_birth in villes_cm]
+        assert len(locaux) / len(population) > 0.8
+
+    def test_la_MIGRATION_INTERNE_existe_sans_quota(self) -> None:
+        """Avec ~12 villes par pays, la plupart des clients ne doivent pas
+        etre nes dans leur ville de residence — mecaniquement, sans quota."""
+        population = self._population()
+        ailleurs = [i for i in population if i.place_of_birth != "Douala"]
+        assert len(ailleurs) / len(population) > 0.5
+
+    def test_la_MINORITE_nait_a_l_etranger_dans_les_195_pays(self) -> None:
+        """~10 % (UN DESA 2020, borne haute regionale CI). Le libelle est le
+        FRANCAIS de `Lieu2Nationalite.csv` — l'ecosysteme est francophone —
+        et jamais un des quatre pays cibles."""
+        pays_fr = set(STATIQUE.pays.values())
+        villes_cm = {
+            v.name.title()
+            for r in REFERENTIEL.regions_du_pays("CM")
+            for v in REFERENTIEL.villes_de_region(r.region_id)
+        }
+        population = self._population()
+        etrangers = [i for i in population if i.place_of_birth not in villes_cm]
+        assert 0.04 < len(etrangers) / len(population) < 0.18
+        # Les libelles des quatre cibles DERIVES du referentiel, jamais en dur —
+        # le fichier ecrit ses apostrophes et accents a sa facon (mesure 12/08).
+        cibles_fr = {STATIQUE.pays[libelle_en] for libelle_en in PAYS_CIBLES_LIBELLES.values()}
+        for identite in etrangers:
+            assert identite.place_of_birth in pays_fr, identite.place_of_birth
+            assert identite.place_of_birth not in cibles_fr
+
+    def test_id_place_suit_la_naissance_pour_les_locaux(self) -> None:
+        """La piece est delivree pres du lieu de naissance — et donc `id_place`
+        n'est PLUS mecaniquement la ville de residence."""
+        villes_cm = {
+            v.name.title()
+            for r in REFERENTIEL.regions_du_pays("CM")
+            for v in REFERENTIEL.villes_de_region(r.region_id)
+        }
+        for identite in self._population(200):
+            if identite.place_of_birth in villes_cm:
+                assert identite.id_place == identite.place_of_birth
+            else:
+                # Ne a l'etranger, nationalite locale : la piece est delivree
+                # ou il reside. JAMAIS dans un pays sans referentiel.
+                assert identite.id_place == "Douala"
+
+    def test_la_NATIONALITE_reste_celle_du_pays_de_residence(self) -> None:
+        """Choix declare du lot : la minorite nee a l'etranger est la diaspora
+        de retour, pas des nationaux etrangers — une nationalite etrangere
+        entrainerait piece, msisdn et devise d'un pays sans referentiel."""
+        assert all(i.nationality == "CM" for i in self._population(150))
+
+    def test_le_payload_PORTE_le_champ(self) -> None:
+        identite = self._identite("CM-IND-7")
+        assert identite.en_payload()["place_of_birth"] == identite.place_of_birth
+
+    def test_sans_referentiel_statique_le_comportement_historique_demeure(self) -> None:
+        """Les appelants d'avant SD-6 (sans `statique`) restent valides : ne
+        la ou il reside — aucun champ vide, aucune surprise."""
+        identite = Generateur(uuid4(), reference=date(2026, 8, 13)).identite(
+            first_name="Salif",
+            last_name="Tamadou",
+            gender="MALE",
+            country_code="CM",
+            ville="Douala",
+            region="Littoral",
+            quartier="Bepanda",
+            telephone="+237650000002",
+            jeune=False,
+            ancre_client="CM-IND-1",
+            referentiel=REFERENTIEL,
+        )
+        assert identite.place_of_birth == "Douala"
+        assert identite.id_place == "Douala"
