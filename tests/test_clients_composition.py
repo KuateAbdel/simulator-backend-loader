@@ -732,7 +732,7 @@ class TestINV18RepartitionParOperateur:
         generateur = Generateur(uuid4(), reference=date(2026, 8, 13))
         comptes: dict[str, int] = {}
         for i in range(n):
-            msisdn, telco = generateur.msisdn(pays, REFERENTIEL, f"{pays}-INV18-{i}")
+            _msisdn, telco = generateur.msisdn(pays, REFERENTIEL, f"{pays}-INV18-{i}")
             comptes[telco.short_name] = comptes.get(telco.short_name, 0) + 1
         return {nom: c / n for nom, c in comptes.items()}
 
