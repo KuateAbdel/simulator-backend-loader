@@ -117,5 +117,23 @@ class LoaderRunRepository(RepositoryBase):
         )
         return LoaderRun.model_validate(document) if document else None
 
+    async def lister(self, limite: int = 50) -> list[LoaderRun]:
+        """L'historique, du plus recent au plus ancien (US-C6).
+
+        Append-only : aucune methode de suppression n'existe sur ce
+        repository, et c'est voulu — l'historique est une preuve (CR-06).
+        """
+        documents = await (
+            self.collection.find().sort("_id", -1).limit(int(limite)).to_list(None)
+        )
+        return [LoaderRun.model_validate(d) for d in documents]
+
+    async def attacher_rapport(self, run_id: UUID, texte: str) -> None:
+        """Range le rapport complet avec son run (US-C6) — ce que le CLI
+        imprime, l'API le persiste."""
+        await self.collection.update_one(
+            {"_id": str(run_id)}, {"$set": {"rapport": texte}}
+        )
+
     async def remplacer(self, run: LoaderRun) -> None:
         await self.collection.replace_one({"_id": str(run.id)}, en_document(run), upsert=True)

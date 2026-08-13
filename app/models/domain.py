@@ -150,6 +150,10 @@ class LoaderRun(LoaderDocument):
     #: est figee au lancement. Melanger les deux rendrait impossible de dire ce
     #: qui avait ete demande.
     configuration: dict[str, Any] = Field(default_factory=dict)
+    #: Le RAPPORT complet du run, tel que `pilotage.executer()` l'ecrit — la
+    #: sortie que le CLI imprime, rangee avec le run pour que l'API la rende
+    #: (US-C6). Attache en fin d'execution ; vide tant que le run court.
+    rapport: str = ""
 
 
 class AuditTrailEntry(LoaderDocument):

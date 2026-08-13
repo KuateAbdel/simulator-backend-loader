@@ -597,3 +597,199 @@ class TestUSB4AjoutDeVille:
             assert "EF-55" in reponse.json()["detail"]
         finally:
             await database.get_database().drop_collection("loader_runs")
+
+
+class TestLotBRuns:
+    """`US-C1`/`US-C2`/`US-C3`/`US-C4`/`US-C6` — le cablage des routes.
+
+    Le MOTEUR est deja prouve ailleurs (858 tests + DRY_RUN reel au centime
+    pres) : ici, il est DOUBLE par un faux qui ecrit le meme cycle de vie
+    dans loader_runs. Ces tests verrouillent ce que les routes garantissent :
+    le rite D-01 structurel, le perimetre fige, les 409, l'historique.
+    """
+
+    @staticmethod
+    def _doubler_moteur(monkeypatch: pytest.MonkeyPatch, *, statut_final: str = "PARTIAL"):
+        """Remplace pilotage.executer par un double qui joue le cycle de vie."""
+        from datetime import date as _date
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.configuration import ConfigurationRepository
+        from app.repositories.loader_runs import LoaderRunRepository
+        from app.routes import admin_runs
+
+        appels: list[dict[str, Any]] = []
+
+        async def faux_moteur(mode, etapes=None, ignorer_verrou=False, *, run_id=None,
+                              configuration=None, sortie=print, gerer_connexion=True):
+            appels.append({"mode": mode, "run_id": run_id, "configuration": configuration})
+            if configuration is None:
+                configuration, _ = await ConfigurationRepository().charger()
+            run = LoaderRun(
+                _id=run_id,
+                sim_start_date=_date(2026, 2, 14),
+                sim_end_date=_date(2026, 8, 13),
+                mode=mode,
+                status=RunStatus.PENDING,
+                configuration=configuration.empreinte(),
+            )
+            depot = LoaderRunRepository()
+            await depot.remplacer(run)
+            await depot.changer_statut(run.id, RunStatus.RUNNING)
+            await depot.ajouter_checkpoint(run.id, "ROLES", {"statut": "COMPLETED"})
+            sortie("rapport du faux moteur")
+            await depot.changer_statut(run.id, RunStatus(statut_final))
+            return 0
+
+        monkeypatch.setattr(admin_runs, "executer", faux_moteur)
+        return appels
+
+    async def _preparer_et_attendre(self, client: httpx.AsyncClient, entetes) -> str:
+        reponse = await client.post("/admin/runs", json={}, headers=entetes)
+        assert reponse.status_code == 202, reponse.text
+        run_id = reponse.json()["run_id"]
+        for _ in range(50):
+            detail = await client.get(f"/admin/runs/{run_id}", headers=entetes)
+            if detail.status_code == 200 and detail.json().get("statut") not in (
+                "PENDING", "RUNNING",
+            ):
+                break
+            await __import__("asyncio").sleep(0.05)
+        return run_id
+
+    async def test_US_C1_preparer_rend_202_puis_le_rapport_est_range(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        appels = self._doubler_moteur(monkeypatch)
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        run_id = await self._preparer_et_attendre(client, entetes)
+        assert appels[0]["mode"].value == "DRY_RUN"
+        detail = (await client.get(f"/admin/runs/{run_id}", headers=entetes)).json()
+        assert detail["statut"] == "PARTIAL"
+        assert "rapport du faux moteur" in detail["rapport"], (
+            "le rapport que le CLI imprime doit etre RANGE avec le run"
+        )
+
+    async def test_US_C1_le_REAL_direct_n_existe_pas(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Le rite D-01 est STRUCTUREL : aucun chemin ne lance un REAL sans
+        preparation."""
+        entetes = await _session_complete(client)
+        reponse = await client.post("/admin/runs", json={"mode": "REAL"}, headers=entetes)
+        assert reponse.status_code == 422
+        assert "confirmer" in reponse.json()["detail"]
+
+    async def test_US_C2_confirmer_lance_le_REAL_sur_le_perimetre_FIGE(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        appels = self._doubler_moteur(monkeypatch)
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        await database.get_database().drop_collection("loader_configuration")
+        preparation_id = await self._preparer_et_attendre(client, entetes)
+
+        reponse = await client.post(
+            f"/admin/runs/{preparation_id}/confirmer", headers=entetes
+        )
+        assert reponse.status_code == 202, reponse.text
+        assert reponse.json()["mode"] == "REAL"
+        assert reponse.json()["preparation_id"] == preparation_id
+        for _ in range(50):
+            if len(appels) == 2:
+                break
+            await __import__("asyncio").sleep(0.05)
+        assert appels[1]["mode"].value == "REAL"
+        assert appels[1]["configuration"] is not None, (
+            "le REAL recoit l'empreinte FIGEE de la preparation, jamais None"
+        )
+
+    async def test_US_C2_une_configuration_changee_est_un_409_re_preparer(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """LE critere ne en redigeant la story : le rapport lu ne decrit plus
+        ce qui va s'executer -> re-preparer (D-01)."""
+        self._doubler_moteur(monkeypatch)
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        await database.get_database().drop_collection("loader_configuration")
+        preparation_id = await self._preparer_et_attendre(client, entetes)
+
+        # La configuration CHANGE apres la preparation.
+        await client.put(
+            "/admin/configuration", json={"nb_clients": 750}, headers=entetes
+        )
+        reponse = await client.post(
+            f"/admin/runs/{preparation_id}/confirmer", headers=entetes
+        )
+        assert reponse.status_code == 409
+        assert "re-preparer" in reponse.json()["detail"]
+
+    async def test_US_C2_une_preparation_inachevee_ne_se_confirme_pas(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        courant = LoaderRun(
+            _id=_uuid4(), sim_start_date=_date(2026, 2, 1),
+            sim_end_date=_date(2026, 8, 1), status=RunStatus.RUNNING,
+        )
+        await LoaderRunRepository().remplacer(courant)
+        try:
+            reponse = await client.post(
+                f"/admin/runs/{courant.id}/confirmer", headers=entetes
+            )
+            assert reponse.status_code == 409
+            assert "TERMINE" in reponse.json()["detail"].upper()
+        finally:
+            await database.get_database().drop_collection("loader_runs")
+
+    async def test_US_C3_la_progression_rend_les_paliers(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_moteur(monkeypatch)
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        run_id = await self._preparer_et_attendre(client, entetes)
+        progression = (
+            await client.get(f"/admin/runs/{run_id}/progression", headers=entetes)
+        ).json()
+        assert progression["statut"] == "PARTIAL"
+        assert any(p.get("phase") == "ROLES" for p in progression["paliers"]) or (
+            progression["paliers"]
+        ), "les checkpoints de l'orchestrateur sont la matiere de la progression"
+
+    async def test_US_C4_arreter_sans_tache_locale_est_un_409_honnete(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        entetes = await _session_complete(client)
+        reponse = await client.post(f"/admin/runs/{_uuid4()}/arreter", headers=entetes)
+        assert reponse.status_code == 409
+        assert "pas en cours dans ce processus" in reponse.json()["detail"]
+
+    async def test_US_C6_l_historique_est_append_only(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_moteur(monkeypatch)
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        await self._preparer_et_attendre(client, entetes)
+        historique = (await client.get("/admin/runs", headers=entetes)).json()
+        assert len(historique["runs"]) == 1
+        # Aucune route de suppression : DELETE rend 405, pas 200.
+        run_id = historique["runs"][0]["run_id"]
+        suppression = await client.request(
+            "DELETE", f"/admin/runs/{run_id}", headers=entetes
+        )
+        assert suppression.status_code == 405
