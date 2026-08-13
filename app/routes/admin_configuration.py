@@ -36,8 +36,7 @@ from app.core.configuration import (
     Surcharge,
 )
 from app.repositories.configuration import ConfigurationRepository
-from app.repositories.loader_runs import LoaderRunRepository
-from app.routes.dependances import SessionAdmin, admin_complet
+from app.routes.dependances import SessionAdmin, admin_complet, refuser_si_run_en_cours
 
 router = APIRouter(prefix="/admin/configuration", tags=["admin — configuration"])
 
@@ -87,17 +86,8 @@ class EtatPaysDemande(BaseModel):
 # --------------------------------------------------------------------------
 
 
-async def _refuser_si_run_en_cours() -> None:
-    """Verrou EF-55 — la configuration est FIGEE pendant un run."""
-    en_cours = await LoaderRunRepository().dernier_en_cours()
-    if en_cours is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"run {en_cours.id} a l'etat {en_cours.status.value} — la "
-                "configuration est verrouillee pendant une generation (EF-55)"
-            ),
-        )
+#: Verrou EF-55, partage avec les referentiels — defini dans `dependances`.
+_refuser_si_run_en_cours = refuser_si_run_en_cours
 
 
 def _valider_fourchettes(code: str, demande: SurchargePaysDemande) -> None:

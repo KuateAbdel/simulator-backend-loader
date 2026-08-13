@@ -24,11 +24,18 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.routes.dependances import SessionAdmin, admin_complet
+from app.repositories.surcouche import SurcoucheRepository
+from app.routes.dependances import (
+    SessionAdmin,
+    admin_complet,
+    refuser_si_run_en_cours,
+)
 from app.services.geographie import ReferentielGeo, charger_referentiel
 from app.services.referentiel_statique import ReferentielStatique, charger_statique
+from app.services.surcouche_referentiel import AjoutRefuse
 
 router = APIRouter(prefix="/admin/referentiels", tags=["admin — referentiels"])
 
@@ -52,9 +59,11 @@ async def geographie(
     """L'arbre complet pays -> regions -> villes (GPS) -> quartiers.
 
     C'est la matiere des ecrans de selection — 51 regions, 50 villes,
-    82 quartiers, les comptes que `CR-01` verifie au chargement.
+    82 quartiers du classeur, PLUS les ajouts de la surcouche (`US-B4`) :
+    l'ecran voit exactement le referentiel que le prochain run utilisera.
     """
-    referentiel = _geo()
+    surcouche, meta = await SurcoucheRepository().charger()
+    referentiel = surcouche.appliquer(_geo())
     arbre: list[dict[str, Any]] = []
     for pays in sorted({r.country_iso2 for r in referentiel.regions.values()}):
         regions = []
@@ -83,7 +92,92 @@ async def geographie(
                 }
             )
         arbre.append({"pays": pays, "regions": regions})
-    return {"pays": arbre}
+    return {
+        "pays": arbre,
+        "surcouche": {
+            "resume": surcouche.resume(),
+            "journal": list(surcouche.journal),
+            "version": meta["version"],
+        },
+    }
+
+
+class VilleDemande(BaseModel):
+    """`US-B4` — les champs d'une ville. `extra="forbid"` : un champ inconnu
+    est un 422, jamais un champ ignore en silence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    region_id: str = Field(min_length=1)
+    nom: str = Field(min_length=1, max_length=80)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    population: int | None = Field(default=None, ge=1)
+    poids_economique: float = Field(default=1.0, gt=0, le=100)
+
+
+@router.post("/villes", status_code=201)
+async def ajouter_ville(
+    demande: VilleDemande,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`US-B4` — l'ajout d'une ville, SANS toucher au classeur (CFG-03/05).
+
+    Le rite habituel : valider chez nous (`EF-02` — la region parente doit
+    exister, le nom etre unique dans son pays), persister, puis RELIRE depuis
+    la base — la reponse est la ville telle que le prochain run la verra,
+    jamais un echo de la demande.
+
+    Verrou `EF-55` : pas d'ajout pendant un run — une ville apparue en cours
+    de generation rendrait l'empreinte D-10 mensongere.
+    """
+    await refuser_si_run_en_cours()
+
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    try:
+        ville = surcouche.ajouter_ville(
+            _geo(),
+            region_id=demande.region_id.strip(),
+            nom=demande.nom,
+            latitude=demande.latitude,
+            longitude=demande.longitude,
+            population=demande.population,
+            poids_economique=demande.poids_economique,
+        )
+    except AjoutRefuse as refus:
+        raise HTTPException(status_code=422, detail=str(refus)) from refus
+
+    meta = await depot.enregistrer(surcouche, par=session.email)
+
+    # RELECTURE — CFG-06 : ce qui est rendu vient de la BASE, pas de la demande.
+    relue, _ = await depot.charger()
+    fiche = relue.villes[ville.city_id]
+    return {
+        "ville": {
+            "id": fiche.city_id,
+            "nom": fiche.name,
+            "region_id": fiche.region_id,
+            "pays": fiche.country_iso2,
+            "latitude": fiche.latitude,
+            "longitude": fiche.longitude,
+            "population": fiche.population,
+            "poids_economique": fiche.poids_economique,
+        },
+        "surcouche": {
+            "resume": relue.resume(),
+            "version": meta["version"],
+        },
+        "avertissements": (
+            []
+            if fiche.latitude is not None and fiche.longitude is not None
+            else [
+                "ville sans coordonnees GPS : les adresses derivees n'en auront "
+                "pas non plus (EF-03) — le referentiel d'origine en a aussi, "
+                "mais autant le savoir maintenant"
+            ]
+        ),
+    }
 
 
 @router.get("/telcos")

@@ -1,0 +1,89 @@
+"""
+app/repositories/surcouche.py
+=============================
+Persistance de la SURCOUCHE referentielle — le prealable d'`US-B4`.
+
+La `SurcoucheReferentiel` (CFG-03/CFG-05) validait et fusionnait, mais vivait
+EN MEMOIRE : une ville ajoutee mourait avec le processus. L'exposer par l'API
+sans la persister aurait fabrique un ecran menteur — le Super-Admin aurait
+« ajoute » des villes que le prochain redemarrage oubliait.
+
+Elle vit dans la MEME collection que la configuration (`loader_configuration`,
+document `_id="surcouche"`) : les deux sont la meme chose — l'INTENTION
+courante du Super-Admin, versionnee, que le prochain run fige dans son
+empreinte (D-10/ENF-15). Pas de 8e collection pour un second singleton de
+meme nature.
+
+La serialisation est COMPLETE (tous les champs des dataclasses `Region`,
+`City`, `District`) — `ajouts()` ne garde que les noms pour l'empreinte du
+run, ce qui ne suffit pas a reconstruire. Ici, l'inverse exact existe :
+`charger()` rend une surcouche identique a celle qui a ete enregistree.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+from datetime import UTC, datetime
+from typing import Any
+
+from app.core.database import COLLECTION_LOADER_CONFIGURATION, get_collection
+from app.services.geographie import City, District, Region
+from app.services.surcouche_referentiel import SurcoucheReferentiel
+
+_ID_SINGLETON = "surcouche"
+
+
+class SurcoucheRepository:
+    @property
+    def collection(self) -> Any:
+        return get_collection(COLLECTION_LOADER_CONFIGURATION)
+
+    async def charger(self) -> tuple[SurcoucheReferentiel, dict[str, Any]]:
+        """Rend (surcouche, meta). Sans document : une surcouche VIDE, version
+        0 — le referentiel est alors exactement celui du classeur."""
+        document = await self.collection.find_one({"_id": _ID_SINGLETON})
+        if document is None:
+            return SurcoucheReferentiel(), {
+                "version": 0,
+                "modifie_par": None,
+                "modifie_le": None,
+            }
+        surcouche = SurcoucheReferentiel(
+            regions={i: Region(**r) for i, r in (document.get("regions") or {}).items()},
+            villes={i: City(**v) for i, v in (document.get("villes") or {}).items()},
+            quartiers={
+                i: District(**q) for i, q in (document.get("quartiers") or {}).items()
+            },
+            journal=list(document.get("journal") or []),
+        )
+        return surcouche, {
+            "version": int(document.get("version", 0)),
+            "modifie_par": document.get("modifie_par"),
+            "modifie_le": document.get("modifie_le"),
+        }
+
+    async def enregistrer(
+        self, surcouche: SurcoucheReferentiel, *, par: str
+    ) -> dict[str, Any]:
+        maintenant = datetime.now(tz=UTC).isoformat()
+        await self.collection.update_one(
+            {"_id": _ID_SINGLETON},
+            {
+                "$set": {
+                    "regions": {i: asdict(r) for i, r in surcouche.regions.items()},
+                    "villes": {i: asdict(v) for i, v in surcouche.villes.items()},
+                    "quartiers": {i: asdict(q) for i, q in surcouche.quartiers.items()},
+                    "journal": list(surcouche.journal),
+                    "modifie_par": par,
+                    "modifie_le": maintenant,
+                },
+                "$inc": {"version": 1},
+            },
+            upsert=True,
+        )
+        document = await self.collection.find_one({"_id": _ID_SINGLETON})
+        return {
+            "version": int(document["version"]) if document else 1,
+            "modifie_par": par,
+            "modifie_le": maintenant,
+        }

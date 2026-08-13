@@ -46,6 +46,23 @@ async def session_admin(
     return SessionAdmin(email=claims["email"], portee=claims["portee"])
 
 
+async def refuser_si_run_en_cours() -> None:
+    """Verrou `EF-55` — configuration ET referentiels sont FIGES pendant un
+    run : les modifier sous une generation en cours rendrait son empreinte
+    D-10 mensongere. 409 avec l'identifiant du run qui verrouille."""
+    from app.repositories.loader_runs import LoaderRunRepository
+
+    en_cours = await LoaderRunRepository().dernier_en_cours()
+    if en_cours is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"run {en_cours.id} a l'etat {en_cours.status.value} — "
+                "ecriture verrouillee pendant une generation (EF-55)"
+            ),
+        )
+
+
 async def admin_complet(
     session: Annotated[SessionAdmin, Depends(session_admin)],
 ) -> SessionAdmin:

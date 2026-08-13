@@ -431,3 +431,169 @@ class TestUSB3EtatDesPays:
         )
         assert reponse.status_code == 422
         assert "dernier pays actif" in reponse.json()["detail"]
+
+
+class TestUSB4AjoutDeVille:
+    async def _preparer(self, client: httpx.AsyncClient) -> dict[str, str]:
+        entetes = await _session_complete(client)
+        # Surcouche vierge : le singleton vit dans loader_configuration.
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        return entetes
+
+    async def test_une_ville_complete_est_creee_et_RELUE_depuis_la_base(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await self._preparer(client)
+        regions = (
+            await client.get("/admin/referentiels/geographie", headers=entetes)
+        ).json()["pays"]
+        region_cm = next(p for p in regions if p["pays"] == "CM")["regions"][0]["id"]
+
+        reponse = await client.post(
+            "/admin/referentiels/villes",
+            json={
+                "region_id": region_cm,
+                "nom": "Nkoteng",
+                "latitude": 4.5167,
+                "longitude": 12.0333,
+                "population": 45000,
+            },
+            headers=entetes,
+        )
+        assert reponse.status_code == 201, reponse.text
+        corps = reponse.json()
+        assert corps["ville"]["nom"] == "Nkoteng"
+        assert corps["ville"]["pays"] == "CM"
+        assert corps["ville"]["id"].startswith("SC-CM-"), (
+            "l'identifiant de surcouche est reconnaissable a l'oeil, jamais "
+            "confondable avec le classeur"
+        )
+        assert corps["avertissements"] == []
+        assert corps["surcouche"]["version"] == 1
+
+    async def test_la_ville_SURVIT_et_apparait_dans_l_arbre(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """LE point d'US-B4 : la persistance. La ville est relue depuis Mongo
+        par une AUTRE requete — elle survivrait a un redemarrage."""
+        entetes = await self._preparer(client)
+        regions = (
+            await client.get("/admin/referentiels/geographie", headers=entetes)
+        ).json()["pays"]
+        region_cm = next(p for p in regions if p["pays"] == "CM")["regions"][0]["id"]
+        await client.post(
+            "/admin/referentiels/villes",
+            json={"region_id": region_cm, "nom": "Obala"},
+            headers=entetes,
+        )
+        arbre = (
+            await client.get("/admin/referentiels/geographie", headers=entetes)
+        ).json()
+        noms = {
+            v["nom"]
+            for p in arbre["pays"]
+            for r in p["regions"]
+            for v in r["villes"]
+        }
+        assert "Obala" in noms
+        assert "Obala" in " ".join(arbre["surcouche"]["journal"])
+
+    async def test_le_classeur_n_est_JAMAIS_modifie(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """CFG-03 — la surcouche est reversible, le classeur immuable."""
+        import hashlib
+        from pathlib import Path
+
+        classeur = Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")
+        # Lecture bloquante assumee dans un test : le fichier fait ~100 Ko.
+        avant = hashlib.sha256(classeur.read_bytes()).hexdigest()  # noqa: ASYNC240
+        entetes = await self._preparer(client)
+        regions = (
+            await client.get("/admin/referentiels/geographie", headers=entetes)
+        ).json()["pays"]
+        region_cm = next(p for p in regions if p["pays"] == "CM")["regions"][0]["id"]
+        await client.post(
+            "/admin/referentiels/villes",
+            json={"region_id": region_cm, "nom": "Ntui"},
+            headers=entetes,
+        )
+        apres = hashlib.sha256(classeur.read_bytes()).hexdigest()  # noqa: ASYNC240
+        assert apres == avant
+
+    async def test_une_region_inexistante_est_un_422_EF_02(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await self._preparer(client)
+        reponse = await client.post(
+            "/admin/referentiels/villes",
+            json={"region_id": "REGION-FANTOME", "nom": "Nulle Part"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "EF-02" in reponse.json()["detail"]
+
+    async def test_un_doublon_de_nom_est_un_422(self, client: httpx.AsyncClient) -> None:
+        entetes = await self._preparer(client)
+        regions = (
+            await client.get("/admin/referentiels/geographie", headers=entetes)
+        ).json()["pays"]
+        cm = next(p for p in regions if p["pays"] == "CM")
+        region_cm = cm["regions"][0]["id"]
+        ville_existante = cm["regions"][0]["villes"][0]["nom"]
+        reponse = await client.post(
+            "/admin/referentiels/villes",
+            json={"region_id": region_cm, "nom": ville_existante},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "existe deja" in reponse.json()["detail"]
+
+    async def test_une_ville_sans_GPS_est_acceptee_AVEC_avertissement(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await self._preparer(client)
+        regions = (
+            await client.get("/admin/referentiels/geographie", headers=entetes)
+        ).json()["pays"]
+        region_cm = next(p for p in regions if p["pays"] == "CM")["regions"][0]["id"]
+        reponse = await client.post(
+            "/admin/referentiels/villes",
+            json={"region_id": region_cm, "nom": "Sans Gps"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 201
+        assert any("GPS" in a for a in reponse.json()["avertissements"])
+
+    async def test_le_verrou_EF_55_bloque_aussi_les_villes(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        entetes = await self._preparer(client)
+        await database.get_database().drop_collection("loader_runs")
+        await LoaderRunRepository().remplacer(
+            LoaderRun(
+                _id=_uuid4(),
+                sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1),
+                status=RunStatus.RUNNING,
+            )
+        )
+        try:
+            reponse = await client.post(
+                "/admin/referentiels/villes",
+                json={"region_id": "peu-importe", "nom": "Bloquee"},
+                headers=entetes,
+            )
+            assert reponse.status_code == 409
+            assert "EF-55" in reponse.json()["detail"]
+        finally:
+            await database.get_database().drop_collection("loader_runs")
