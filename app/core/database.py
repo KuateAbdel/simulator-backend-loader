@@ -171,6 +171,18 @@ async def ensure_indexes() -> None:
         [("parent_id", 1)],
         name="idx_parent",
     )
+    # `A-12` RENDU STRUCTUREL — 13/08, meme doctrine que EF-55 et le Kiosque
+    # par quartier : le controle applicatif (`find_one` avant insert) reste la
+    # reponse AIMABLE (None), l'index unique est le verrou reel sous
+    # concurrence. Un rattachement Produit -> Company n'existe qu'UNE fois par
+    # run — un lien n'est pas une quantite, le double est un bug. Partiel :
+    # seuls les noeuds PRODUIT portent un product_id.
+    await db[COLLECTION_ORG_HIERARCHY].create_index(
+        [("run_id", 1), ("company_id", 1), ("product_id", 1)],
+        name="uniq_produit_par_company",
+        unique=True,
+        partialFilterExpression={"niveau": NiveauOrganisation.PRODUIT.value},
+    )
     # `EF-26` + `CR-03` — un client ne se rattache qu'UNE fois par run.
     #
     # Sans cet index, une reprise ajouterait un second noeud pour le meme client

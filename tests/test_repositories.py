@@ -557,3 +557,38 @@ class TestRattachementProduitA12:
         )
         anomalies = await arbre.verifier_cr02(run)
         assert any("package" in a for a in anomalies)
+
+
+class TestIndexRattachementA12:
+    """`A-12` structurel — comme EF-55 : le `find_one` applicatif est la
+    reponse aimable, L'INDEX UNIQUE est le verrou reel sous concurrence."""
+
+    async def test_le_double_lien_est_impossible_AU_NIVEAU_DU_MOTEUR(self) -> None:
+        from pymongo.errors import DuplicateKeyError
+
+        from app.core.database import close, connect, ensure_indexes, get_collection
+        from app.repositories.base import en_document
+
+        connect()
+        await ensure_indexes()
+        collection = get_collection("org_hierarchy")
+        run, company, produit = uuid4(), uuid4(), uuid4()
+        noeud = OrgHierarchyNode(
+            id=uuid4(), run_id=run, niveau=NiveauOrganisation.PRODUIT,
+            company_id=company, name="DEMO_IDX_A12", country_code="CM",
+            product_id=produit, package="ALL",
+        )
+        double = OrgHierarchyNode(
+            id=uuid4(), run_id=run, niveau=NiveauOrganisation.PRODUIT,
+            company_id=company, name="DEMO_IDX_A12", country_code="CM",
+            product_id=produit, package="ALL",
+        )
+        try:
+            await collection.insert_one(en_document(noeud))
+            with pytest.raises(DuplicateKeyError):
+                # L'insertion BRUTE, en contournant le repository : c'est
+                # l'index qui refuse, pas la politesse applicative.
+                await collection.insert_one(en_document(double))
+        finally:
+            await collection.delete_many({"name": "DEMO_IDX_A12"})
+            close()
