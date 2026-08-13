@@ -82,6 +82,33 @@ class ProductServiceClient:
         correspondances.sort(key=lambda p: parse_datetime(str(p.get("created_at"))) or _EPOQUE)
         return correspondances[0]
 
+    async def chercher_par_short_name(self, marqueur: str) -> dict[str, Any] | None:
+        """Retrouve UN DE NOS produits par son marqueur `short_name`.
+
+        C'est la premiere cle du protocole a deux cles (13/08) : depuis que le
+        `name` est entierement metier, le `short_name` est la seule identite qui
+        nous appartient. Le serveur n'impose aucune unicite (`ANO-PRD-UNIQ-01`) —
+        comme pour le nom, le plus ancien est retenu et le doublon signale.
+        """
+        cible = marqueur.strip().lower()
+        if not cible:
+            return None
+        correspondances = [
+            produit
+            for produit in await self.inventaire()
+            if str(produit.get("short_name", "")).strip().lower() == cible
+        ]
+        if not correspondances:
+            return None
+        if len(correspondances) > 1:
+            logger.warning(
+                "Marqueur %r present %d fois (ANO-PRD-UNIQ-01) — le plus ancien est retenu",
+                marqueur,
+                len(correspondances),
+            )
+        correspondances.sort(key=lambda p: parse_datetime(str(p.get("created_at"))) or _EPOQUE)
+        return correspondances[0]
+
     async def creer_produit(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Cree un Product avec sa Policy EMBARQUEE.
 

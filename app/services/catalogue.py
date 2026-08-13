@@ -10,11 +10,15 @@ Deux catalogues, deux logiques distinctes :
 que l'enum serveur refuse (`INV-PRD-04`, HTTP 422). Chacun est donc dedouble en
 INDIVIDUAL + CORPORATE (`D-PRD-4`).
 
-Les deux copies portent des noms DISTINCTS — `DEMO_BNPL Individual` et
-`DEMO_BNPL Corporate`. Elles portaient le meme jusqu'au 11/08, au motif que « le
+Les deux copies portent des noms DISTINCTS — `BNPL Individual` et
+`BNPL Corporate`. Elles portaient le meme jusqu'au 11/08, au motif que « le
 serveur n'impose aucune unicite de `name` » : c'etait confondre le permis et le
 juste. `D-12` l'interdit, et la mesure du 11/08 montre pourquoi — deux
 « Cotisation 20000/mois » coexistent en base avec des abonnes sur chacune.
+
+**Les noms sont REELS, sans prefixe** — decision de Yaniv du 13/08 : « il faut
+des vrais produits, pas de DEMO_ ». Le marqueur de purge (`CR-07`/`EF-63`)
+vit dans `short_name`, comme les produits du serveur le font deja.
 
 Les noms officiels de l'Annexe E — **Nano, Macro, BNPL, ReadyToGo** — sont
 respectes a la lettre : `CO-02` a ete tranche par le CDC v1.2, et « Macro » n'est
@@ -129,6 +133,13 @@ class ProduitCollecte:
     #: `None` pour `CASH` et `PRODUCT` : une cotisation reguliere et une collecte
     #: en nature n'ont pas de terme. L'invariant est verifie ci-dessous.
     duree_mois: int | None = None
+    #: Le CODE COURT du produit — decision de Yaniv du 13/08 : « pas de DEMO_
+    #: dans le nom, cherche des vrais produits ». Le nom devient entierement
+    #: metier ; la reversibilite (`CR-07`/`EF-63`) passe dans `short_name` via
+    #: `marqueur`. Explicite et non derive du nom : deux noms peuvent partager
+    #: leurs initiales (« Cotisation Commercants » / « Collecte Cacao »), un
+    #: code declare ne collisionne jamais en silence.
+    code: str = ""
 
     def __post_init__(self) -> None:
         """Un `CASH_DAT` sans terme n'est pas un depot a terme, et un `CASH`
@@ -141,17 +152,34 @@ class ProduitCollecte:
                 f"duree_mois={self.duree_mois!r} sont incoherents. CASH_DAT exige un "
                 "terme ; CASH et PRODUCT n'en ont pas."
             )
+        if not self.code:
+            raise ValueError(
+                f"{self.nom!r} : `code` absent — sans lui, `short_name` vaudrait "
+                f"« {PREFIXE_DONNEES} » nu et la purge (CR-07/EF-63) perdrait son "
+                "critere sur un service sans DELETE."
+            )
 
     @property
     def nom_recherche(self) -> str:
         """Le nom sous lequel chercher en base (`GET`-avant-`POST`).
 
-        TOUJOURS prefixe depuis le 12/08. Le drapeau `preexistant` qui rendait ce
-        nom parfois nu a disparu avec les deux produits qu'il servait : nous ne
-        consommons plus les produits de l'environnement, donc plus aucun produit
-        de notre catalogue ne porte un nom non prefixe. `CR-07`/`EF-63` — chaque
-        entite generee est identifiable, sans exception."""
-        return f"{PREFIXE_DONNEES}{self.nom}"
+        LE NOM REEL, SANS PREFIXE — decision de Yaniv du 13/08 : « il faut des
+        vrais produits, pas de DEMO_ ». La demo se fait devant des personnes ;
+        un catalogue prefixe DEMO_ se lit comme un jeu d'essai, pas comme une
+        IMF. Le marqueur technique vit desormais dans `short_name` (`marqueur`),
+        exactement comme les produits du serveur le font deja (`plast`,
+        `TP_1785841588` — mesure du 12/08). `CR-07`/`EF-63` restent tenus :
+        chaque entite generee est identifiable, par son `short_name`."""
+        return self.nom
+
+    @property
+    def marqueur(self) -> str:
+        """Le `short_name` emis — le marqueur de purge (`CR-07`/`EF-63`).
+
+        C'est LUI qui porte le prefixe depuis le 13/08. Sans lui, retirer
+        `DEMO_` du nom aurait laisse la purge sans critere sur un service sans
+        `DELETE` — le defaut silencieux que la conception §4 nommait deja."""
+        return f"{PREFIXE_DONNEES}{self.code}"
 
 
 #: Catalogue COLLECT cible — croisement complet PolicyType x Category (D-PRD-9).
@@ -169,6 +197,7 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         1000.0,
         1000000.0,
         5.0,
+        code="COTIS_IND",
     ),
     ProduitCollecte(
         "Cotisation Commercants",
@@ -178,6 +207,7 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         5000.0,
         2000000.0,
         5.0,
+        code="COTIS_CORP",
     ),
     ProduitCollecte(
         "Depot a Terme 6 Mois",
@@ -188,6 +218,7 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         5000000.0,
         6.5,
         duree_mois=6,
+        code="DAT6_IND",
     ),
     ProduitCollecte(
         "Depot a Terme Entreprise 12 Mois",
@@ -198,6 +229,7 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         20000000.0,
         8.0,
         duree_mois=12,
+        code="DAT12_CORP",
     ),
     ProduitCollecte(
         "Collecte Plastique",
@@ -210,6 +242,7 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         100.0,
         500000.0,
         0.0,
+        code="PLAST_IND",
     ),
     # D-PRD-8 : `measure` toujours choisi explicitement. Le cacao se pese —
     # KILOGRAM est un choix metier, pas la valeur que la WebApp injecte en dur.
@@ -221,6 +254,7 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         500.0,
         10000000.0,
         0.0,
+        code="CACAO_CORP",
     ),
 )
 
@@ -416,11 +450,27 @@ def nom_lending(produit: ProduitCredit, categorie: ProductCategory) -> str:
     La strategie de levee est celle de `D-12` : le nom tel quel quand il est
     libre — Nano et Macro ne sont pas dedoubles, ils gardent leur nom officiel
     de l'Annexe E — et un discriminant PORTEUR DE SENS la ou l'ambiguite existe.
+
+    SANS PREFIXE depuis le 13/08 (decision de Yaniv) : le nom est celui de
+    l'Annexe E, tel qu'un bailleur doit le lire. Le marqueur de purge vit dans
+    `short_name` — voir `marqueur_lending`.
     """
-    base = f"{PREFIXE_DONNEES}{produit.nom}"
+    if len(produit.categories_cibles) == 1:
+        return produit.nom
+    return f"{produit.nom} {categorie.value.capitalize()}"
+
+
+def marqueur_lending(produit: ProduitCredit, categorie: ProductCategory) -> str:
+    """Le `short_name` d'un produit de credit — le marqueur `CR-07`/`EF-63`.
+
+    Derive du nom OFFICIEL de l'Annexe E (quatre noms courts, sans espace ni
+    homonymie : Nano, Macro, BNPL, ReadyToGo), suffixe de la categorie quand le
+    split `D-PRD-4` dedouble — la meme desambiguation que `nom_lending`, sur
+    l'axe technique."""
+    base = f"{PREFIXE_DONNEES}{produit.nom.upper()}"
     if len(produit.categories_cibles) == 1:
         return base
-    return f"{base} {categorie.value.capitalize()}"
+    return f"{base}_{categorie.value[:4]}"
 
 
 def payloads_lending(produits: list[ProduitCredit]) -> list[dict[str, Any]]:
@@ -432,10 +482,14 @@ def payloads_lending(produits: list[ProduitCredit]) -> list[dict[str, Any]]:
                 {
                     "type": ProductType.LENDING.value,
                     "name": nom_lending(produit, categorie),
+                    # Le marqueur de purge — `CR-07`/`EF-63`. C'est lui qui porte
+                    # `DEMO_` depuis que le nom est entierement metier (13/08).
+                    "short_name": marqueur_lending(produit, categorie),
                     "category": categorie.value,
                     "segment": "ANY",
                     "description": (
-                        f"Produit de credit {produit.nom} — {produit.duree_jours} jours, "
+                        f"Jeu de donnees DEMO Loader FinZuu — produit de credit "
+                        f"{produit.nom}, {produit.duree_jours} jours, "
                         f"taux {produit.taux_applique} %"
                     ),
                     "policy": policy_lending(produit, categorie),
@@ -456,9 +510,14 @@ def payloads_collect() -> list[dict[str, Any]]:
         {
             "type": ProductType.COLLECT.value,
             "name": produit.nom_recherche,
+            # Le marqueur de purge — `CR-07`/`EF-63`. C'est lui qui porte
+            # `DEMO_` depuis que le nom est entierement metier (13/08).
+            "short_name": produit.marqueur,
             "category": produit.categorie.value,
             "segment": "ANY",
-            "description": f"Produit de collecte {produit.nom}",
+            "description": (
+                f"Jeu de donnees DEMO Loader FinZuu — produit de collecte {produit.nom}"
+            ),
             "policy": policy_collect(produit),
             "subscription_fees": 0.0,
         }

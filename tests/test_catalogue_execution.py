@@ -150,6 +150,11 @@ class TestArtefactPourLaSuite:
         identifiant = uuid4()
 
         class _Produits:
+            # La reconnaissance des NOTRES passe par le marqueur (13/08) : un
+            # produit d'un run anterieur porte notre short_name.
+            async def chercher_par_short_name(self, marqueur: str) -> dict[str, Any]:
+                return {"_id": str(identifiant), "name": "x", "short_name": marqueur}
+
             async def chercher_par_nom(self, nom: str) -> dict[str, Any]:
                 return {"_id": str(identifiant), "name": nom}
 
@@ -209,6 +214,11 @@ class TestPolicyTypeJusquAuPanier:
         preexistants = cls.PREEXISTANTS
 
         class _Produits:
+            # Rien de NOTRE n'existe encore : le marqueur ne trouve rien, et
+            # les produits de l'environnement se constatent par leur nom.
+            async def chercher_par_short_name(self, marqueur: str) -> None:
+                return None
+
             async def chercher_par_nom(self, nom: str) -> dict[str, Any] | None:
                 for attendu, (policy, categorie) in preexistants.items():
                     if attendu in nom:
@@ -255,3 +265,74 @@ class TestPolicyTypeJusquAuPanier:
         rapport = await self._a_blanc()
         for produit in rapport.souscriptibles:
             assert produit.policy_type not in {"COLLECT", "LENDING"}, produit.nom
+
+
+class TestLeLoaderNeutraliseANOPRDUNIQ01:
+    """13/08 — le serveur n'a AUCUNE unicite de produit, et le Loader ne subit
+    jamais les bugs du service : il les neutralise.
+
+    Depuis que les noms sont metier (plus de prefixe DEMO_ dans `name`), un
+    produit ETRANGER peut occuper un de nos noms sur l'environnement partage.
+    Deux reponses seraient fausses : le CONSOMMER (la lecon `A-10` — on
+    n'attache pas nos clients a une entite qu'on ne controle pas) et le DOUBLER
+    (`D-12` — deux homonymes indiscernables, que `ANO-PRD-UNIQ-01` laisserait
+    passer). La seule juste : REFUSER avant reseau, et le dire au rapport.
+    """
+
+    @staticmethod
+    def _executeur(produits: Any) -> ExecuteurCatalogue:
+        return ExecuteurCatalogue(
+            run_id=uuid4(),
+            mode=RunMode.DRY_RUN,
+            product_client=produits,
+            audit=None,  # type: ignore[arg-type]
+            chemin_loan_json=LOAN_JSON,
+        )
+
+    @pytest.mark.asyncio
+    async def test_un_homonyme_ETRANGER_est_refuse_jamais_consomme_ni_double(
+        self,
+    ) -> None:
+        etranger = {"_id": str(uuid4()), "name": "Nano", "short_name": "pas-a-nous"}
+
+        class _Produits:
+            async def chercher_par_short_name(self, marqueur: str) -> None:
+                return None  # rien de NOTRE n'existe
+
+            async def chercher_par_nom(self, nom: str) -> dict[str, Any] | None:
+                return etranger if nom == "Nano" else None
+
+        rapport = await self._executeur(_Produits()).executer()  # type: ignore[arg-type]
+        refuses = [nom for nom, _ in rapport.refuses_avant_reseau]
+        assert refuses == ["Nano"], refuses
+        assert "Nano" not in rapport.crees, "cree malgre l'homonyme : D-12 viole"
+        assert "Nano" not in rapport.reutilises, "consomme un produit etranger : A-10"
+        assert all(p.nom != "Nano" for p in rapport.souscriptibles)
+        assert "refuses avant reseau" in rapport.ecart_au_cdc
+
+    @pytest.mark.asyncio
+    async def test_NOTRE_produit_d_un_run_anterieur_est_reconnu_par_son_MARQUEUR(
+        self,
+    ) -> None:
+        """`CR-03` — la reprise : le marqueur retrouve le notre, meme si le nom
+        a change entre deux versions du catalogue."""
+        identifiant = uuid4()
+
+        class _Produits:
+            async def chercher_par_short_name(self, marqueur: str) -> dict[str, Any] | None:
+                if marqueur == "DEMO_NANO":
+                    return {"_id": str(identifiant), "name": "Nano",
+                            "short_name": "DEMO_NANO", "category": "INDIVIDUAL",
+                            "policy": {"type": "CASH"}}
+                return None
+
+            async def chercher_par_nom(self, nom: str) -> None:
+                return None
+
+        rapport = await self._executeur(_Produits()).executer()  # type: ignore[arg-type]
+        assert "Nano" in rapport.reutilises
+        assert rapport.refuses_avant_reseau == []
+        assert any(
+            p.product_id == identifiant and p.nom == "Nano"
+            for p in rapport.souscriptibles
+        )

@@ -180,14 +180,23 @@ class TestCatalogueCollect:
         for refuse in PRODUITS_ENVIRONNEMENT:
             assert refuse not in a_creer, f"{refuse} porte des valeurs de test"
 
-    def test_chaque_produit_du_catalogue_porte_le_prefixe(self) -> None:
-        """`CR-07`/`EF-63` — sans exception, desormais. Le drapeau `preexistant`
-        qui rendait deux noms nus a disparu avec les produits qu'il servait :
-        aucune entite de notre catalogue n'echappe plus a la purge."""
-        for produit in CATALOGUE_COLLECT:
-            assert produit.nom_recherche.startswith(PREFIXE_DONNEES), produit.nom
+    def test_le_nom_est_REEL_et_le_marqueur_vit_dans_short_name(self) -> None:
+        """Decision de Yaniv du 13/08 : « il faut des vrais produits, pas de
+        DEMO_ ». Le NOM que le bailleur lit est entierement metier ; la purge
+        (`CR-07`/`EF-63`) garde son critere dans `short_name` — sur un service
+        sans DELETE, perdre ce critere serait definitif."""
         for payload in payloads_collect():
-            assert str(payload["name"]).startswith(PREFIXE_DONNEES)
+            assert not str(payload["name"]).startswith(PREFIXE_DONNEES), payload["name"]
+            assert str(payload["short_name"]).startswith(PREFIXE_DONNEES), (
+                f"{payload['name']} : short_name={payload['short_name']!r} — "
+                "sans marqueur, la purge laisserait ce produit en residu"
+            )
+
+    def test_les_marqueurs_sont_DISTINCTS(self) -> None:
+        """Deux produits au meme `short_name` seraient indiscernables a la purge
+        — le defaut D-12, deplace sur l'axe technique."""
+        marqueurs = [str(p["short_name"]) for p in payloads_collect()]
+        assert len(marqueurs) == len(set(marqueurs)), marqueurs
 
     def test_les_produits_de_l_environnement_sont_NOMMES_pour_etre_evites(self) -> None:
         """Les connaitre est ce qui permet de ne pas les consommer par accident —

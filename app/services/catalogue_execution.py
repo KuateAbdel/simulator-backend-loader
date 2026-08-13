@@ -91,6 +91,13 @@ class RapportCatalogue:
     #: Ce que l'environnement porte et que nous n'utilisons PAS — 12/08. Ni cree,
     #: ni reutilise : constate. Un fait tu est un fait perdu.
     constates: list[str] = field(default_factory=list)
+    #: 13/08 — un produit ETRANGER occupe un de NOS noms. Ni consomme (la lecon
+    #: `A-10` : on n'attache pas 2000 clients a une entite qu'on ne controle
+    #: pas), ni double (`D-12` : deux homonymes sont indiscernables a l'ecran,
+    #: et `ANO-PRD-UNIQ-01` fait que le serveur laisserait faire). REFUSE avant
+    #: reseau, avec le motif — c'est le Loader qui neutralise le bug du service,
+    #: jamais l'inverse.
+    refuses_avant_reseau: list[tuple[str, str]] = field(default_factory=list)
     echoues: list[tuple[str, str]] = field(default_factory=list)
     #: L'artefact consomme par le module Depositaires.
     souscriptibles: list[ProduitSouscriptible] = field(default_factory=list)
@@ -121,6 +128,14 @@ class RapportCatalogue:
                 else []
             ),
             f"Reutilises       : {len(self.reutilises)} ({', '.join(self.reutilises) or '-'})",
+            *(
+                [
+                    f"Refuse avant reseau : {nom} — {motif}"
+                    for nom, motif in self.refuses_avant_reseau
+                ]
+                if self.refuses_avant_reseau
+                else []
+            ),
             f"Echecs           : {len(self.echoues)}",
             f"Souscriptibles   : {len(self.souscriptibles)} (dont COLLECT pour les Kiosques)",
             f"STATUT : {self.statut.value}",
@@ -218,9 +233,34 @@ class ExecuteurCatalogue:
         nom = str(payload["name"])
         type_produit = ProductType(str(payload["type"]))
 
-        # `D-PRD-2` — inventaire AVANT creation. Aucune unicite serveur, et
-        # aucun `DELETE` : le doublon serait definitif.
-        existant = await self._produits.chercher_par_nom(nom)
+        # `D-PRD-2` — inventaire AVANT creation, EN DEUX CLES depuis le 13/08.
+        # Aucune unicite serveur (`ANO-PRD-UNIQ-01`), aucun `DELETE` : le
+        # doublon serait definitif.
+        #
+        # PREMIERE CLE — le `short_name`. Depuis que le `name` est entierement
+        # metier, le marqueur est la seule identite qui nous appartient : c'est
+        # lui qui reconnait NOS produits d'un run anterieur (`CR-03`).
+        existant = await self._produits.chercher_par_short_name(
+            str(payload.get("short_name") or "")
+        )
+        if existant is None:
+            # SECONDE CLE — le `name`. S'il est occupe alors que notre marqueur
+            # est absent, c'est un produit ETRANGER : on refuse avant reseau.
+            # Le consommer attacherait nos clients a une entite qu'on ne
+            # controle pas (`A-10`) ; creer quand meme fabriquerait deux
+            # homonymes indiscernables (`D-12`). Le Loader ne subit pas le bug
+            # d'unicite du service — il le neutralise.
+            homonyme = await self._produits.chercher_par_nom(nom)
+            if homonyme is not None:
+                motif = (
+                    "nom deja porte par un produit etranger "
+                    f"(_id={homonyme.get('_id') or homonyme.get('id')}, "
+                    f"short_name={homonyme.get('short_name')!r}) — ni consomme "
+                    "(A-10), ni double (D-12/ANO-PRD-UNIQ-01)"
+                )
+                rapport.refuses_avant_reseau.append((nom, motif))
+                logger.warning("produit %s refuse avant reseau : %s", nom, motif)
+                return
         if existant is not None:
             identifiant = existant.get("_id") or existant.get("id")
             rapport.reutilises.append(nom)
@@ -368,5 +408,6 @@ class ExecuteurCatalogue:
             rapport.ecart_au_cdc = (
                 f"{total} produits au catalogue, {PRODUITS_ATTENDUS} attendus (UC-11) — "
                 f"{len(rapport.crees)} crees, {len(rapport.reutilises)} reutilises, "
+                f"{len(rapport.refuses_avant_reseau)} refuses avant reseau, "
                 f"{len(rapport.echoues)} en echec"
             )

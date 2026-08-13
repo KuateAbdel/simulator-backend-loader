@@ -26,8 +26,9 @@
 
 | # | Tâche | État |
 |---|---|---|
-| CAT 1-5 | Noms métier · `DEMO_` → `short_name` · Warrantage Cerealier · produits environnement constatés · 12 créations | ⏸ **attend tes décisions** |
-| CAT 6 | CR-07 : marqueur selon le type d'entité | ⬜ après CAT 1-5 |
+| CAT 1-2 | **Décidé par Yaniv le 13/08** : noms 100 % métier, marqueur `DEMO_` dans `short_name` + protocole à deux clés contre `ANO-PRD-UNIQ-01` (jamais consommer un homonyme étranger, jamais le doubler) | ✅ 13/08 |
+| CAT 3-5 | Produits environnement constatés · 12 créations | ✅ (12/08, `c53c05d`) |
+| CAT 6 | CR-07 : marqueur selon le type d'entité — s'active quand les produits entrent dans `org_hierarchy` | ⬜ avec CAT 7-8 |
 | CAT 7-8 | Rattachement Produit→Company (`org_hierarchy`) + panier depuis SA Company *(ancienne tâche #29 / A-12)* | ⬜ |
 | CAT 9-11 | `perimetre_lending` · `PRODUITS_ATTENDUS` fonction du périmètre · recette « hors périmètre » | ⬜ |
 
