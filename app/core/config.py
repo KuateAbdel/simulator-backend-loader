@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     super_admin_email: str | None = None
     super_admin_password_initial: str | None = None
 
+    # -- Session du Super-Admin du Loader (US-A1..A4) ----------------------
+    #: Secret de signature des jetons de session. S'il est absent, un secret
+    #: EPHEMERE est genere au demarrage : les sessions ne survivent alors pas
+    #: a un redemarrage — accepte en developpement, journalise en warning.
+    #: En production, le poser dans l'environnement.
+    admin_jwt_secret: str | None = None
+    #: Duree de vie d'une session — 4 h, alignee sur le jeton de la plateforme.
+    admin_session_duree_heures: int = 4
+
     # -- Fenetre de simulation (ENF-16 : 180 jours parametrable) -----------
     sim_start_date: date | None = None
     sim_end_date: date | None = None

@@ -46,6 +46,35 @@ Alors toute route autre que POST /admin/auth/password répond 403
 Et après le changement, must_change_password passe à False définitivement
 ```
 
+### US-A4 · Mot de passe oublié — **Must** · demande Yaniv 13/08
+**En tant qu'**Admin qui a oublié son mot de passe, **je veux** un chemin de
+réinitialisation sûr, **afin de** ne jamais être définitivement enfermé dehors
+— comme une vraie web app.
+
+**Conception v1, dite franchement** : PAS de route HTTP « mot de passe
+oublié » tant qu'aucun serveur d'email n'est branché — un lien de reset sans
+canal sûr pour le livrer serait du théâtre de sécurité (n'importe qui pourrait
+le demander). L'autorité, c'est **l'accès au serveur** :
+`scripts/reinitialiser_admin.py`, exécuté par l'exploitant sur la machine —
+le modèle de GitLab (`gitlab-rake`) et Grafana (`grafana-cli admin
+reset-admin-password`). v2 : reset par email via le SendMail voisin de l'hôte
+(`FZ-INFRA-SIMUL-2026-001`) quand il sera provisionné.
+
+```gherkin
+Étant donné l'exploitant connecté AU SERVEUR (l'autorité, pas un jeton)
+Quand il exécute scripts/reinitialiser_admin.py
+Alors un mot de passe INITIAL aléatoire (24 caractères) remplace l'empreinte
+Et must_change_password repasse à True — le mot de passe imprimé est à usage
+    unique, jamais durable
+Et la valeur n'est affichée qu'UNE fois sur sa console : ni journalisée,
+    ni persistée en clair, ni récupérable par aucune API
+
+Étant donné un email au format invalide (n'importe où dans l'API)
+Quand il est soumis
+Alors 422 — un email est un EMAIL (RFC, email-validator), jamais un string
+    libre : la leçon des bugs de la plateforme, appliquée à notre propre porte
+```
+
 ---
 
 ## ÉPOPÉE 2 — Configuration & référentiels

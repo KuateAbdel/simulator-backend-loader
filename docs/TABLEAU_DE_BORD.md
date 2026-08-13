@@ -50,7 +50,7 @@
 
 | Tâche | État |
 |---|---|
-| Routes de pilotage EF-50→EF-59 — conception écrite (`CONCEPTION_API_SUPER_ADMIN.md`, 13/08) : 5 lots A→E, contrat OpenAPI d'abord pour Zidane | ⬜ socle CFG-01→06 ✅ |
+| Routes de pilotage EF-50→EF-59 — conception + backlog canonique (page Confluence 67665922). **Lot A tranche 1 LIVRÉE le 13/08** : auth complète US-A1/A2/A4 (JWT 4 h, deux portées, email RFC validé, reset opérateur) + référentiels lecture US-B5 (géographie 51/50/82, telcos, catalogue JJB). Reste : US-B1→B4 (config), lots B→E | 🟡 en cours |
 | Purge par préfixe `DEMO_` + verrou d'exécution (EF-65/66) | ⬜ |
 
 ## E. Backlog S4/S5 restant

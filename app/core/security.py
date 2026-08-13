@@ -20,8 +20,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
+import time as _time
 from typing import Final
+
+import jwt as _jwt
+
+from app.core.config import settings as _settings
 
 #: Parametres scrypt. n=2^14 tient largement le facteur de travail attendu
 #: pour un compte d'outillage interne, sans penaliser le demarrage.
@@ -63,3 +69,62 @@ def verifier(mot_de_passe: str, empreinte_stockee: str) -> bool:
     except (ValueError, TypeError):
         return False
     return hmac.compare_digest(calcule.hex(), attendu_hex)
+
+
+# --------------------------------------------------------------------------
+# Jetons de session du Super-Admin du Loader (US-A1..A3)
+# --------------------------------------------------------------------------
+#
+# JWT HS256 via pyjwt — la dependance etait declaree des le squelette. Le jeton
+# est STATELESS : la deconnexion (US-A3) est le rejet du jeton cote client, et
+# l'expiration fait le reste (4 h, alignee sur la plateforme). Un denylist
+# serveur serait de la sur-ingenierie pour UN compte : si le jeton doit etre
+# revoque en urgence, changer le secret invalide tout.
+#
+# Deux PORTEES, et c'est ce qui rend US-A2 infranchissable :
+#   "admin"          — acces complet
+#   "password_only"  — emise quand must_change_password est vrai : la SEULE
+#                      route acceptee est le changement de mot de passe.
+
+_SECRET_EPHEMERE: str | None = None
+
+
+def _secret_session() -> str:
+    """Le secret de signature — configure, ou ephemere avec avertissement."""
+    global _SECRET_EPHEMERE
+    if _settings.admin_jwt_secret:
+        return _settings.admin_jwt_secret
+    if _SECRET_EPHEMERE is None:
+        _SECRET_EPHEMERE = secrets.token_urlsafe(32)
+        logging.getLogger(__name__).warning(
+            "ADMIN_JWT_SECRET absent : secret de session EPHEMERE genere — "
+            "les sessions ne survivront pas a un redemarrage du processus."
+        )
+    return _SECRET_EPHEMERE
+
+
+def emettre_jeton_admin(email: str, *, portee: str) -> tuple[str, int]:
+    """Emet le jeton de session. Rend (jeton, duree_en_secondes)."""
+    duree = _settings.admin_session_duree_heures * 3600
+    maintenant = int(_time.time())
+    jeton = _jwt.encode(
+        {"sub": email, "scope": portee, "iat": maintenant, "exp": maintenant + duree},
+        _secret_session(),
+        algorithm="HS256",
+    )
+    return jeton, duree
+
+
+def verifier_jeton_admin(jeton: str) -> dict[str, str] | None:
+    """Rend les claims du jeton, ou None. Jamais d'exception propagee :
+    un jeton illisible, expire ou signe autrement REFUSE, il ne plante pas."""
+    try:
+        claims = _jwt.decode(jeton, _secret_session(), algorithms=["HS256"])
+    except _jwt.PyJWTError:
+        return None
+    if not isinstance(claims.get("sub"), str) or claims.get("scope") not in (
+        "admin",
+        "password_only",
+    ):
+        return None
+    return {"email": claims["sub"], "portee": claims["scope"]}

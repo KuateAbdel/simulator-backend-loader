@@ -17,6 +17,7 @@ dependencies = [
     # EF-01 : lecture du referentiel Loader_Base_FinZuu_v1_1.xlsx.
     # Pur Python, donc compatible ARM64 sans roue native.
     "openpyxl>=3.1",
+    "email-validator>=2.3.0",
 ]
 
 [dependency-groups]
