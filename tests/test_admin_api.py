@@ -1024,3 +1024,187 @@ class TestUSE3Population:
         assert profils["BON_PAYEUR"]["mesure"] == profils["BON_PAYEUR"]["cible"], (
             "CR-09 : mesure et cible cote a cote, et EXACTES"
         )
+
+
+class TestUSD2ProduitALUnite:
+    """`US-D2` — la creation de produit stricte, les trois interfaces, les
+    deux cles. product-service est DOUBLE : chaque refus doit tomber AVANT
+    tout POST, et la fiche rendue doit venir d'une RELECTURE."""
+
+    VALIDE_CASH: ClassVar[dict[str, Any]] = {
+        "nom": "Tontine Marche Central", "code": "TONT_MC",
+        "policy_type": "CASH", "categorie": "INDIVIDUAL",
+        "montant_min": 1000, "montant_max": 500000, "taux": 5.0,
+    }
+
+    @staticmethod
+    def _doubler_produits(
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        homonyme: dict[str, Any] | None = None,
+        marqueur_existant: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        from app.routes import admin_entites
+
+        posts: list[dict[str, Any]] = []
+
+        class _Produits:
+            async def chercher_par_short_name(self, marqueur: str):
+                return marqueur_existant
+
+            async def chercher_par_nom(self, nom: str):
+                return homonyme
+
+            async def creer_produit(self, payload):
+                posts.append(payload)
+                return {"_id": "11111111-1111-1111-1111-111111111111", **payload}
+
+            async def fermer(self):
+                return None
+
+        monkeypatch.setattr(admin_entites, "_client_produits", lambda: _Produits())
+        return posts
+
+    async def _preparer(self, client: httpx.AsyncClient) -> dict[str, str]:
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "produits_admin"}
+        )
+        await database.get_database().drop_collection("audit_trail")
+        return entetes
+
+    async def test_l_apercu_rend_le_payload_EXACT_sans_aucun_POST(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        posts = self._doubler_produits(monkeypatch)
+        entetes = await self._preparer(client)
+        reponse = await client.post(
+            "/admin/entites/produits/apercu", json=self.VALIDE_CASH, headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["payload"]["name"] == "Tontine Marche Central"
+        assert corps["payload"]["short_name"] == "DEMO_TONT_MC"
+        assert corps["payload"]["policy"]["type"] == "CASH"
+        assert posts == [], "l'apercu ne poste JAMAIS"
+
+    async def test_la_matrice_des_TROIS_interfaces_est_appliquee(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_produits(monkeypatch)
+        entetes = await self._preparer(client)
+        cas = [
+            ({**self.VALIDE_CASH, "duree_mois": 6}, "n'expire pas"),
+            ({**self.VALIDE_CASH, "policy_type": "CASH_DAT"}, "SANS terme"),
+            ({**self.VALIDE_CASH, "policy_type": "PRODUCT"}, "choix METIER"),
+            ({**self.VALIDE_CASH, "measure": "LITER"}, "collecte en nature"),
+            ({**self.VALIDE_CASH, "montant_min": 3, "montant_max": 3}, "min < max"),
+            ({**self.VALIDE_CASH, "nom": "Cotisation 20000/mois"}, "ENVIRONNEMENT"),
+            ({**self.VALIDE_CASH, "nom": "Tontine Digitale", "code": "X_TD"}, "unicite"),
+        ]
+        for corps, attendu in cas:
+            reponse = await client.post(
+                "/admin/entites/produits/apercu", json=corps, headers=entetes
+            )
+            assert reponse.status_code == 422, f"{attendu}: {reponse.text}"
+            assert attendu in str(reponse.json()["detail"]), attendu
+
+    async def test_LENDING_et_champ_inconnu_sont_422_structurels(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_produits(monkeypatch)
+        entetes = await self._preparer(client)
+        for corps in (
+            {**self.VALIDE_CASH, "policy_type": "LENDING"},
+            {**self.VALIDE_CASH, "type": "LENDING"},
+            {**self.VALIDE_CASH, "taux": 25.0},
+        ):
+            reponse = await client.post(
+                "/admin/entites/produits/apercu", json=corps, headers=entetes
+            )
+            assert reponse.status_code == 422, reponse.text
+
+    async def test_la_creation_POSTe_RELIT_et_inscrit_au_registre(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.routes.admin_entites import RUN_ADMIN
+        from app.repositories.audit_trail import AuditTrailRepository
+
+        posts = self._doubler_produits(
+            monkeypatch,
+            marqueur_existant=None,
+        )
+        # La relecture post-POST retrouve le produit par son marqueur : le
+        # double rend None AVANT le POST puis la fiche APRES.
+        from app.routes import admin_entites
+
+        etat = {"cree": False}
+
+        class _Produits:
+            async def chercher_par_short_name(self, marqueur):
+                return {"_id": "abc", "short_name": marqueur} if etat["cree"] else None
+
+            async def chercher_par_nom(self, nom):
+                return None
+
+            async def creer_produit(self, payload):
+                etat["cree"] = True
+                posts.append(payload)
+                return {"_id": "abc", **payload}
+
+            async def fermer(self):
+                return None
+
+        monkeypatch.setattr(admin_entites, "_client_produits", lambda: _Produits())
+        entetes = await self._preparer(client)
+        reponse = await client.post(
+            "/admin/entites/produits", json=self.VALIDE_CASH, headers=entetes
+        )
+        assert reponse.status_code == 201, reponse.text
+        corps = reponse.json()
+        assert corps["fiche_relue"]["short_name"] == "DEMO_TONT_MC", (
+            "la fiche vient d'une RELECTURE, jamais deduite (FRA-218)"
+        )
+        assert len(posts) == 1
+        # Le registre interne porte l'entree — l'autorite d'unicite.
+        doublon = await client.post(
+            "/admin/entites/produits", json=self.VALIDE_CASH, headers=entetes
+        )
+        assert doublon.status_code == 409
+        assert "registre" in doublon.json()["detail"]
+        # Le write-ahead sous le run sentinelle est clos.
+        assert await AuditTrailRepository().intentions_orphelines(RUN_ADMIN) == []
+
+    async def test_un_homonyme_ETRANGER_est_refuse_avant_POST(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        posts = self._doubler_produits(
+            monkeypatch, homonyme={"_id": "999", "short_name": "pas-a-nous"}
+        )
+        entetes = await self._preparer(client)
+        reponse = await client.post(
+            "/admin/entites/produits", json=self.VALIDE_CASH, headers=entetes
+        )
+        assert reponse.status_code == 409
+        assert "etranger" in reponse.json()["detail"]
+        assert posts == [], "le refus tombe AVANT tout POST"
+
+    async def test_le_PRODUCT_exige_sa_mesure_et_la_porte(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_produits(monkeypatch)
+        entetes = await self._preparer(client)
+        reponse = await client.post(
+            "/admin/entites/produits/apercu",
+            json={
+                "nom": "Collecte Karite", "code": "KARITE_IND",
+                "policy_type": "PRODUCT", "categorie": "INDIVIDUAL",
+                "montant_min": 100, "montant_max": 300000,
+                "measure": "KILOGRAM", "measure_price": 250.0,
+            },
+            headers=entetes,
+        )
+        assert reponse.status_code == 200, reponse.text
+        policy = reponse.json()["payload"]["policy"]
+        assert policy["measure"] == "KILOGRAM"
+        assert policy["measure_price"] == 250.0
