@@ -1208,3 +1208,115 @@ class TestUSD2ProduitALUnite:
         policy = reponse.json()["payload"]["policy"]
         assert policy["measure"] == "KILOGRAM"
         assert policy["measure_price"] == 250.0
+
+
+class TestUSD1CompanyALUnite:
+    """`US-D1` — le cablage de la route ; `creer_company()` (la sequence
+    S3-03) est l'unite deja couverte par les tests d'organisation."""
+
+    DEMANDE: ClassVar[dict[str, Any]] = {
+        "type_company": "MERCHANT", "pays": "CM", "ville": "Douala",
+    }
+
+    @staticmethod
+    def _doubler_executeur(monkeypatch: pytest.MonkeyPatch, *, echec: str | None = None):
+        from app.routes import admin_entites
+
+        appels: list[dict[str, Any]] = []
+
+        class _Executeur:
+            def __init__(self, mode):
+                self.mode = mode
+
+            def _telephone_du_pays(self, pays, index):
+                return "+237650009999"
+
+            async def creer_company(self, *, rapport, **kwargs):
+                appels.append({"mode": self.mode, **kwargs})
+                if echec:
+                    rapport.companies_echouees.append((kwargs.get("patronyme"), echec))
+                    return None
+                rapport.companies_creees.append("DEMO_Composee")
+                rapport.admins_crees.append("admin@x.finzuu.com")
+                rapport.cascades_identity_verifiees += 1
+                dry = str(self.mode).endswith("DRY_RUN")
+                return {"_id": "cid-1", "name": "DEMO_Composee", "_dry_run": dry}
+
+        monkeypatch.setattr(
+            admin_entites, "_executeur_organisation", lambda mode: _Executeur(mode)
+        )
+        return appels
+
+    async def test_l_apercu_compose_TOUT_depuis_3_champs_sans_ecrire(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        appels = self._doubler_executeur(monkeypatch)
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/companies/apercu", json=self.DEMANDE, headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json()["fiche"]["_dry_run"] is True
+        assert reponse.json()["admin_annonce"] == "admin@x.finzuu.com"
+        appel = appels[0]
+        assert str(appel["mode"]).endswith("DRY_RUN")
+        # Les ~40 champs composes depuis 3 saisis : territoire resolu,
+        # patronyme reel, forme et secteur du type.
+        assert appel["region"], "la region est RESOLUE depuis la ville"
+        assert appel["quartier"] is not None
+        assert appel["forme_juridique"]
+        assert appel["secteur"]
+        assert appel["type_company"].value == "MERCHANT"
+
+    async def test_une_ville_inconnue_est_un_422_PEDAGOGIQUE(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_executeur(monkeypatch)
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/companies/apercu",
+            json={**self.DEMANDE, "ville": "Atlantis"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "EF-02" in reponse.json()["detail"]
+        assert "Douala" in reponse.json()["detail"], (
+            "le refus LISTE les villes disponibles — pedagogique, pas un mur"
+        )
+
+    async def test_la_confirmation_execute_en_REAL_et_rend_la_fiche(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        appels = self._doubler_executeur(monkeypatch)
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/companies", json=self.DEMANDE, headers=entetes
+        )
+        assert reponse.status_code == 201, reponse.text
+        assert str(appels[0]["mode"]).endswith("REAL")
+        assert reponse.json()["cascade_owner_verifiee"] is True
+
+    async def test_un_echec_serveur_est_un_502_avec_le_motif(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_executeur(monkeypatch, echec="HTTP 400 : refus simule")
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/companies", json=self.DEMANDE, headers=entetes
+        )
+        assert reponse.status_code == 502
+        assert "refus simule" in reponse.json()["detail"]
+
+    async def test_le_meme_apercu_rend_la_MEME_composition(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CR-03 a l'unite : deux apercus identiques -> meme patronyme, meme
+        telephone — l'ancre est la demande, jamais l'horloge."""
+        appels = self._doubler_executeur(monkeypatch)
+        entetes = await _session_complete(client)
+        for _ in range(2):
+            await client.post(
+                "/admin/entites/companies/apercu", json=self.DEMANDE, headers=entetes
+            )
+        assert appels[0]["patronyme"] == appels[1]["patronyme"]
+        assert appels[0]["telephone"] == appels[1]["telephone"]

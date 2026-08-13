@@ -1,9 +1,9 @@
 """
 app/routes/admin_entites.py
 ===========================
-Lot D — les entites a l'UNITE. Cette tranche : `US-D2`, le produit COLLECT.
-(`US-D1`, la Company, suit — elle reutilisera la sequence S3-03 comme cette
-route reutilise le catalogue.)
+Lot D — les entites a l'UNITE : `US-D2` (produit COLLECT) et `US-D1`
+(Company). Chacune reutilise le moteur des runs — le catalogue pour l'une,
+la sequence S3-03 (`creer_company`) pour l'autre — jamais une copie.
 
 LA STORY, TELLE QUE YANIV L'A PRECISEE LE 13/08 :
   - COLLECT seulement — LENDING est 422, structurellement (sprint 8) ;
@@ -304,4 +304,175 @@ async def creer_produit(
         "fiche_relue": fiche,
         "marqueur": produit.marqueur,
         "note": "souscriptible au prochain run — Loader et plateforme coherents",
+    }
+
+
+# ---------------------------------------------------------------------------
+# US-D1 — la Company a l'unite. La route DELEGUE a creer_company() : la
+# sequence S3-03 (Company -> cascade owner -> Admin User) est l'unite deja
+# couverte par les tests d'organisation ; ici on teste le CABLAGE.
+# ---------------------------------------------------------------------------
+
+
+class CompanyDemande(BaseModel):
+    """`US-D1` — 3-4 champs saisis, ~40 composes par le Loader."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type_company: Literal["IMF", "BANK", "MERCHANT", "FONDATION"]
+    pays: Literal["CM", "CI", "BF", "SN"]
+    ville: str = Field(min_length=2, max_length=80)
+    #: Raison sociale imposee — sinon le Loader la compose (patronyme reel +
+    #: forme + secteur), exactement comme dans un run.
+    nom: str | None = Field(default=None, min_length=3, max_length=80)
+
+
+async def _resoudre_territoire(pays: str, ville: str) -> tuple[str, str, str | None]:
+    """(region, ville, quartier|None) — depuis le referentiel FUSIONNE avec la
+    surcouche : une ville ajoutee par US-B4 est immediatement utilisable ici.
+    Refus pedagogique : la liste des villes du pays accompagne le 422."""
+    from app.core.invariants import sans_accents
+    from app.repositories.surcouche import SurcoucheRepository
+    from app.routes.admin_referentiels import _geo
+
+    surcouche, _ = await SurcoucheRepository().charger()
+    referentiel = surcouche.appliquer(_geo())
+    cible = sans_accents(ville).strip().lower()
+    for v in referentiel.villes.values():
+        if v.country_iso2 == pays and sans_accents(v.name).strip().lower() == cible:
+            region = referentiel.region(v.region_id)
+            quartiers = referentiel.quartiers_de_ville(v.city_id)
+            return (
+                region.name if region else "",
+                v.name,
+                quartiers[0].name if quartiers else None,
+            )
+    disponibles = sorted(
+        v.name for v in referentiel.villes.values() if v.country_iso2 == pays
+    )
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            f"ville {ville!r} inconnue pour {pays} (EF-02). Villes du "
+            f"referentiel : {', '.join(disponibles)}"
+        ),
+    )
+
+
+def _executeur_organisation(mode: Any) -> Any:
+    """Fabrique de l'executeur Organisation — doublee dans les tests."""
+    from datetime import date
+
+    from app.clients.account_service import AccountServiceClient
+    from app.clients.company_service import CompanyServiceClient
+    from app.clients.user_service import UserServiceClient
+    from app.repositories.lenders_registry import LendersRegistryRepository
+    from app.routes.admin_referentiels import _geo, _statique
+    from app.services.generateur import Generateur
+    from app.services.organisation_execution import ExecuteurOrganisation
+
+    return ExecuteurOrganisation(
+        run_id=RUN_ADMIN,
+        mode=mode,
+        referentiel=_geo(),
+        statique=_statique(),
+        # Ancre sur le run SENTINELLE : la meme demande recompose la meme
+        # Company — l'idempotence de CR-03, appliquee a l'unite.
+        generateur=Generateur(RUN_ADMIN, reference=date.today()),
+        company_client=CompanyServiceClient(),
+        user_client=UserServiceClient(),
+        account_client=AccountServiceClient(),
+        registre_lenders=LendersRegistryRepository(),
+        audit=AuditTrailRepository(),
+    )
+
+
+async def _composer_company(
+    demande: CompanyDemande, mode: Any
+) -> tuple[dict[str, Any] | None, Any]:
+    """Le tronc commun apercu/confirmation — seule la valeur de `mode` change,
+    et c'est creer_company() qui en tire les consequences (D-01)."""
+    from app.clients.contracts import CompanyType
+    from app.services.generateur import patronyme
+    from app.services.organisation_execution import (
+        FORME_PAR_TYPE,
+        SECTEURS_PAR_TYPE,
+        RapportOrganisation,
+    )
+
+    region, ville, quartier = await _resoudre_territoire(demande.pays, demande.ville)
+    type_company = CompanyType[demande.type_company]
+    est_imf = type_company is CompanyType.IMF
+    secteur = "MicroFinance" if est_imf else SECTEURS_PAR_TYPE[type_company][0]
+    # Ancre stable INTER-PROCESSUS : sha256, jamais hash() — le hachage des
+    # chaines est randomise par processus en Python, et l'ancre doit survivre
+    # a un redemarrage (la meme lecon que _graine_faker, CR-03).
+    from hashlib import sha256
+
+    empreinte = f"{demande.pays}:{demande.ville}:{demande.type_company}:{demande.nom}"
+    ancre = int(sha256(empreinte.encode()).hexdigest()[:8], 16)
+
+    executeur = _executeur_organisation(mode)
+    rapport = RapportOrganisation(mode=mode)
+    fiche = await executeur.creer_company(
+        pays=demande.pays,
+        patronyme=patronyme(demande.pays, ancre),
+        forme_juridique=FORME_PAR_TYPE[type_company],
+        secteur=secteur,
+        type_company=type_company,
+        region=region,
+        ville=ville,
+        quartier=quartier,
+        telephone=executeur._telephone_du_pays(demande.pays, ancre % 90),
+        rapport=rapport,
+        est_imf=est_imf,
+        raison_imposee=demande.nom,
+    )
+    return fiche, rapport
+
+
+@router.post("/companies/apercu")
+async def apercu_company(
+    demande: CompanyDemande,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`US-D1` etape 1 — la fiche COMPLETE composee, sans aucune ecriture :
+    `creer_company()` en DRY_RUN valide tout et n'emet rien."""
+    from app.models.enums import RunMode
+
+    fiche, rapport = await _composer_company(demande, RunMode.DRY_RUN)
+    return {
+        "fiche": fiche,
+        "admin_annonce": rapport.admins_crees[0] if rapport.admins_crees else None,
+        "note": (
+            "apercu seulement — aucune ecriture n'est partie. Confirmer via "
+            "POST /admin/entites/companies avec les MEMES champs."
+        ),
+    }
+
+
+@router.post("/companies", status_code=201)
+async def creer_company_unite(
+    demande: CompanyDemande,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`US-D1` etape 2 — la sequence S3-03 reelle : Company (GET-avant-POST
+    par short_name, INV-CPY-01), cascade owner verifiee (D-CMP-2), Admin User
+    en 3 requetes. La fiche rendue est celle du SERVEUR (FRA-227/218)."""
+    from app.models.enums import RunMode
+
+    await refuser_si_run_en_cours()
+    fiche, rapport = await _composer_company(demande, RunMode.REAL)
+    if fiche is None:
+        motif = (
+            rapport.companies_echouees[-1][1]
+            if rapport.companies_echouees
+            else "echec sans motif rapporte"
+        )
+        raise HTTPException(status_code=502, detail=f"creation refusee : {motif}")
+    return {
+        "fiche": fiche,
+        "admins_crees": rapport.admins_crees,
+        "cascade_owner_verifiee": rapport.cascades_identity_verifiees == 1,
+        "note": "sequence S3-03 executee — fiche relue du serveur",
     }
