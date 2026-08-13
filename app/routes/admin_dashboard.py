@@ -265,3 +265,34 @@ async def tracabilite(
             f"{len(orphelines_faker)} reservation(s) a verifier a la main"
         ),
     }
+
+
+@router.get("/population")
+async def population(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    run_id: UUID | None = None,
+) -> dict[str, Any]:
+    """`US-E3` — les distributions de la population, MESURE ET CIBLE cote a
+    cote : quotas EF-22/23/24 par pays, profils CR-09, les 576 metiers (top),
+    l'histogramme des soldes (frontiere a 150 000 — le seuil EF-68), les
+    naissances a l'etranger.
+
+    Servies depuis `LoaderRun.mesures`, rangees par le moteur a la fin du
+    run — identiques a ce que la recette a juge, JAMAIS recalculees ici et
+    jamais demandees a FinZuu.
+    """
+    if run_id is None:
+        run = await _dernier_run()
+    else:
+        run = await LoaderRunRepository().obtenir(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="aucun run en base")
+    if not run.mesures:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"le run {run.id} ne porte pas de mesures de population — "
+                "anterieur a US-E3, ou son module CLIENTS n'a pas tourne"
+            ),
+        )
+    return {"run_id": str(run.id), "mode": run.mode.value, **run.mesures}

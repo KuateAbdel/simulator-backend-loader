@@ -154,6 +154,11 @@ class LoaderRun(LoaderDocument):
     #: sortie que le CLI imprime, rangee avec le run pour que l'API la rende
     #: (US-C6). Attache en fin d'execution ; vide tant que le run court.
     rapport: str = ""
+    #: `US-E3` — les MESURES structurees de la population composee : quotas
+    #: mesure/cible par pays, profils CR-09, 576 metiers, tranches de soldes
+    #: (frontiere a 150 000 — le seuil EF-68), naissances a l'etranger. Le
+    #: dashboard les sert sans jamais requeter FinZuu.
+    mesures: dict[str, Any] = Field(default_factory=dict)
 
 
 class AuditTrailEntry(LoaderDocument):

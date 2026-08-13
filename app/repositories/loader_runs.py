@@ -135,5 +135,12 @@ class LoaderRunRepository(RepositoryBase):
             {"_id": str(run_id)}, {"$set": {"rapport": texte}}
         )
 
+    async def attacher_mesures(self, run_id: UUID, mesures: dict[str, Any]) -> None:
+        """`US-E3` — les mesures structurees de population, rangees avec le
+        run comme le rapport texte."""
+        await self.collection.update_one(
+            {"_id": str(run_id)}, {"$set": {"mesures": mesures}}
+        )
+
     async def remplacer(self, run: LoaderRun) -> None:
         await self.collection.replace_one({"_id": str(run.id)}, en_document(run), upsert=True)

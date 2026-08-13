@@ -105,6 +105,7 @@ from app.core.cdc import (
     PROFILS_COMPORTEMENTAUX,
 )
 from app.core.configuration import ConfigurationExecution
+from app.core.invariants import sans_accents
 from app.models.enums import (
     EtatConsommationFaker,
     FakerConsumptionType,
@@ -171,6 +172,17 @@ TOURS_INFRUCTUEUX_MAX: Final = 5
 #: entier positif. Un espace de 10^7 pour 500 tirages laisse la collision
 #: negligeable, et le CDC §185 la prevoit de toute facon.
 GRAINE_FAKER_MAX: Final = 10_000_000
+
+#: `US-E3` — les tranches de l'histogramme des soldes. 150 000 FCFA est
+#: VOLONTAIREMENT une frontiere : c'est le seuil que `EF-68` pese, et le
+#: dashboard doit montrer combien de clients tombent de chaque cote.
+TRANCHES_SOLDE: Final[tuple[tuple[float, str], ...]] = (
+    (50_000, "moins de 50 000"),
+    (100_000, "50 000 a 100 000"),
+    (150_000, "100 000 a 150 000"),
+    (300_000, "150 000 a 300 000"),
+    (float("inf"), "300 000 et plus"),
+)
 
 #: `UC-13` — l'ordre METIER dans lequel un client prend ses produits Collecte.
 #: Ce ne sont pas des variantes interchangeables : la cotisation est le produit
@@ -810,6 +822,13 @@ class RapportClients:
 
     mode: RunMode
     quotas: list[QuotaPays] = field(default_factory=list)
+    #: `US-E3` — les MESURES de population, comptees a la composition. Elles
+    #: partent avec le run (`LoaderRun.mesures`) pour que le dashboard les
+    #: serve sans jamais requeter FinZuu. Comptees AVANT le fork DRY/REAL :
+    #: l'essai a blanc mesure la meme population que le reel (`D-01`).
+    occupations: dict[str, int] = field(default_factory=dict)
+    soldes_tranches: dict[str, int] = field(default_factory=dict)
+    nes_a_l_etranger: int = 0
     crees: list[str] = field(default_factory=list)
     echoues: list[tuple[str, str]] = field(default_factory=list)
     refuses_avant_reseau: list[tuple[str, str]] = field(default_factory=list)
@@ -835,6 +854,22 @@ class RapportClients:
     #: dans la cible. Un second run du meme perimetre devrait n'afficher presque
     #: que ceux-la — c'est la forme observable de l'idempotence.
     deja_presents: list[str] = field(default_factory=list)
+
+    def mesurer_population(
+        self, occupation: str, solde: float, *, ne_a_l_etranger: bool
+    ) -> None:
+        """`US-E3` — un client compte au moment ou il est COMPOSE, avant le
+        fork DRY/REAL : l'essai a blanc mesure la meme population que le reel
+        (`D-01`), et le dashboard sert ces comptes sans requeter FinZuu."""
+        self.occupations[occupation] = self.occupations.get(occupation, 0) + 1
+        for plafond, etiquette in TRANCHES_SOLDE:
+            if solde < plafond:
+                self.soldes_tranches[etiquette] = (
+                    self.soldes_tranches.get(etiquette, 0) + 1
+                )
+                break
+        if ne_a_l_etranger:
+            self.nes_a_l_etranger += 1
     #: `EF-26` — les rattachements Client -> Kiosque effectivement ecrits dans
     #: `org_hierarchy`. Compte APRES l'insertion, jamais sur l'intention : le
     #: rapport ne doit pas affirmer un lien que la base ne porte pas.
@@ -957,6 +992,12 @@ class ExecuteurClients:
         self._configuration = configuration
         self._referentiel = referentiel
         self._statique = statique
+        #: `US-E3` — les villes du referentiel, sous la forme EXACTE que
+        #: `place_of_birth` porte (sans accents, Title) : un lieu de naissance
+        #: hors de cet ensemble est un pays etranger de `Lieu2Nationalite.csv`.
+        self._villes_referentiel = {
+            sans_accents(v.name).title() for v in referentiel.villes.values()
+        }
         self._generateur = generateur
         self._faker = faker
         self._interne = interne or SourceInterne()
@@ -1526,6 +1567,14 @@ class ExecuteurClients:
         # raison. Un profil tire dans le temps concurrent aurait produit sur
         # `CR-09` l'ecart de 6,7 % que `EF-22` a connu au premier essai a blanc.
         compose = replace(compose, profil_comportemental=reservation.profil)
+
+        # `US-E3` — la population se mesure ICI, avant le fork DRY/REAL.
+        rapport.mesurer_population(
+            compose.identite.occupation,
+            solde_initial(faker.client_id, reservation.occupation, self._statique),
+            ne_a_l_etranger=compose.identite.place_of_birth
+            not in self._villes_referentiel,
+        )
 
         panier = self._panier(collect, compose)
         if not panier:

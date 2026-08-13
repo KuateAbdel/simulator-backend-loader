@@ -926,3 +926,101 @@ class TestLotCDashboard:
         assert corps["journal"]["nb_entrees"] >= 1
         assert corps["journal"]["intentions_orphelines"] == []
         assert "journal est clos" in corps["reconciliation"]
+
+
+class TestUSE3Population:
+    """`US-E3` — les mesures rangees par le moteur, servies par le dashboard."""
+
+    @staticmethod
+    async def _semer_mesures() -> Any:
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        await database.get_database().drop_collection("loader_runs")
+        run = LoaderRun(
+            _id=_uuid4(), sim_start_date=_date(2026, 2, 14),
+            sim_end_date=_date(2026, 8, 13), status=RunStatus.PARTIAL,
+        )
+        depot = LoaderRunRepository()
+        await depot.remplacer(run)
+        await depot.attacher_mesures(
+            run.id,
+            {
+                "quotas_par_pays": [
+                    {"pays": "CM", "clients": {"mesure": 500, "cible": 500}}
+                ],
+                "occupations": {"distinctes": 300, "total": 500, "top": {"Cocoa farmer": 9}},
+                "soldes": {
+                    "tranches": {"100 000 a 150 000": 120, "150 000 a 300 000": 180},
+                    "total_dote": 74_188_605.0,
+                },
+                "naissances": {"a_l_etranger": 52, "au_pays": 448},
+            },
+        )
+        return run
+
+    async def test_les_mesures_sont_servies_MESURE_ET_CIBLE(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        run = await self._semer_mesures()
+        reponse = await client.get("/admin/dashboard/population", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["run_id"] == str(run.id)
+        assert corps["quotas_par_pays"][0]["clients"] == {"mesure": 500, "cible": 500}
+        assert corps["occupations"]["distinctes"] == 300
+        assert "150 000 a 300 000" in corps["soldes"]["tranches"], (
+            "150 000 doit etre une FRONTIERE de tranche — le seuil EF-68"
+        )
+        assert corps["naissances"]["a_l_etranger"] == 52
+
+    async def test_un_run_sans_mesures_est_un_404_explique(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        run = LoaderRun(
+            _id=_uuid4(), sim_start_date=_date(2026, 2, 1),
+            sim_end_date=_date(2026, 8, 1), status=RunStatus.PARTIAL,
+        )
+        await LoaderRunRepository().remplacer(run)
+        reponse = await client.get("/admin/dashboard/population", headers=entetes)
+        assert reponse.status_code == 404
+        assert "mesures" in reponse.json()["detail"]
+
+    async def test_le_MOTEUR_produit_reellement_ces_mesures(self) -> None:
+        """Pas seulement la route : l'agregateur du moteur, sur un rapport
+        REEL d'executeur — 200 clients composes, mesures completes."""
+        import tests.test_clients_execution as tex
+        from app.models.enums import RunMode
+        from app.services.pilotage import _mesures_population
+
+        clients = tex.FauxClientService()
+        executeur = tex._executeur(
+            mode=RunMode.REAL, nb_clients=200, pays_actifs=("CM",),
+            ledger=tex.FauxLedger(), clients=clients,
+            arbre=tex.FauxArbre(tex._kiosques("CM")),
+        )
+        rapport = await executeur.executer()
+        mesures = _mesures_population([rapport])
+        assert mesures["quotas_par_pays"][0]["clients"]["mesure"] == 200
+        assert mesures["occupations"]["distinctes"] > 80
+        assert sum(mesures["soldes"]["tranches"].values()) == mesures["occupations"]["total"]
+        part = mesures["naissances"]["a_l_etranger"] / mesures["occupations"]["total"]
+        assert 0.03 < part < 0.20, f"{part:.1%} nes a l'etranger"
+        profils = mesures["quotas_par_pays"][0]["profils"]
+        assert profils["BON_PAYEUR"]["mesure"] == profils["BON_PAYEUR"]["cible"], (
+            "CR-09 : mesure et cible cote a cote, et EXACTES"
+        )

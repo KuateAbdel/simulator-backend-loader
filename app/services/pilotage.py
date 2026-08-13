@@ -26,6 +26,7 @@ import logging
 from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 from app.clients.account_service import AccountServiceClient
@@ -371,6 +372,11 @@ async def executer(
         verdict = await ControleRecette(
             run_id=run_id, hierarchie=hierarchie, registre=registre, audit=audit
         ).executer()
+        # `US-E3` — les mesures structurees partent avec le run, comme le
+        # rapport texte : le dashboard les sert sans requeter FinZuu.
+        mesures = _mesures_population(rapports_clients)
+        if mesures:
+            await depot_runs.attacher_mesures(run_id, mesures)
     finally:
         for client in (
             users, companies, comptes, produits_client, depositaires, identites,
@@ -392,6 +398,58 @@ async def executer(
     sortie(reconciliation)
     sortie(registre_faker)
     return 0 if rapport.statut.value != "FAILED" else 1
+
+
+def _mesures_population(rapports: list[RapportClients]) -> dict[str, Any]:
+    """`US-E3` — l'agregat structure des mesures de population.
+
+    MESURE ET CIBLE COTE A COTE, jamais l'une sans l'autre : c'est le critere
+    Gherkin de la story, et c'est ce qui permet a l'ecran de colorer un ecart
+    sans refaire le calcul du CDC.
+    """
+    if not rapports:
+        return {}
+    quotas: list[dict[str, Any]] = []
+    occupations: dict[str, int] = {}
+    tranches: dict[str, int] = {}
+    etrangers = 0
+    solde_total = 0.0
+    for rapport in rapports:
+        for q in rapport.quotas:
+            quotas.append(
+                {
+                    "pays": q.pays,
+                    "clients": {"mesure": q.faits, "cible": q.cible},
+                    "corporate": {"mesure": q.corporate_faits, "cible": q.cible_corporate},
+                    "femmes": {"mesure": q.femmes, "cible": q.cible_femmes},
+                    "jeunes": {"mesure": q.jeunes, "cible": q.cible_jeunes},
+                    "agricoles": {"mesure": q.agricoles, "cible": q.cible_agricoles},
+                    "profils": {
+                        nom: {"mesure": q.profils_faits.get(nom, 0), "cible": cible}
+                        for nom, cible in q.cible_profils.items()
+                    },
+                }
+            )
+        for nom, n in rapport.occupations.items():
+            occupations[nom] = occupations.get(nom, 0) + n
+        for nom, n in rapport.soldes_tranches.items():
+            tranches[nom] = tranches.get(nom, 0) + n
+        etrangers += rapport.nes_a_l_etranger
+        solde_total += rapport.solde_dote
+    total = sum(occupations.values())
+    return {
+        "quotas_par_pays": quotas,
+        "occupations": {
+            "distinctes": len(occupations),
+            "total": total,
+            "top": dict(sorted(occupations.items(), key=lambda kv: -kv[1])[:30]),
+        },
+        "soldes": {"tranches": tranches, "total_dote": round(solde_total, 2)},
+        "naissances": {
+            "a_l_etranger": etrangers,
+            "au_pays": max(total - etrangers, 0),
+        },
+    }
 
 
 async def _reconcilier(audit: AuditTrailRepository, run_id: UUID) -> str:
