@@ -240,19 +240,71 @@ Quand je demande l'aperçu
 Alors je reçois le refus AVANT réseau avec l'invariant nommé
 ```
 
-### US-D2 · Créer un produit COLLECT — **Should** · UC-11, D-PRD-*, ANO-PRD-UNIQ-01
-**En tant qu'**Admin, **je veux** créer un produit de collecte avec un nom
-métier, **afin d'**étendre le catalogue sans jamais subir l'absence d'unicité
-de product-service.
+### US-D2 · Créer un produit COLLECT — **Must** · UC-11, D-PRD-1→9, D-12, EF-35, ANO-PRD-UNIQ-01, ANO-PRD-POLICY-01, INV-PRD-07
+**En tant qu'**Admin, **je veux** créer un produit de collecte complet côté
+Loader — qui, une fois validé chez nous, est envoyé à la plateforme et relu —
+**afin que** le Loader et la plateforme portent EXACTEMENT le même catalogue,
+avec une rigueur que product-service n'a pas.
+
+**Le formulaire, champ par champ (rien d'implicite) :**
+
+| Champ | Règle STRICTE côté Loader | Ce que la plateforme ferait, elle |
+|---|---|---|
+| `name` | Nom métier réel, non vide, unique dans NOTRE registre | Accepte les doublons (`ANO-PRD-UNIQ-01`) |
+| `short_name` | Généré : `DEMO_` + code court déclaré, unique, jamais vide | Champ libre, aucune contrainte |
+| `type` | `COLLECT` seul en v1 (`perimetre_lending` fermé) | Accepte LENDING sans garde |
+| `category` | `INDIVIDUAL` ou `CORPORATE` — jamais implicite | — |
+| `policy.type` | `CASH` / `CASH_DAT` / `PRODUCT`, choisi explicitement | — |
+| `policy` entière | EMBARQUÉE, complète — JAMAIS un `policy_id` partagé | `policy_id` partagé corrompt en silence (`INV-PRD-07`) ; `policy` absente = HTTP 500 (`ANO-PRD-POLICY-01`) |
+| `interest_rate` | ≤ 24 % (plafond d'usure BEAC/COBAC, `EF-35`) | Accepte 99 % (mesuré sur « Cotisation 20000/mois ») |
+| `measure` | TOUJOURS explicite — le mil se pèse, le lait se mesure (`D-PRD-8`) | La WebApp injecte KILOGRAM en dur sans le dire |
+| `amount_min` / `amount_max` | `0 < min < max`, cohérents avec la catégorie | Accepte min=max=3 (mesuré sur « plastique ») |
+| `duree_mois` | OBLIGATOIRE si `CASH_DAT`, INTERDIT sinon — un dépôt à terme sans terme n'existe pas | Aucun champ de durée sur COLLECT : le Loader la porte et la matérialise dans `CollectSchema.end_date` |
+| `penalty_*` | Renseignés, jamais laissés au hasard du serveur | — |
+| `description` | Préfixée « Jeu de données DEMO Loader FinZuu » | — |
+
+**L'UNICITÉ — la discipline que la plateforme n'a pas, et que le Loader impose :**
 
 ```gherkin
-Étant donné un nom déjà porté par un produit ÉTRANGER (short_name inconnu)
+Étant donné que product-service n'impose AUCUNE unicité (mesuré : deux
+  « Cotisation 20000/mois » coexistent avec des abonnés sur chacune)
+Alors le Loader est l'AUTORITÉ d'unicité, sur DEUX clés à la fois :
+  - `name` unique dans notre registre ET vérifié par GET-avant-POST
+  - `short_name` unique dans notre registre ET vérifié par GET-avant-POST
+Et aucune création ne part si l'une des deux clés est déjà prise
+
+Étant donné un nom déjà porté par un produit ÉTRANGER sur la plateforme
+  (nom présent, notre short_name absent)
 Quand je confirme la création
 Alors elle est REFUSÉE avant réseau : ni consommé (A-10), ni doublé (D-12)
+Et le motif nomme le produit étranger (_id, short_name) pour que je comprenne
 
-Étant donné un taux au-dessus de 24 %
+Étant donné un nom identique à un produit de l'ENVIRONNEMENT
+  (« Cotisation 20000/mois », « plastique »)
+Quand je saisis le nom
+Alors le refus est immédiat, avant même l'aperçu
+```
+
+**Le flux complet — validé chez nous PUIS poussé, jamais l'inverse :**
+
+```gherkin
+Étant donné un formulaire valide
+Quand je demande l'aperçu (POST /admin/entites/produits — étape 1)
+Alors je vois le payload EXACT qui partirait, policy embarquée comprise
+Et AUCUN appel d'écriture n'est parti
+
+Quand je confirme (étape 2)
+Alors le Loader journalise l'intention (write-ahead), POSTe le produit,
+  RELIT la fiche depuis la plateforme (jamais déduite — FRA-218),
+  l'enregistre dans NOTRE registre produits (l'autorité d'unicité),
+  et me montre la fiche RELUE avec son product_id
+Et le produit est immédiatement souscriptible dans le prochain run —
+  Loader et plateforme sont COHÉRENTS, par construction
+
+Étant donné un champ invalide (taux 25 %, min > max, CASH_DAT sans durée...)
 Quand je demande l'aperçu
-Alors je reçois le refus BEAC/COBAC (EF-35) avant tout appel
+Alors je reçois 422 avec CHAQUE champ fautif et sa règle nommée —
+  le Loader est plus strict que product-service, jamais moins
 ```
 
 ### US-D3 · (Won't-v1) Créer du LENDING, supprimer une entité
