@@ -838,15 +838,20 @@ class Generateur:
         return date_de_naissance_du_client(ancre, jeune=jeune, reference=self._reference)
 
     @staticmethod
-    def _expiration_piece_ancree(ancre: str) -> date:  # pragma: no cover — reserve
+    def _expiration_piece_ancree(ancre: str, reference: date) -> date:  # pragma: no cover
         """Reserve : meme raison que la date de naissance, non encore cablee."""
-        return date.today() + timedelta(days=random.Random(ancre).randrange(365, 3650))  # noqa: S311
+        return reference + timedelta(days=random.Random(ancre).randrange(365, 3650))  # noqa: S311
 
     def _expiration_piece(self) -> date:
-        """Toujours dans le futur : une piece expiree serait incoherente pour un
-        client actif, et `id_expire_on` est de toute facon obligatoire en
-        pratique (D-CLI-2)."""
-        return date.today() + timedelta(days=self._alea.randrange(365, 3650))
+        """Toujours dans le futur DE LA REFERENCE DU RUN, jamais du jour de la
+        machine. AUDIT DU 13/08 : ce champ etait le DERNIER a deriver de
+        `date.today()` — deux executions du meme `run_id` a deux jours
+        d'intervalle rendaient des `id_expire_on` differents, une entaille a
+        `ENF-15` que la date de naissance avait deja corrigee et que
+        l'expiration avait echappee. La piece reste future d'au moins un an
+        par rapport a la fenetre du run (D-CLI-2, INV-11 valide contre la
+        MEME reference)."""
+        return self._reference + timedelta(days=self._alea.randrange(365, 3650))
 
 
 def date_de_naissance_du_client(

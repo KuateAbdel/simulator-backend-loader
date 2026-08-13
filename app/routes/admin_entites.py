@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
-from uuid import UUID
+from uuid import NAMESPACE_OID, UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,6 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.clients.base import ErreurService
 from app.clients.contracts import PolicyMeasure, PolicyType, ProductCategory, ProductType
 from app.core.cdc import TAUX_USURE_MAX_ANNUEL_PCT
+from app.core.config import settings as _settings
 from app.core.database import COLLECTION_LOADER_CONFIGURATION, get_collection
 from app.repositories.audit_trail import AuditTrailRepository
 from app.routes.dependances import (
@@ -262,7 +263,10 @@ async def creer_produit(
         async with audit.intention(
             RUN_ADMIN,
             entity_type="Product",
-            entity_id=UUID(int=abs(hash(produit.marqueur)) % (2**63)),
+            # AUDIT 13/08 : hash() est randomise par processus — l'identifiant
+            # du journal n'aurait pas survecu a un redemarrage. uuid5 est la
+            # fonction stable du marqueur.
+            entity_id=uuid5(NAMESPACE_OID, produit.marqueur),
             operation="CREATE",
             cible="product-service",
             payload={"name": produit.nom, "short_name": produit.marqueur},
@@ -376,9 +380,13 @@ def _executeur_organisation(mode: Any) -> Any:
         mode=mode,
         referentiel=_geo(),
         statique=_statique(),
-        # Ancre sur le run SENTINELLE : la meme demande recompose la meme
-        # Company — l'idempotence de CR-03, appliquee a l'unite.
-        generateur=Generateur(RUN_ADMIN, reference=date.today()),
+        # Ancre sur le run SENTINELLE + la MEME regle de reference que le
+        # moteur (fin de fenetre configuree, sinon aujourd'hui). AUDIT 13/08 :
+        # l'idempotence de composition vaut A FENETRE EGALE — comme les runs,
+        # dont la fenetre fait partie du perimetre.
+        generateur=Generateur(
+            RUN_ADMIN, reference=_settings.sim_end_date or date.today()
+        ),
         company_client=CompanyServiceClient(),
         user_client=UserServiceClient(),
         account_client=AccountServiceClient(),
