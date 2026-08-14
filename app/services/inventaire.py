@@ -38,6 +38,7 @@ restent dans les routes — la reconciliation se teste sans reseau.
 from __future__ import annotations
 
 from typing import Any
+from uuid import NAMESPACE_OID, UUID, uuid5
 
 from app.core.cdc import PREFIXE_DONNEES
 from app.core.database import (
@@ -46,6 +47,19 @@ from app.core.database import (
     COLLECTION_LOADER_CONFIGURATION,
     get_collection,
 )
+
+
+def uuid_stable(brut: str) -> UUID:
+    """L'identifiant serveur n'est PAS garanti au format UUID — aucun contrat
+    ne le promet, et `_sceller` a deja du le gerer pour les clients. Un id
+    illisible ne doit jamais perdre le lien : uuid5 du meme id brut rend
+    toujours le meme UUID (QA 14/08 — la purge perdait sa trace de journal
+    sur un id non-UUID, l'exception etant avalee par la defense du journal)."""
+    try:
+        return UUID(str(brut))
+    except ValueError:
+        return uuid5(NAMESPACE_OID, f"finzuu-id:{brut}")
+
 
 STATUT_A_NOUS = "a_nous"
 STATUT_DISPARU = "disparu_la_bas"

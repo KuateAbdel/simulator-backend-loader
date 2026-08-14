@@ -1457,6 +1457,44 @@ class TestLotEPurge:
         assert reponse.json()["supprimes"] == ["Marchand"]
         assert reponse.json()["echecs"][0]["groupe"] == "Agent"
 
+    async def test_un_id_hors_uuid_ne_perd_pas_sa_trace_de_journal(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """QA 14/08 — `UUID(groupe["id"])` levait sur un id legacy, et
+        l'exception etait AVALEE par la defense du journal : suppression
+        reelle SANS trace. Desormais `uuid_stable` derive, la trace reste."""
+        from app.repositories.audit_trail import AuditTrailRepository
+        from app.routes import admin_purge
+        from app.routes.admin_entites import RUN_ADMIN
+
+        gid = "grp-legacy-7"
+
+        class _Users:
+            async def lister_groupes(self):  # type: ignore[no-untyped-def]
+                return [{"_id": gid, "name": "Agent"}]
+
+            async def supprimer_groupe(self, groupe_id):  # type: ignore[no-untyped-def]
+                return None
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_purge, "_client_users", lambda: _Users())
+        await _registre_vierge()
+        await _inscrire_groupe_au_registre(gid, "Agent")
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/purge/confirmer",
+            json={"supprimer_groupes": True},
+            headers=entetes,
+        )
+        assert reponse.status_code == 200
+        assert reponse.json()["supprimes"] == ["Agent"]
+        journal = await AuditTrailRepository().exporter_run(RUN_ADMIN)
+        assert sum(
+            1 for e in journal if e.action == "DELETE" and e.entity_type == "Group"
+        ) == 1, "la suppression d'un id legacy laisse SA trace — plus jamais avalee"
+
     async def test_le_verrou_EF_55_couvre_aussi_la_purge(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1712,6 +1750,35 @@ class TestInventaireReconciliation:
         )
         assert reponse.status_code == 502
         assert "repondu sans agir" in reponse.json()["detail"]
+
+    async def test_un_id_serveur_hors_uuid_reste_supprimable_et_trace(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """QA 14/08 — le contrat serveur ne garantit AUCUN format d'id.
+        Exiger un UUID au chemin rendait un groupe a id legacy visible mais
+        INSUPPRIMABLE (422 avant la route). L'autorite est le registre ; le
+        journal derive un UUID STABLE (meme doctrine que _sceller)."""
+        from app.repositories.audit_trail import AuditTrailRepository
+        from app.routes.admin_entites import RUN_ADMIN
+        from app.services.inventaire import uuid_stable
+
+        gid = "grp-legacy-42"
+        etat = self._doubler_users(monkeypatch, [{"_id": gid, "name": "Agent"}])
+        await _registre_vierge()
+        await _inscrire_groupe_au_registre(gid, "Agent")
+        entetes = await _session_complete(client)
+
+        reponse = await client.delete(
+            f"/admin/inventaire/groupes/{gid}", headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert etat["supprimes"] == [gid]
+        journal = await AuditTrailRepository().exporter_run(RUN_ADMIN)
+        assert any(
+            e.entity_id == uuid_stable(gid)
+            for e in journal
+            if e.entity_type == "Group" and e.action == "INTENTION"
+        ), "l'id illisible ne perd pas le lien — uuid5 stable au journal"
 
     async def test_produits_les_quatre_statuts(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch

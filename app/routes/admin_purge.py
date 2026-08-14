@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import logging
 from typing import Annotated, Any
-from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
@@ -43,7 +42,7 @@ from app.routes.dependances import (
     admin_complet,
     refuser_si_run_en_cours,
 )
-from app.services.inventaire import STATUT_A_NOUS, classer_groupes
+from app.services.inventaire import STATUT_A_NOUS, classer_groupes, uuid_stable
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +180,7 @@ async def confirmer(
                     await audit.journaliser(
                         run_id=RUN_ADMIN,
                         entity_type="Group",
-                        entity_id=UUID(groupe["id"]),
+                        entity_id=uuid_stable(groupe["id"]),
                         action="DELETE",
                         before={"name": groupe["nom"]},
                     )

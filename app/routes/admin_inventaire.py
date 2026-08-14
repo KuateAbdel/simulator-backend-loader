@@ -23,9 +23,8 @@ from __future__ import annotations
 
 import logging
 from typing import Annotated, Any
-from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 
 from app.repositories.audit_trail import AuditTrailRepository
 from app.routes.admin_entites import RUN_ADMIN
@@ -39,6 +38,7 @@ from app.services.inventaire import (
     classer_groupes,
     classer_produits,
     registre_groupes,
+    uuid_stable,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ async def groupes(
 
 @router.delete("/groupes/{groupe_id}")
 async def supprimer_groupe(
-    groupe_id: UUID,
+    groupe_id: Annotated[str, Path(min_length=1, max_length=64)],
     _: Annotated[SessionAdmin, Depends(admin_complet)],
 ) -> dict[str, Any]:
     """Suppression INDIVIDUELLE d'un de NOS groupes — la seule action.
@@ -95,7 +95,12 @@ async def supprimer_groupe(
     L'ordre des gardes est celui du risque : verrou EF-55 (409), existence
     la-bas (404), puis LA garde absolue — un groupe hors registre est
     ETRANGER, 403 quel que soit son nom. Le DELETE n'est tente qu'apres,
-    journalise sous RUN_ADMIN, et la relecture PROUVE qu'il a pris."""
+    journalise sous RUN_ADMIN, et la relecture PROUVE qu'il a pris.
+
+    `groupe_id` est un `str` VOULU, pas un UUID : le contrat serveur ne
+    garantit aucun format d'identifiant (QA 14/08 — en exiger un rendait un
+    groupe a id non-UUID visible a l'inventaire mais INSUPPRIMABLE, 422 avant
+    la route). L'autorite est le registre ; le journal derive `uuid_stable`."""
     await refuser_si_run_en_cours()
 
     client = _client_users()
@@ -124,7 +129,7 @@ async def supprimer_groupe(
         async with audit.intention(
             RUN_ADMIN,
             entity_type="Group",
-            entity_id=groupe_id,
+            entity_id=uuid_stable(groupe_id),
             operation="DELETE",
             cible="user-service",
             payload={"name": nom},
