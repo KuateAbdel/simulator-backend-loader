@@ -15,7 +15,10 @@ raisonnement que le 401 muet du login).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import smtplib
+from email.mime.text import MIMEText
 
 import httpx
 
@@ -23,11 +26,33 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+#: VOIE PRINCIPALE (decision Yaniv 14/08) : le RELAIS SMTP de Mailjet.
+#: Mesure du meme soir : le compte est « temporarily blocked » (mj-0001) sur
+#: l'API HTTP v3.1, mais le relais SMTP ACCEPTE les envois — identifiants =
+#: la paire cle/secret API. smtplib est synchrone : il tourne dans un thread.
+_SMTP_HOTE = "in-v3.mailjet.com"
+_SMTP_PORT = 587
+
 _URL_ENVOI = "https://api.mailjet.com/v3.1/send"
-#: Repli mesure le 14/08 : le compte Mailjet de Yaniv est « temporarily
-#: blocked » sur v3.1 (mj-0001) mais l'endpoint historique v3 ACCEPTE les
-#: envois. On tente v3.1 d'abord (l'API supportee), v3 en secours.
+#: Second secours : l'endpoint HTTP v3 historique accepte aussi.
 _URL_ENVOI_LEGACY = "https://api.mailjet.com/v3/send"
+
+
+def _envoyer_smtp(destinataire: str, sujet: str, texte: str) -> bool:
+    """Envoi par le relais SMTP — synchrone, appele via asyncio.to_thread."""
+    try:
+        message = MIMEText(texte, _charset="utf-8")
+        message["Subject"] = sujet
+        message["From"] = f"FinZuu Loader <{settings.mailjet_expediteur}>"
+        message["To"] = destinataire
+        with smtplib.SMTP(_SMTP_HOTE, _SMTP_PORT, timeout=20) as relais:
+            relais.starttls()
+            relais.login(str(settings.mailjet_api_key), str(settings.mailjet_secret_key))
+            relais.sendmail(str(settings.mailjet_expediteur), [destinataire], message.as_string())
+        return True
+    except (smtplib.SMTPException, OSError) as erreur:
+        logger.warning("relais SMTP mailjet a refuse : %s", type(erreur).__name__)
+        return False
 
 
 def provisionne() -> bool:
@@ -47,6 +72,13 @@ async def envoyer_email(destinataire: str, sujet: str, texte: str) -> bool:
     """
     if not provisionne():
         return False
+
+    # 1) Le relais SMTP — la voie demandee par Yaniv, et la seule que le
+    #    blocage de compte n'atteint pas (mesure du 14/08).
+    if await asyncio.to_thread(_envoyer_smtp, destinataire, sujet, texte):
+        return True
+    logger.warning("relais SMTP indisponible — tentative par l'API HTTP")
+
     auth = (str(settings.mailjet_api_key), str(settings.mailjet_secret_key))
     charge_v31 = {
         "Messages": [
