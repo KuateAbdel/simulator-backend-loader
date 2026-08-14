@@ -98,5 +98,19 @@ class Settings(BaseSettings):
     # -- Client HTTP (httpx async, HTTP/2 negocie par APISIX 3.13.0) -------
     http_timeout_seconds: float = Field(default=15.0, gt=0)
 
+    # -- CORS — l'origine du frontend de Zidane (US : le Loader est une web
+    #    app, il fait le BACKEND, Zidane le frontend Next.js). Si le frontend
+    #    vit sur un AUTRE domaine que cette API, le navigateur exige des
+    #    en-tetes CORS : sans eux, chaque appel du frontend est bloque.
+    #    Liste d'origines EXACTES separees par des virgules (schema + hote,
+    #    jamais `*` avec des credentials — regle de securite du navigateur).
+    #    Vide par defaut : aucune origine croisee autorisee, le choix est
+    #    EXPLICITE en production (`CORS_ALLOW_ORIGINS=https://...`).
+    cors_allow_origins: str = ""
+
+    @property
+    def origines_cors(self) -> list[str]:
+        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
+
 
 settings = Settings()

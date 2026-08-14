@@ -100,6 +100,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS — le frontend de Zidane vit sur un AUTRE domaine que cette API. Sans
+# ces en-tetes, le navigateur bloque chacun de ses appels (le Swagger reste
+# lisible, mais le vrai frontend echoue en silence : le piege classique du
+# split frontend/backend). Les origines sont EXPLICITES (jamais `*`), pilotees
+# par l'environnement — vide en dev, l'origine de Zidane en production.
+if settings.origines_cors:
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.origines_cors,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 app.include_router(health.router)
 # Lot A de l'API Super-Admin (US-A1..A4, US-B5) — le contrat OpenAPI que le
 # frontend de Zidane consomme est publie sur /docs des ce lot.
