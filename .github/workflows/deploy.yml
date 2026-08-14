@@ -1,5 +1,5 @@
-# CD — deploiement sur simul.fintech4esg.com, DEPUIS GitHub, uniquement
-# quand la CI de main est VERTE. Rien de tiers : openssh du runner, cle
+# CD — deploiement du backend sur simul.api.fintech4esg.com, DEPUIS GitHub,
+# uniquement quand la CI de main est VERTE. Rien de tiers : openssh du runner, cle
 # fournie par secret, hote verifie par empreinte (jamais de
 # StrictHostKeyChecking=no — un DevSecOps ne deploie pas vers un hote
 # qu'il ne reconnait pas).
@@ -19,6 +19,8 @@ on:
     workflows: [CI]
     types: [completed]
     branches: [main]
+  # Redeploiement manuel (bouton « Run workflow ») sans commit factice.
+  workflow_dispatch:
 
 concurrency:
   group: deploiement-production
@@ -26,7 +28,8 @@ concurrency:
 
 jobs:
   deployer:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # Chaine auto : uniquement si la CI est verte. Manuel : toujours autorise.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment: production
     steps:
