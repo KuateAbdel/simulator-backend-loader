@@ -91,6 +91,15 @@ curl -fsS https://simul.api.fintech4esg.com/health   # 200 public
 ```
 Swagger en ligne pour Zidane : `https://simul.api.fintech4esg.com/docs`.
 
+### c-ter) Hook de reload nginx au renouvellement (une fois, root)
+`certonly --webroot` obtient le cert mais NE recharge PAS nginx au
+renouvellement → l'ancien cert reste servi. Corrigé par un hook global :
+```bash
+cp /home/apps/loader/deploy/letsencrypt/reload-nginx.sh \
+   /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+```
+
 ### d) La fiche du dépôt (gh non authentifié sur la machine de dev)
 Tape dans la session : `! gh auth login` — puis je pose description, topics
 et protection de branche. Ou à la main :
