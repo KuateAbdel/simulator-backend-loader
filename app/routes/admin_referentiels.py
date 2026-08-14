@@ -27,7 +27,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.cdc import PAYS_CIBLES
 from app.repositories.surcouche import SurcoucheRepository
 from app.routes.dependances import (
     SessionAdmin,
@@ -447,58 +446,131 @@ MATIERE_REQUISE_PAYS: list[dict[str, str]] = [
 ]
 
 
-class DemandePays(BaseModel):
-    """Le formulaire de demande — deux champs, car la reponse utile n'est pas
-    une creation mais un DIAGNOSTIC."""
+class CreerPays(BaseModel):
+    """`US-B6` COMPLET — creer un pays sur config-service (decision Yaniv
+    14/08). config-service EXPOSE `POST /countries/create` (c'est ainsi que
+    CM/CI/BF/SN ont ete crees) : le super-admin peut donc le faire, comme la
+    ville et le telco, avec NOS invariants.
+
+    Les telcos et la devise sont des REFERENCES : la devise par son code ISO
+    (resolue en UUID), les telcos par des UUID existants (crees au prealable
+    via `POST /telcos`). `extra="forbid"` : tout champ inconnu est un 422."""
 
     model_config = ConfigDict(extra="forbid")
 
-    code: str = Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")
-    nom: str = Field(default="", max_length=60)
+    iso_name: str = Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")
+    name_en: str = Field(min_length=2, max_length=60)
+    name_fr: str = Field(min_length=2, max_length=60)
+    dial_code: str = Field(min_length=1, max_length=5, pattern=r"^\d{1,5}$")
+    region: str = Field(min_length=2, max_length=40)
+    continent: str = Field(default="Africa", max_length=40)
+    devise_iso: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
+    cities: list[str] = Field(min_length=1, max_length=200)
+    telcos_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
-@router.post("/pays")
-async def demander_pays(
-    demande: DemandePays,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+@router.post("/pays", status_code=201)
+async def creer_pays(
+    demande: CreerPays,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
 ) -> dict[str, Any]:
-    """`US-B6` — demander un 5e pays. Cette route ne CREE jamais rien.
+    """`US-B6` COMPLET — creer un pays, comme la ville et le telco.
 
-    Deux issues, toutes deux des refus INSTRUCTIFS — famille 1 et famille 4
-    de la doctrine d'erreurs :
+    Le rite habituel + les invariants :
+      - verrou EF-55 (pas de creation pendant un run) ;
+      - la DEVISE est resolue en UUID ; inconnue -> 422 AVANT tout POST ;
+      - `GET`-avant-`POST` sur `iso_name` : le pays existe deja -> 409 avec
+        son id (config-service n'a AUCUNE unicite, c'est NOUS l'autorite) ;
+      - creation puis RELECTURE : la fiche rendue vient de config-service ;
+      - journalise sous RUN_ADMIN (write-ahead, trace « a nous »).
 
-      - le pays EXISTE deja (un des 4 cibles EF-05) -> 409 avec son identite
-        et le geste correct (l'activer/desactiver via US-B3) — le scenario
-        « l'admin cree par erreur ce qui existe » ne fabrique jamais un double ;
-      - un pays HORS cible -> 422 listant CHAQUE matiere manquante et sa
-        raison, et RIEN n'est modifie — ni surcouche, ni config-service.
-
-    Aucune ecriture nulle part : le verrou EF-55 ne s'applique qu'aux
-    ecritures, cette route reste lisible meme pendant un run.
+    IMPORTANT — creer le pays le DECLARE sur config-service ; il ne l'ajoute
+    PAS au perimetre de GENERATION (EF-05 reste les 4 cibles). Generer des
+    CLIENTS pour ce pays exigerait la matiere interne (voir `matiere_pour_
+    generer` dans la reponse) : c'est un autre chantier.
     """
-    code = demande.code
-    if code in PAYS_CIBLES:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"le pays {code} EXISTE deja — il compte parmi les 4 pays cibles "
-                "(EF-05 : CM, CI, BF, SN), deja porte par config-service et jamais "
-                f"recree. Pour l'activer ou le desactiver cote Loader : "
-                f"PUT /admin/configuration/pays/{code} (US-B3)."
-            ),
-        )
-    raise HTTPException(
-        status_code=422,
-        detail={
-            "refus": (
-                f"EF-05 — {code} {demande.nom!r} est hors des 4 pays cibles ; "
-                "l'ajout d'un 5e pays actif est hors perimetre v1 (Won't, "
-                "backlog canonique). Voici la matiere exacte a reunir pour une "
-                "future extension — rien n'a ete modifie."
-            ),
-            "matiere_manquante": MATIERE_REQUISE_PAYS,
+    from uuid import NAMESPACE_OID, uuid5
+
+    from app.clients.base import ErreurService
+    from app.repositories.audit_trail import AuditTrailRepository
+    from app.routes.admin_entites import RUN_ADMIN
+
+    await refuser_si_run_en_cours()
+
+    admin = _config_admin()
+    try:
+        devise_id = await admin.resoudre_devise(demande.devise_iso)
+        if devise_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"devise {demande.devise_iso!r} inconnue de config-service — "
+                    "aucun pays n'est cree. Devises attendues : XOF, XAF..."
+                ),
+            )
+
+        payload = {
+            "name_en": demande.name_en,
+            "name_fr": demande.name_fr,
+            "iso_name": demande.iso_name,
+            "dial_code": demande.dial_code,
+            "region": demande.region,
+            "continent": demande.continent,
+            "cities": [v.strip() for v in demande.cities if v.strip()],
+            "currencies": [devise_id],
+            "telcos": [str(t) for t in demande.telcos_ids],
+        }
+
+        audit = AuditTrailRepository()
+        entite = uuid5(NAMESPACE_OID, f"finzuu-pays:{demande.iso_name}")
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="Country",
+            entity_id=entite,
+            operation="CREATE",
+            cible="config-service POST /countries/create",
+            payload={"iso_name": demande.iso_name, "name_en": demande.name_en},
+        ) as suivi:
+            try:
+                fiche, cree = await admin.creer_pays_si_absent(payload)
+            except ErreurService as exc:
+                suivi.echoue(f"HTTP {exc.status}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"config-service a refuse la creation : HTTP {exc.status}",
+                ) from exc
+            identifiant = str(fiche.get("id") or fiche.get("_id") or "")
+            if not cree:
+                suivi.echoue("existe deja")
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"le pays {demande.iso_name} EXISTE deja sur config-service "
+                        f"(id {identifiant}) — reutiliser, jamais doubler. Pour "
+                        f"l'activer/desactiver : PUT /admin/configuration/pays/"
+                        f"{demande.iso_name} (US-B3)."
+                    ),
+                )
+            suivi.reussi({"country_id": identifiant, "iso_name": demande.iso_name})
+    finally:
+        await admin.fermer()
+
+    return {
+        "pays": {
+            "id": identifiant,
+            "iso_name": demande.iso_name,
+            "name_fr": demande.name_fr,
+            "villes": len(payload["cities"]),
+            "telcos": len(payload["telcos"]),
+            "devise": demande.devise_iso,
         },
-    )
+        "statut": "a_nous",
+        "note": (
+            "pays DECLARE sur config-service — il n'entre PAS dans le perimetre "
+            "de generation (EF-05 reste CM/CI/BF/SN)"
+        ),
+        "matiere_pour_generer": MATIERE_REQUISE_PAYS,
+    }
 
 
 # ---------------------------------------------------------------------------

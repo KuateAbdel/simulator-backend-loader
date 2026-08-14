@@ -1981,78 +1981,115 @@ class TestInventaireReconciliation:
             await registre.delete_many({})
 
 
-class TestUSB6DemandeDePays:
-    """`US-B6` — demander un 5e pays : refus PEDAGOGIQUE, jamais un mur.
-    Et le scenario « creer ce qui existe deja » (famille 1) : un des 4 pays
-    cibles repond 409 avec le geste correct, jamais un double."""
+class TestUSB6CreationDePays:
+    """`US-B6` COMPLET (Yaniv 14/08) — creer un pays sur config-service, comme
+    la ville et le telco, avec NOS invariants. config-service EXPOSE
+    `POST /countries/create` (c'est ainsi que les 4 cibles ont ete creees)."""
 
-    async def test_un_pays_cible_repond_409_existe_deja_avec_le_geste_correct(
-        self, client: httpx.AsyncClient
+    _GABON: ClassVar[dict[str, Any]] = {
+        "iso_name": "GA", "name_en": "Gabon", "name_fr": "Gabon",
+        "dial_code": "241", "region": "Middle Africa", "continent": "Africa",
+        "devise_iso": "XAF", "cities": ["Libreville", "Port-Gentil"],
+    }
+
+    async def test_creer_un_pays_neuf_reussit_et_part_a_config_service(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
     ) -> None:
         entetes = await _session_complete(client)
         reponse = await client.post(
-            "/admin/referentiels/pays", json={"code": "CM"}, headers=entetes
+            "/admin/referentiels/pays", json=self._GABON, headers=entetes
         )
-        assert reponse.status_code == 409
-        detail = reponse.json()["detail"]
-        assert "EXISTE deja" in detail
-        assert "PUT /admin/configuration/pays/CM" in detail, (
-            "le refus INSTRUIT : il pointe le geste correct (US-B3)"
+        assert reponse.status_code == 201, reponse.text
+        corps = reponse.json()
+        assert corps["pays"]["iso_name"] == "GA"
+        assert corps["pays"]["devise"] == "XAF"
+        assert corps["statut"] == "a_nous"
+        assert len(_config_service_double["pays_crees"]) == 1, (
+            "le pays part REELLEMENT a config-service (POST /countries/create)"
         )
+        envoye = _config_service_double["pays_crees"][0]
+        assert envoye["currencies"] == ["cur-xaf"], "la devise est resolue en UUID"
+        assert "EF-05" in corps["note"], "creer le pays ne l'ajoute PAS a la generation"
 
-    async def test_un_5e_pays_recoit_la_liste_exacte_de_la_matiere_manquante(
+    async def test_un_pays_qui_existe_deja_repond_409_jamais_un_double(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays",
+            json={**self._GABON, "iso_name": "CM", "name_en": "Cameroon",
+                  "name_fr": "Cameroun", "dial_code": "237"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 409, reponse.text
+        assert "EXISTE deja" in reponse.json()["detail"]
+        assert _config_service_double["pays_crees"] == [], "aucun doublon cree"
+
+    async def test_une_devise_inconnue_est_refusee_AVANT_tout_POST(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays",
+            json={**self._GABON, "devise_iso": "USD"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "devise" in reponse.json()["detail"]
+        assert _config_service_double["pays_crees"] == [], "refus AVANT le POST"
+
+    async def test_la_creation_est_journalisee_sous_RUN_ADMIN(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        from app.repositories.audit_trail import AuditTrailRepository
+        from app.routes.admin_entites import RUN_ADMIN
+
+        await _registre_vierge()
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays", json=self._GABON, headers=entetes
+        )
+        assert reponse.status_code == 201
+        journal = await AuditTrailRepository().exporter_run(RUN_ADMIN)
+        assert any(
+            e.entity_type == "Country" and e.action == "INTENTION" for e in journal
+        ), "la creation d'un pays laisse SA trace write-ahead"
+
+    async def test_le_verrou_EF_55_couvre_la_creation_de_pays(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        await LoaderRunRepository().remplacer(
+            LoaderRun(
+                _id=_uuid4(), sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1), status=RunStatus.RUNNING,
+            )
+        )
+        try:
+            reponse = await client.post(
+                "/admin/referentiels/pays", json=self._GABON, headers=entetes
+            )
+            assert reponse.status_code == 409
+            assert "EF-55" in reponse.json()["detail"]
+        finally:
+            await database.get_database().drop_collection("loader_runs")
+
+    async def test_un_iso_mal_forme_est_un_422_de_validation(
         self, client: httpx.AsyncClient
     ) -> None:
         entetes = await _session_complete(client)
         reponse = await client.post(
             "/admin/referentiels/pays",
-            json={"code": "GA", "nom": "Gabon"},
+            json={**self._GABON, "iso_name": "gabon"},
             headers=entetes,
-        )
-        assert reponse.status_code == 422
-        detail = reponse.json()["detail"]
-        matieres = [m["matiere"] for m in detail["matiere_manquante"]]
-        # La story nomme ces manques ; chacun DOIT etre present.
-        for attendu in (
-            "regions",
-            "villes",
-            "plan de numerotation telco",
-            "parts de marche des telcos",
-            "patronymes et prenoms",
-        ):
-            assert attendu in matieres, f"manque non nomme : {attendu}"
-        assert all(m["pourquoi"] for m in detail["matiere_manquante"]), (
-            "chaque manque porte sa raison — pedagogique, pas un mur"
-        )
-
-    async def test_rien_n_est_modifie_ni_surcouche_ni_config_service(
-        self,
-        client: httpx.AsyncClient,
-        _config_service_double: dict[str, Any],
-    ) -> None:
-        from app.repositories.surcouche import SurcoucheRepository
-
-        entetes = await _session_complete(client)
-        _, meta_avant = await SurcoucheRepository().charger()
-        reponse = await client.post(
-            "/admin/referentiels/pays",
-            json={"code": "GA", "nom": "Gabon"},
-            headers=entetes,
-        )
-        assert reponse.status_code == 422
-        _, meta_apres = await SurcoucheRepository().charger()
-        assert meta_apres["version"] == meta_avant["version"], (
-            "la surcouche n'a pas bouge d'une version"
-        )
-        assert _config_service_double["crees"] == [], "aucun POST vers config-service"
-        assert _config_service_double["villes"] == [], "aucune ville envoyee"
-
-    async def test_un_code_mal_forme_est_un_422_de_validation(
-        self, client: httpx.AsyncClient
-    ) -> None:
-        entetes = await _session_complete(client)
-        reponse = await client.post(
-            "/admin/referentiels/pays", json={"code": "gabon"}, headers=entetes
         )
         assert reponse.status_code == 422
 
@@ -2470,7 +2507,9 @@ def _config_service_double(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     l'unicite dans les deux sens est verifiable sur ses traces."""
     from app.routes import admin_referentiels
 
-    traces: dict[str, Any] = {"crees": [], "rattaches": [], "villes": [], "echec": None}
+    traces: dict[str, Any] = {
+        "crees": [], "rattaches": [], "villes": [], "pays_crees": [], "echec": None,
+    }
 
     class _Lecture:
         async def lister_pays(self):  # type: ignore[no-untyped-def]
@@ -2483,6 +2522,16 @@ def _config_service_double(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             return None
 
     class _Admin:
+        async def resoudre_devise(self, code_iso):  # type: ignore[no-untyped-def]
+            return {"XOF": "cur-xof", "XAF": "cur-xaf"}.get(code_iso.upper())
+
+        async def creer_pays_si_absent(self, payload):  # type: ignore[no-untyped-def]
+            iso = str(payload.get("iso_name", "")).upper()
+            if iso in ("CM", "CI", "BF", "SN"):  # deja en base -> pas de doublon
+                return {"id": f"cfg-{iso}", "iso_name": iso}, False
+            traces["pays_crees"].append(payload)
+            return {"id": f"cfg-new-{iso}", "iso_name": iso}, True
+
         async def ajouter_ville(self, country_id, ville):  # type: ignore[no-untyped-def]
             if traces["echec"]:
                 raise RuntimeError(traces["echec"])

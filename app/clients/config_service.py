@@ -370,6 +370,48 @@ class AdministrationConfigService:
         )
         return (reponse.data if isinstance(reponse.data, dict) else {}), True
 
+    async def resoudre_devise(self, code_iso: str) -> str | None:
+        """L'UUID d'une devise a partir de son code ISO (`XOF`, `XAF`...).
+        Rend None si le code est inconnu de config-service — l'appelant
+        refuse alors AVANT d'ecrire, jamais un pays sans devise valide."""
+        cible = code_iso.strip().upper()
+        for devise in await self._client.lister_tout("/api/v1/currencies/"):
+            for champ in ("iso_code", "code", "iso_name", "name"):
+                if str(devise.get(champ, "")).strip().upper() == cible:
+                    identifiant = devise.get("_id") or devise.get("id")
+                    if identifiant:
+                        return str(identifiant)
+        return None
+
+    async def creer_pays_si_absent(
+        self, payload: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool]:
+        """Cree un pays sur config-service, ou rend celui qui porte deja cet
+        `iso_name`.
+
+        MEME doctrine que `creer_telco_si_absent` : le serveur n'applique
+        AUCUNE unicite (`RC-182`/`RC-183`, la recon du 14/08 l'a reprouve avec
+        `ca` et `CV` en base). C'est NOUS l'autorite — `GET`-avant-`POST` sur
+        `iso_name`, normalise en majuscules. Rend `(fiche, cree?)` : si le pays
+        existait, `cree=False` et on ne fabrique pas de doublon.
+
+        `POST /countries/create` attend les 9 champs (comme la relecture des
+        villes/telcos) : identite + `cities[]` (noms) + `currencies[uuid]` +
+        `telcos[uuid]`. L'appelant a deja resolu la devise et les telcos.
+        """
+        cible = str(payload.get("iso_name", "")).strip().upper()
+        for existant in await self._client.lister_tout("/api/v1/countries/"):
+            if str(existant.get("iso_name", "")).strip().upper() == cible:
+                if "_id" in existant and not existant.get("id"):
+                    existant["id"] = existant["_id"]
+                return existant, False
+
+        reponse = await self._client.requete(
+            "POST", "/api/v1/countries/create", json_body=payload
+        )
+        fiche = reponse.data if isinstance(reponse.data, dict) else {}
+        return fiche, True
+
     async def rattacher_telco_au_pays(
         self, country_id: str, telco_id: str
     ) -> dict[str, Any]:
