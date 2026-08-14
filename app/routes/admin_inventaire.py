@@ -25,6 +25,7 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.repositories.audit_trail import AuditTrailRepository
 from app.routes.admin_entites import RUN_ADMIN
@@ -201,3 +202,88 @@ async def companies(
         "les notres restent marquees DEMO_ dans short_name"
     )
     return classement
+
+
+# ---------------------------------------------------------------------------
+# ADOPTION (A-13, tranche par Yaniv le 14/08) — « c'est nous qui les avons
+# crees la-bas », avant que le journal des groupes n'existe (13/08). La recon
+# passive du 14/08 les a retrouves : 11 roles D-09, notre empreinte exacte,
+# mais un registre vide — donc classes ETRANGERS, invisibles a la purge,
+# interdits au DELETE. L'adoption les fait NOTRES : explicite, journalisée,
+# JAMAIS automatique — adopter d'office ce qui nous ressemble referait le
+# defaut de confiance que toute la reconciliation combat.
+# ---------------------------------------------------------------------------
+
+class DemandeAdoption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Les identifiants TELS QUE la plateforme les porte (str — aucun format
+    #: garanti, QA du 14/08).
+    groupe_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+@router.post("/groupes/adoption")
+async def adopter_groupes(
+    demande: DemandeAdoption,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Adopte au registre des groupes DEJA presents sur user-service.
+
+    Chaque identifiant recoit SON issue — jamais un echec global muet :
+      adopte            present la-bas, absent du registre -> inscrit
+      deja_au_registre  rien a faire, dit tel quel
+      introuvable       absent de la plateforme -> on n'adopte pas un fantome
+
+    L'inscription est une intention ADOPTION journalisee sous RUN_ADMIN dont
+    le RESULTAT porte le group_id : la ligne EXACTE qu'aurait ecrite la
+    creation si le journal avait existe a l'epoque. Apres adoption, le groupe
+    est `a_nous` partout : inventaire, DELETE individuel, purge.
+    """
+    await refuser_si_run_en_cours()
+
+    client = _client_users()
+    try:
+        presents = {
+            str(g.get("_id") or g.get("id")): str(g.get("name", ""))
+            for g in await client.lister_groupes()
+        }
+    finally:
+        await client.fermer()
+
+    registre = await registre_groupes()
+    audit = AuditTrailRepository()
+    issues: list[dict[str, str]] = []
+    for gid in dict.fromkeys(demande.groupe_ids):  # dedoublonne, ordre garde
+        if gid in registre:
+            issues.append({"id": gid, "nom": registre[gid], "issue": "deja_au_registre"})
+            continue
+        if gid not in presents:
+            issues.append({"id": gid, "issue": "introuvable"})
+            continue
+        nom = presents[gid]
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="Group",
+            entity_id=uuid_stable(gid),
+            operation="ADOPTION",
+            cible="registre Loader — groupe preexistant reconnu notre",
+            payload={"name": nom},
+        ) as suivi:
+            suivi.reussi({"group_id": gid, "name": nom})
+        issues.append({"id": gid, "nom": nom, "issue": "adopte"})
+
+    # RELECTURE — le registre d'APRES, jamais deduit de la boucle.
+    apres = await registre_groupes()
+    return {
+        "issues": issues,
+        "comptes": {
+            "adoptes": sum(1 for i in issues if i["issue"] == "adopte"),
+            "deja_au_registre": sum(1 for i in issues if i["issue"] == "deja_au_registre"),
+            "introuvables": sum(1 for i in issues if i["issue"] == "introuvable"),
+        },
+        "registre_apres": len(apres),
+        "note": (
+            "les adoptes sont desormais a_nous PARTOUT — inventaire, "
+            "DELETE /admin/inventaire/groupes/{id}, purge"
+        ),
+    }

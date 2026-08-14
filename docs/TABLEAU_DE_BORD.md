@@ -118,13 +118,16 @@ Domaine corrigé (Yaniv 14/08) : `simul.fintech4esg.com`.
 Agents compris ou en sus des 15-25 staff/pays. Recommandations écrites dans
 `PLAN_SPRINTS.md` §3.4 et `A-05_PERMISSIONS_A_TRANCHER.md`.
 
-**A-13 (NOUVEAU — recon passive du 14/08,
-`docs/empirical/2026-08-14_recon_passive.md`)** : les 11 rôles D-09
-EXISTENT DÉJÀ sur user-service (empreinte = la nôtre : tags D-09 v2, comptes
-de permissions exacts sur les 61 filtrées) mais notre registre est VIDE
-(créés avant la journalisation du 13/08). Les ADOPTER au registre
-(mécanisme explicite et journalisé, jamais automatique) ou les laisser
-étrangers ? Sans adoption : palier 1 = 0 création (réutilisation), purge et
-DELETE aveugles sur eux. Autres faits : 6 pays en base (`ca` minuscule
-hors-ISO + CV), doublon produit vivant (ANO-PRD-UNIQ-01 confirmée), réseau
-dev disqualifié (4-6 s/health, DNS instable) → C-0 validée par la mesure.
+**A-13 — TRANCHÉ par Yaniv le 14/08 (« c'est nous qui les avons créés ») et
+LIVRÉ le jour même** : les 11 rôles D-09 préexistants sur user-service
+(recon `docs/empirical/2026-08-14_recon_passive.md`) sont À NOUS —
+`POST /admin/inventaire/groupes/adoption` les inscrit au registre : issue
+PAR identifiant (adopte / deja_au_registre / introuvable — jamais un échec
+global muet), intention ADOPTION journalisée sous RUN_ADMIN dont le RESULTAT
+porte le group_id (la ligne exacte qu'aurait écrite la création si le
+journal avait existé), relecture du registre, verrou EF-55. Après adoption
+le groupe est a_nous PARTOUT : inventaire, DELETE individuel, purge —
+prouvé par test de bout en bout. Autres faits de la recon : 6 pays en base
+(`ca` minuscule hors-ISO + CV), doublon produit vivant (ANO-PRD-UNIQ-01
+confirmée), réseau dev disqualifié (4-6 s/health, DNS instable) → C-0
+validée par la mesure. 948 tests.

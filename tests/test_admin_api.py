@@ -1780,6 +1780,98 @@ class TestInventaireReconciliation:
             if e.entity_type == "Group" and e.action == "INTENTION"
         ), "l'id illisible ne perd pas le lien — uuid5 stable au journal"
 
+    async def test_A13_l_adoption_rend_notres_les_groupes_preexistants(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A-13 (Yaniv 14/08) : « c'est nous qui les avons crees la-bas » —
+        avant le journal du 13/08. L'adoption inscrit au registre, avec une
+        issue PAR identifiant, et apres elle le groupe est a_nous PARTOUT."""
+        from uuid import uuid4 as _uuid4
+
+        notre_ancien, deja, disparu = str(_uuid4()), str(_uuid4()), str(_uuid4())
+        etat = self._doubler_users(
+            monkeypatch,
+            [
+                {"_id": notre_ancien, "name": "Super-Admin"},
+                {"_id": deja, "name": "Agent"},
+            ],
+        )
+        await _registre_vierge()
+        await _inscrire_groupe_au_registre(deja, "Agent")
+        entetes = await _session_complete(client)
+
+        reponse = await client.post(
+            "/admin/inventaire/groupes/adoption",
+            json={"groupe_ids": [notre_ancien, deja, disparu]},
+            headers=entetes,
+        )
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["comptes"] == {
+            "adoptes": 1, "deja_au_registre": 1, "introuvables": 1,
+        }, "chaque identifiant recoit SON issue — jamais un echec global muet"
+        assert corps["registre_apres"] == 2
+
+        # Et le groupe adopte est desormais A NOUS partout : inventaire...
+        inventaire = await client.get("/admin/inventaire/groupes", headers=entetes)
+        assert sorted(g["nom"] for g in inventaire.json()["a_nous"]) == [
+            "Agent", "Super-Admin",
+        ]
+        # ... et DELETE individuel (la garde du registre le laisse passer).
+        suppression = await client.delete(
+            f"/admin/inventaire/groupes/{notre_ancien}", headers=entetes
+        )
+        assert suppression.status_code == 200, suppression.text
+        assert etat["supprimes"] == [notre_ancien]
+
+    async def test_l_adoption_est_journalisee_et_le_verrou_la_couvre(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.audit_trail import AuditTrailRepository
+        from app.repositories.loader_runs import LoaderRunRepository
+        from app.routes.admin_entites import RUN_ADMIN
+
+        gid = str(_uuid4())
+        self._doubler_users(monkeypatch, [{"_id": gid, "name": "Compliance"}])
+        await _registre_vierge()
+        entetes = await _session_complete(client)
+
+        reponse = await client.post(
+            "/admin/inventaire/groupes/adoption",
+            json={"groupe_ids": [gid]},
+            headers=entetes,
+        )
+        assert reponse.status_code == 200
+        journal = await AuditTrailRepository().exporter_run(RUN_ADMIN)
+        operations = [
+            (e.after or {}).get("operation")
+            for e in journal
+            if e.action == "INTENTION" and e.entity_type == "Group"
+        ]
+        assert "ADOPTION" in operations, "l'adoption laisse SA trace — nommee"
+
+        await database.get_database().drop_collection("loader_runs")
+        await LoaderRunRepository().remplacer(
+            LoaderRun(
+                _id=_uuid4(), sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1), status=RunStatus.RUNNING,
+            )
+        )
+        try:
+            bloque = await client.post(
+                "/admin/inventaire/groupes/adoption",
+                json={"groupe_ids": [gid]},
+                headers=entetes,
+            )
+            assert bloque.status_code == 409, "EF-55 couvre aussi l'adoption"
+        finally:
+            await database.get_database().drop_collection("loader_runs")
+
     async def test_produits_les_quatre_statuts(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
