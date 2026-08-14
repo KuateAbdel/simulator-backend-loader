@@ -1,0 +1,39 @@
+# Loader FinZuu — la pile de production sur simul.fintech4esg.com.
+#
+# DEUX conteneurs, pas plus : le backend et SA memoire. La MongoDB du Loader
+# (registre Faker, org_hierarchy, journal, configuration) EST l'etat du
+# projet — d'ou le volume nomme, sauvegarde par mongodump (cf.
+# docs/DEPLOIEMENT.md §5) et JAMAIS expose hors du reseau interne.
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - loader_mongo_data:/data/db
+    # AUCUN port publie : la memoire du Loader n'est joignable que par lui.
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  loader:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # A l'interieur de la pile, la base s'appelle par son nom de service —
+      # ecrase la valeur localhost du .env sans la modifier.
+      MONGODB_URI: mongodb://mongo:27017
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      # Publie sur le loopback SEULEMENT : c'est le reverse-proxy du serveur
+      # (vhost simul.fintech4esg.com, deja en place — recon du 08/08) qui
+      # expose le port 443 au monde. Jamais 8000 en direct sur Internet.
+      - "127.0.0.1:8000:8000"
+
+volumes:
+  loader_mongo_data:

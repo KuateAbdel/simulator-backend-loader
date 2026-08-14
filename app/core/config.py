@@ -28,9 +28,12 @@ class Settings(BaseSettings):
     app_name: str = "Loader FinZuu — Backend"
     #: SemVer, regle de `docs/PLAN_SPRINTS.md` §5 : `1.0.0` = premiere livraison
     #: couvrant `CR-01` a `CR-12`. Le numero n'est pose que sur un increment dont
-    #: la definition de terminé est atteinte — jamais sur une intention. Sprint 2
-    #: clos = `0.2.0` ; Sprint 3 en cours = `0.3.0`.
-    app_version: str = "0.3.0"
+    #: la definition de terminé est atteinte — jamais sur une intention.
+    #: `0.5.0` (14/08) : le CODE des modules Utilisateurs -> Population est
+    #: complet et prouve (DRY_RUN 2000, 948 tests), l'API Super-Admin est
+    #: entiere, la chaine CI/CD posee. Restent : VIE (`0.6.0`, arbitrages
+    #: A-07/A-11/A-04) puis paliers REAL + recette (`1.0.0`).
+    app_version: str = "0.5.0"
     debug: bool = False
 
     # -- Persistance MongoDB (motor, cf. FZ-STACK-LOADER-2026-001 §5.3) ----

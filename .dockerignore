@@ -1,0 +1,9 @@
+# LISTE BLANCHE — tout est exclu par defaut, on ne cite que ce qui entre.
+# C'est la garantie structurelle qu'aucun secret (.env), aucun test, aucun
+# document de travail ne peut se retrouver dans une image par accident.
+*
+!app/
+!scripts/
+!docs/reference/
+!pyproject.toml
+!uv.lock

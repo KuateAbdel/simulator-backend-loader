@@ -216,9 +216,9 @@ incrément dont la définition de terminé est atteinte — jamais sur une inten
 |---|---|---|
 | `0.1.0` | Socle et connaissance | ✅ |
 | `0.2.0` | Invariants et cohérence humaine | ✅ **clos** |
-| `0.3.0` | Module Utilisateurs | 🎯 |
-| `0.4.0` | Organisation, Catalogue, Dépositaires | ⬜ |
-| `0.5.0` | Population client | ⬜ |
+| `0.3.0` | Module Utilisateurs | ✅ **clos** (code) |
+| `0.4.0` | Organisation, Catalogue, Dépositaires | ✅ **clos** (code) |
+| `0.5.0` | Population client | ✅ **clos et taggé le 14/08** (code ; l'exécution REAL = paliers, après hébergement) |
 | `0.6.0` | Vie 180 jours | ⬜ |
 | **`1.0.0`** | **Pilotage et recette** | ⬜ |
 

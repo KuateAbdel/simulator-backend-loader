@@ -1,0 +1,42 @@
+# CI — les MEMES portes que le protocole local (§6) : ruff, mypy strict,
+# les 948 tests contre un vrai MongoDB. Ce qui ne passe pas ici ne part pas.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  qualite:
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer uv (Python 3.12 epingle par le lock)
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Dependances (gelees — uv.lock fait foi)
+        run: uv sync --frozen
+
+      - name: Ruff — le style et les regles de securite (S)
+        run: uv run ruff check app tests
+
+      - name: Mypy strict
+        run: uv run mypy app
+
+      - name: Les tests — contre le MongoDB du job, jamais un double de Mongo
+        run: uv run pytest -q

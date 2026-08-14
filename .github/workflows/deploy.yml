@@ -1,0 +1,63 @@
+# CD — deploiement sur simul.fintech4esg.com, DEPUIS GitHub, uniquement
+# quand la CI de main est VERTE. Rien de tiers : openssh du runner, cle
+# fournie par secret, hote verifie par empreinte (jamais de
+# StrictHostKeyChecking=no — un DevSecOps ne deploie pas vers un hote
+# qu'il ne reconnait pas).
+#
+# Secrets requis (Settings -> Secrets and variables -> Actions) :
+#   DEPLOY_HOST         152.53.118.110 (ou le nom DNS)
+#   DEPLOY_USER         l'utilisateur SSH de deploiement
+#   DEPLOY_SSH_KEY      la cle privee ed25519 DEDIEE au deploiement
+#   DEPLOY_KNOWN_HOSTS  la ligne `ssh-keyscan` du serveur (l'empreinte)
+# Variable optionnelle :
+#   DEPLOY_PATH         chemin du depot sur le serveur
+#                       (defaut /opt/loader-finzuu)
+name: Deploiement
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploiement-production
+  cancel-in-progress: false
+
+jobs:
+  deployer:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Preparer la cle et l'empreinte de l'hote
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Deployer (pull ff-only, build natif ARM64, sante verifiee)
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" bash -s <<'FIN'
+          set -euo pipefail
+          cd "${DEPLOY_PATH:-/opt/loader-finzuu}"
+          git fetch origin main
+          git merge --ff-only origin/main
+          docker compose up -d --build
+          # La preuve, jamais la deduction : /health doit repondre 200.
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              echo "sante OK apres ${i} tentative(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ECHEC : /health muet apres 60 s — voir docker compose logs loader"
+          docker compose logs --tail 50 loader
+          exit 1
+          FIN
+        env:
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
