@@ -165,7 +165,18 @@ prod). **Logo réel intégré** (zip WhatsApp de Yaniv, variante F violet +
 étoile verte) : favicon, icônes PWA, login, sidebar (commit `d7b53d1`).
 Credentials Loader retrouvés et vérifiés serveur : `ak@finzuu.com` (.env,
 must_change_password actif — Yaniv choisira le durable). Session
-persistante au refresh + compte à rebours réel du jeton.
+persistante au refresh + compte à rebours réel du jeton. **Délivrance
+Mailjet CONFIRMÉE par Yaniv** (emails de test reçus).
+
+**PHASE 3 FRONTEND LIVRÉE (14/08 nuit, commit `1003c5b`)** — les Runs, le
+rite D-01 à l'écran : Préparer & lancer (Stepper 3 étapes, DRY seul,
+rapport intégral colorisé TENU/VIOLÉ, empreinte D-10, « dernière occasion
+de dire non », ConfirmDialog danger, 409 périmètre → retour structurel à
+l'étape ①, reprise du rite après refresh) ; Progression (polling 3 s,
+arrêt confirmé « FAILED terminal vrai ») ; Historique & recette
+(append-only dit, détail paliers + rapport). Composants Stepper +
+ConfirmDialog. Preuves : build vert + banc d'essai navigateur sur API
+simulée au contrat (8/8 assertions). Reste frontend : phases 4→8.
 
 ## E. Backlog S4/S5 restant
 
