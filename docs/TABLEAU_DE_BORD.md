@@ -118,6 +118,26 @@ ni config-service — testé). L'ajout d'un 5ᵉ pays ACTIF reste Won't v1
 (backlog canonique) → v2. **#26 est CLOS pour la v1.**
 Domaine corrigé (Yaniv 14/08) : `simul.fintech4esg.com`.
 
+## D-ter. FRONTEND — phase 1 (fondation) LIVRÉE le 14/08 au soir
+
+Repo `simulator-frontend`, commit `f952121` poussé. Le tri est appliqué
+(design system JJB gardé, 7 pages fintech + mockData SUPPRIMÉS, Zidane
+abandonné). Livré : contrat login corrigé sur pièce (`mot_de_passe`, pas
+`password`), session JWT réelle 4 h avec compte à rebours et expiration DITE,
+Login US-A1 + mot de passe forcé US-A2 (4 états, erreur nommée, idempotence
+UI), garde d'auth + ErrorBoundary, nav des 6 épopées avec la user story
+affichée par écran (nav.ts = source unique), tableau de bord avec sonde
+réelle GET /health, squelettes honnêtes phases 2→7, **PWA** (manifest,
+icônes fidèles au logo JJB, coquille en précache, DONNÉES JAMAIS en cache,
+toast de mise à jour). **CORS mesuré** : origine prod autorisée (preflight
+200), localhost refusé → proxy vite dev/preview (VITE_API_URL vide en local).
+**Preuves** : tsc strict 0 erreur, build vert, navigateur headless — login
+rendu sans erreur console + test de bout en bout réel (mauvais identifiants
+→ « Le backend a refusé : identifiants invalides », 401 nommé du backend
+hébergé). Incident du jour : git local frontend corrompu par l'extinction de
+la machine (4 objets vides) → restauré intégralement depuis GitHub, zéro
+perte. Reste frontend : phases 2→8 (`docs/PLAN_FRONTEND.md` du repo).
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |
