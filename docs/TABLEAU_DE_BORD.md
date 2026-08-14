@@ -138,6 +138,21 @@ hébergé). Incident du jour : git local frontend corrompu par l'extinction de
 la machine (4 objets vides) → restauré intégralement depuis GitHub, zéro
 perte. Reste frontend : phases 2→8 (`docs/PLAN_FRONTEND.md` du repo).
 
+**Complément (même soir)** — session qui survit au refresh (localStorage,
+retour Yaniv : la plateforme déconnecte au F5, pas nous — testé au double
+refresh), œil sur tous les champs mdp, US-A4 dite honnêtement dans l'UI
+(commit `179ee04`). **PHASE 2 LIVRÉE (commit `6036971`)** : Tableau de bord
+US-E1 réel (10 HealthDot avec latences, bannière service down, compteurs
+KpiCard du dernier run, vide honnête « Mongo vierge », alertes d'intégrité,
+auto-refresh 60 s sans clignotement) + Configuration US-B1/B2/B3 (vue
+résolue avec tag d'ORIGINE par valeur, volumes bornés doublés en UI, seuls
+les champs touchés partent au PUT, réponse = vue RELUE, chips pays avec
+motif obligatoire + « config-service jamais appelé » dit, quotas EF-22/23
+verrouillés avec exigence citée, 409 EF-55 en bannière nommée). 401 →
+déconnexion propre partout (prouvé navigateur : jeton invalide → retour
+login + motif + purge). Reste : phases 3→8. Mailjet annoncé par Yaniv pour
+le reset US-A4 v2 (backend + UI) — en attente de l'API key.
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |
