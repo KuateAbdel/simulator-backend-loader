@@ -187,15 +187,29 @@ class FauxArbre:
         #: par l'index `uniq_client_par_run` ; ce double reproduit la regle, sinon
         #: un test de reprise verrait deux noeuds pour un client.
         self.rattachements: dict[UUID, UUID] = {}
+        #: `P-01` — l'index inverse enregistre a l'ecriture, comme le vrai depot.
+        self.produits_entree: dict[UUID, UUID | None] = {}
+        self.souscriptions: list[tuple[UUID, UUID]] = []
 
     async def par_niveau(self, run_id: UUID, niveau: Any) -> list[Any]:
         return list(self.noeuds)
 
+    async def ajouter_souscription(
+        self, run_id: UUID, client_id: UUID, product_id: UUID
+    ) -> bool:
+        if client_id not in self.rattachements:
+            return False
+        self.souscriptions.append((client_id, product_id))
+        return True
+
     async def ajouter_client(
         self, *, run_id: UUID, kiosque_id: UUID, company_id: UUID,
         country_code: str, msisdn: str, client_id: UUID,
+        produit_entree: UUID | None,
     ) -> Any:
         self.rattachements[client_id] = kiosque_id
+        # P-01 — la doublure retient le lien inverse comme le vrai repository.
+        self.produits_entree[client_id] = produit_entree
         return SimpleNamespace(
             id=uuid4(), client_id=client_id, parent_id=kiosque_id,
             country_code=country_code, name=f"DEMO_Client {msisdn}",
@@ -844,6 +858,7 @@ class TestSceller:
         await ex._sceller(
             "TEST-CM-IND-1", {"_id": str(entite)}, kiosque,
             _compose_pour(kiosque), RapportClients(mode=RunMode.REAL),
+            produit_entree=None,
         )
         assert ledger.confirmes["TEST-CM-IND-1"] == entite
 
@@ -857,6 +872,7 @@ class TestSceller:
         await ex._sceller(
             "TEST-CM-IND-2", {"_id": "68c0ffee00b1ec7"}, kiosque,
             _compose_pour(kiosque), RapportClients(mode=RunMode.REAL),
+            produit_entree=None,
         )
         attendu = uuid5(NAMESPACE_OID, "finzuu-client:68c0ffee00b1ec7")
         assert ledger.confirmes["TEST-CM-IND-2"] == attendu
@@ -870,6 +886,7 @@ class TestSceller:
             await ex._sceller(
                 "TEST-JAMAIS-RESERVE", {"_id": str(uuid4())}, kiosque,
                 _compose_pour(kiosque), RapportClients(mode=RunMode.REAL),
+                produit_entree=None,
             )
 
     async def test_le_scellement_ECRIT_le_rattachement_EF_26(self) -> None:
@@ -883,7 +900,8 @@ class TestSceller:
         rapport = RapportClients(mode=RunMode.REAL)
         await ledger.reserver("TEST-CM-IND-3")
         await ex._sceller(
-            "TEST-CM-IND-3", {"_id": str(entite)}, kiosque, _compose_pour(kiosque), rapport
+            "TEST-CM-IND-3", {"_id": str(entite)}, kiosque, _compose_pour(kiosque),
+            rapport, produit_entree=None,
         )
         assert arbre.rattachements == {entite: kiosque.id}
         assert rapport.rattaches == 1, "un compteur non incremente est un rapport qui ment"
@@ -918,12 +936,59 @@ class TestSceller:
         await ledger.reserver("TEST-CM-IND-5")
         await ex._sceller(
             "TEST-CM-IND-5", {"_id": str(uuid4())}, kiosque_sn, compose_cm,
-            RapportClients(mode=RunMode.REAL),
+            RapportClients(mode=RunMode.REAL), produit_entree=None,
         )
         assert arbre.pays_ecrits == ["CM"], (
             "le pays ecrit doit etre celui du client (CM), pas celui du Kiosque "
             f"auquel on l'a mal apparie (SN) — obtenu {arbre.pays_ecrits}"
         )
+
+    async def test_P01_le_produit_d_entree_arrive_sur_le_noeud_client(self) -> None:
+        """`P-01` — le lien inverse s'ecrit AU RATTACHEMENT, pas apres coup."""
+        ledger, arbre = FauxLedger(), FauxArbre()
+        ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=ledger, arbre=arbre)
+        entite, kiosque = uuid4(), _kiosques("CM")[0]
+        entree = _produits()[0]
+        await ledger.reserver("TEST-CM-IND-8")
+        await ex._sceller(
+            "TEST-CM-IND-8", {"_id": str(entite)}, kiosque,
+            _compose_pour(kiosque), RapportClients(mode=RunMode.REAL),
+            produit_entree=entree,
+        )
+        assert arbre.produits_entree[entite] == entree.product_id
+
+    async def test_P01_chaque_PUT_subscribe_s_enregistre_sur_le_noeud(self) -> None:
+        """`P-01`, second temps — les souscriptions 2 et 3 rejoignent l'index
+        inverse des que le serveur les confirme ; un noeud absent ALERTE."""
+        ledger, arbre = FauxLedger(), FauxArbre()
+        ex = _executeur(
+            mode=RunMode.REAL, nb_clients=40, ledger=ledger, arbre=arbre,
+            clients=FauxClientService(),
+        )
+        entite, kiosque = uuid4(), _kiosques("CM")[0]
+        entree, *suivants = _produits()[:3]
+        rapport = RapportClients(mode=RunMode.REAL)
+        await ledger.reserver("TEST-CM-IND-9")
+        await ex._sceller(
+            "TEST-CM-IND-9", {"_id": str(entite)}, kiosque,
+            _compose_pour(kiosque), rapport, produit_entree=entree,
+        )
+        await ex._souscrire_le_reste(
+            _compose_pour(kiosque), suivants, rapport, client_id=entite
+        )
+        assert [p for _, p in arbre.souscriptions] == [
+            s.product_id for s in suivants
+        ], "chaque souscription confirmee porte son lien inverse"
+
+        # Le noeud absent : le lien perdu est DIT, jamais tu. Un AUTRE client
+        # (seed different -> autre msisdn) — la doublure refuse le doublon
+        # (msisdn, produit), comme le vrai serveur.
+        rapport_orphelin = RapportClients(mode=RunMode.REAL)
+        await ex._souscrire_le_reste(
+            _compose_pour(kiosque, seed=2), suivants[:1], rapport_orphelin,
+            client_id=uuid4(),
+        )
+        assert any("P-01" in a for a in rapport_orphelin.alertes)
 
     async def test_un_rattachement_impossible_ALERTE_sans_perdre_le_client(self) -> None:
         """Le client existe cote serveur, definitivement : l'annuler est
@@ -941,7 +1006,8 @@ class TestSceller:
         rapport = RapportClients(mode=RunMode.REAL)
         await ledger.reserver("TEST-CM-IND-4")
         await ex._sceller(
-            "TEST-CM-IND-4", {"_id": str(uuid4())}, kiosque, _compose_pour(kiosque), rapport
+            "TEST-CM-IND-4", {"_id": str(uuid4())}, kiosque, _compose_pour(kiosque),
+            rapport, produit_entree=None,
         )
         assert rapport.rattaches == 0
         assert any("NON RATTACHE" in a and "EF-26" in a for a in rapport.alertes)
@@ -1805,9 +1871,11 @@ class TestProfilComportementalEF67:
         vus: list[str | None] = []
         origine = ex._sceller
 
-        async def espion(cid: str, fiche: Any, k: Any, compose: Any, rap: Any) -> None:
+        async def espion(
+            cid: str, fiche: Any, k: Any, compose: Any, rap: Any, **suite: Any
+        ) -> None:
             vus.append(compose.profil_comportemental)
-            await origine(cid, fiche, k, compose, rap)
+            await origine(cid, fiche, k, compose, rap, **suite)
 
         ex._sceller = espion  # type: ignore[method-assign]
         await ex.executer()

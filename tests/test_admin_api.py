@@ -885,7 +885,7 @@ class TestLotCDashboard:
         )
         await arbre.ajouter_client(
             run_id=run.id, kiosque_id=kiosque.id, company_id=company,
-            country_code="CM", msisdn="+237650000001", client_id=_uuid4(),
+            country_code="CM", msisdn="+237650000001", client_id=_uuid4(), produit_entree=None,
         )
         return run
 
@@ -1902,6 +1902,72 @@ class TestUSB6DemandeDePays:
             "/admin/referentiels/pays", json={"code": "GA"}
         )
         assert reponse.status_code == 401
+
+
+class TestIndexInverseCommeService:
+    """`P-01` cote SERVICE : GET /admin/dashboard/index-inverse — deux
+    agregations chez NOUS, jamais 20 requetes paginees vers FinZuu."""
+
+    async def test_les_deux_questions_du_plan_recoivent_leur_reponse(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.core.database import COLLECTION_ORG_HIERARCHY
+        from app.models.domain import LoaderRun, OrgHierarchyNode
+        from app.models.enums import NiveauOrganisation, RunStatus
+        from app.repositories.base import en_document
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        run, imf = _uuid4(), _uuid4()
+        produit, kiosque_id = _uuid4(), _uuid4()
+        await database.get_database().drop_collection("loader_runs")
+        await LoaderRunRepository().remplacer(
+            LoaderRun(
+                _id=run, sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1), status=RunStatus.COMPLETED,
+            )
+        )
+        arbre = database.get_database()[COLLECTION_ORG_HIERARCHY]
+        documents = [
+            OrgHierarchyNode(
+                _id=kiosque_id, run_id=run, niveau=NiveauOrganisation.KIOSQUE,
+                parent_id=_uuid4(), company_id=imf, name="DEMO_Kiosque P01",
+                country_code="CM", district_id="CM-DT-P01", depositary_id=_uuid4(),
+            ),
+            OrgHierarchyNode(
+                _id=_uuid4(), run_id=run, niveau=NiveauOrganisation.PRODUIT,
+                parent_id=None, company_id=imf, name="DEMO_TONTINE",
+                country_code="CM", product_id=produit, package="READY_ALL",
+            ),
+        ]
+        for rang in range(2):
+            documents.append(
+                OrgHierarchyNode(
+                    _id=_uuid4(), run_id=run, niveau=NiveauOrganisation.CLIENT,
+                    parent_id=kiosque_id, company_id=imf,
+                    name=f"DEMO_Client 2379900P{rang}", country_code="CM",
+                    client_id=_uuid4(), product_ids=[str(produit)],
+                )
+            )
+        await arbre.insert_many([en_document(n) for n in documents])
+        entetes = await _session_complete(client)
+        try:
+            reponse = await client.get(
+                f"/admin/dashboard/index-inverse?run_id={run}", headers=entetes
+            )
+            assert reponse.status_code == 200, reponse.text
+            corps = reponse.json()
+            assert corps["clients_par_produit"] == [
+                {"product_id": str(produit), "marqueur": "DEMO_TONTINE", "clients": 2}
+            ], "« combien de clients par produit ? » — UNE requete, avec le nom"
+            assert corps["clients_par_kiosque"] == [
+                {"kiosque_id": str(kiosque_id), "nom": "DEMO_Kiosque P01", "clients": 2}
+            ]
+        finally:
+            await arbre.delete_many({"run_id": str(run)})
+            await database.get_database().drop_collection("loader_runs")
 
 
 class TestJournalisationDesRoles:

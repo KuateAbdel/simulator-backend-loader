@@ -296,3 +296,69 @@ async def population(
             ),
         )
     return {"run_id": str(run.id), "mode": run.mode.value, **run.mesures}
+
+
+@router.get("/index-inverse")
+async def index_inverse(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    run_id: UUID | None = None,
+) -> dict[str, Any]:
+    """`P-01` — l'index inverse COMME UN SERVICE : « combien de clients par
+    produit ? par kiosque ? » repondues depuis NOS noeuds, en deux
+    agregations — jamais 20 requetes paginees vers FinZuu.
+
+    Le lien est enregistre A L'ECRITURE (produit d'entree au rattachement,
+    puis chaque PUT /subscribe) ; cette route ne fait que LIRE. Les noms
+    viennent des noeuds du meme run : le marqueur pour le produit (CAT 6),
+    le nom du Kiosque pour le kiosque.
+    """
+    if run_id is None:
+        run = await _dernier_run()
+    else:
+        run = await LoaderRunRepository().obtenir(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="aucun run en base")
+
+    arbre = OrgHierarchyRepository()
+    par_produit = await arbre.clients_par_produit(run.id)
+    par_kiosque = await arbre.clients_par_kiosque(run.id)
+
+    marqueurs = {
+        str(noeud.product_id): noeud.name
+        for noeud in await arbre.par_niveau(run.id, NiveauOrganisation.PRODUIT)
+        if noeud.product_id
+    }
+    noms_kiosques = {
+        str(noeud.id): noeud.name
+        for noeud in await arbre.par_niveau(run.id, NiveauOrganisation.KIOSQUE)
+    }
+    return {
+        "run_id": str(run.id),
+        "clients_par_produit": sorted(
+            (
+                {
+                    "product_id": pid,
+                    "marqueur": marqueurs.get(pid, "(hors rattachement A-12)"),
+                    "clients": compte,
+                }
+                for pid, compte in par_produit.items()
+            ),
+            key=lambda ligne: (-int(ligne["clients"]), str(ligne["product_id"])),
+        ),
+        "clients_par_kiosque": sorted(
+            (
+                {
+                    "kiosque_id": kid,
+                    "nom": noms_kiosques.get(kid, "(noeud absent)"),
+                    "clients": compte,
+                }
+                for kid, compte in par_kiosque.items()
+            ),
+            key=lambda ligne: (-int(ligne["clients"]), str(ligne["kiosque_id"])),
+        ),
+        "note": (
+            "liens enregistres a l'ecriture (P-01) ; une reprise D-CLI-5 laisse "
+            "product_ids vide — le serveur ne porte pas la reference inverse, "
+            "rien n'est invente"
+        ),
+    }

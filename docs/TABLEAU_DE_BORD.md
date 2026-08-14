@@ -88,7 +88,7 @@ Domaine corrigé (Yaniv 14/08) : `simul.fintech4esg.com`.
 | Tâche | État |
 |---|---|
 | INV-18 — MSISDN pondérés par parts de marché | ✅ 13/08 — le mécanisme existait (EF-27), la GARANTIE mesurée manquait : 4 tests de distribution (CM ±3 pts sur 46/43/3, les 4 pays ±3,5 pts, anti-uniforme, ancrage CR-03), mutation « tirage uniforme » attrapée |
-| P-01 — index inverse (client→produit, client→kiosque) | ⬜ |
+| P-01 — index inverse (client→produit, client→kiosque) | ✅ 14/08 — le lien s'écrit À L'ÉCRITURE : `product_ids` sur le nœud CLIENT (produit d'entrée au rattachement EF-26, puis chaque PUT /subscribe confirmé, `$addToSet` idempotent, nœud absent = ALERTE jamais silence, reprise D-CLI-5 = vide jamais inventé) ; servi par GET /admin/dashboard/index-inverse (2 agrégations chez NOUS — jamais 20 requêtes paginées vers FinZuu), noms joints depuis les nœuds du run. 7 tests (+repo contre le vrai Mongo), 3 mutations attrapées |
 | P-02 — plafonds KYC BCEAO | ⬜ s'écrit AVEC le module Vie |
 | P-03 — float de l'agent | ⬜ s'écrit AVEC le module Vie |
 

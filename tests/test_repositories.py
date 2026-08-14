@@ -381,6 +381,7 @@ class TestRattachementClientEF26:
         noeud = await arbre.ajouter_client(
             run_id=run, kiosque_id=kiosque.id, company_id=imf,
             country_code="CM", msisdn="237673689015", client_id=client,
+            produit_entree=None,
         )
         assert noeud.niveau is NiveauOrganisation.CLIENT
         assert noeud.parent_id == kiosque.id
@@ -398,6 +399,7 @@ class TestRattachementClientEF26:
             await arbre.ajouter_client(
                 run_id=uuid4(), kiosque_id=uuid4(), company_id=uuid4(),
                 country_code="CM", msisdn="237673689015", client_id=uuid4(),
+                produit_entree=None,
             )
 
     async def test_MILLE_clients_tiennent_dans_le_MEME_quartier(self, arbre) -> None:  # type: ignore[no-untyped-def]
@@ -410,6 +412,7 @@ class TestRattachementClientEF26:
             await arbre.ajouter_client(
                 run_id=run, kiosque_id=kiosque.id, company_id=imf,
                 country_code="CM", msisdn=f"2376736{rang:05d}", client_id=uuid4(),
+                produit_entree=None,
             )
         assert await arbre.compter_clients(run) == 50
         assert len(await arbre.clients_du_kiosque(kiosque.id)) == 50
@@ -424,10 +427,12 @@ class TestRattachementClientEF26:
         premier = await arbre.ajouter_client(
             run_id=run, kiosque_id=kiosque.id, company_id=imf,
             country_code="CM", msisdn="237673689015", client_id=client,
+            produit_entree=None,
         )
         second = await arbre.ajouter_client(
             run_id=run, kiosque_id=kiosque.id, company_id=imf,
             country_code="CM", msisdn="237673689015", client_id=client,
+            produit_entree=None,
         )
         assert second.id == premier.id, "le noeud existant est rendu, pas duplique"
         assert await arbre.compter_clients(run) == 1
@@ -437,7 +442,7 @@ class TestRattachementClientEF26:
         imf, kiosque = await self._kiosque(arbre, run, "CI")
         await arbre.ajouter_client(
             run_id=run, kiosque_id=kiosque.id, company_id=imf,
-            country_code="CI", msisdn="22507123456", client_id=uuid4(),
+            country_code="CI", msisdn="22507123456", client_id=uuid4(), produit_entree=None,
         )
         assert await arbre.verifier_cr02(run) == []
 
@@ -449,7 +454,7 @@ class TestRattachementClientEF26:
         imf, kiosque = await self._kiosque(arbre, run, "CM")
         await arbre.ajouter_client(
             run_id=run, kiosque_id=kiosque.id, company_id=imf,
-            country_code="SN", msisdn="221771234567", client_id=uuid4(),
+            country_code="SN", msisdn="221771234567", client_id=uuid4(), produit_entree=None,
         )
         anomalies = await arbre.verifier_cr02(run)
         assert any("SN" in a and "EF-26" in a for a in anomalies), anomalies
@@ -478,6 +483,97 @@ class TestRattachementClientEF26:
         )
         anomalies = await arbre.verifier_cr02(run)
         assert any("rattache a un AGENCE" in a for a in anomalies), anomalies
+
+
+class TestIndexInverseP01:
+    """`P-01` — l'index inverse client->produit, enregistre A L'ECRITURE.
+
+    Contre le VRAI MongoDB : `$addToSet` et les agregations sont des
+    comportements du moteur, un double en memoire ne prouverait que le double.
+    """
+
+    @pytest.fixture
+    async def arbre(self):  # type: ignore[misc,no-untyped-def]
+        from app.core.database import COLLECTION_ORG_HIERARCHY, close, connect, ensure_indexes
+        from app.core.database import get_collection as collection
+        from app.repositories.org_hierarchy import OrgHierarchyRepository
+
+        connect()
+        await ensure_indexes()
+        depot = OrgHierarchyRepository()
+        filtre = {"name": {"$regex": "TESTP01|DEMO_Client 23799"}}
+        await collection(COLLECTION_ORG_HIERARCHY).delete_many(filtre)
+        yield depot
+        await collection(COLLECTION_ORG_HIERARCHY).delete_many(filtre)
+        close()
+
+    async def _kiosque(self, arbre, run: UUID, suffixe: str = "1"):  # type: ignore[no-untyped-def]
+        imf = uuid4()
+        branche = await arbre.ajouter_branche(
+            run, imf, f"TESTP01 Branche{suffixe}", "CM", f"CM-RG-P{suffixe}"
+        )
+        agence = await arbre.ajouter_agence(
+            run, branche.id, imf, f"TESTP01 Agence{suffixe}", "CM", f"CM-CT-P{suffixe}"
+        )
+        return imf, await arbre.ajouter_kiosque(
+            run, agence.id, imf, f"TESTP01 Kiosque{suffixe}", "CM",
+            f"CM-DT-P{suffixe}", uuid4(),
+        )
+
+    async def test_le_produit_d_entree_est_enregistre_au_rattachement(self, arbre) -> None:  # type: ignore[no-untyped-def]
+        run, produit = uuid4(), uuid4()
+        imf, kiosque = await self._kiosque(arbre, run)
+        noeud = await arbre.ajouter_client(
+            run_id=run, kiosque_id=kiosque.id, company_id=imf,
+            country_code="CM", msisdn="23799000001", client_id=uuid4(),
+            produit_entree=produit,
+        )
+        assert noeud.product_ids == [str(produit)]
+
+    async def test_une_reprise_n_invente_jamais_le_produit(self, arbre) -> None:  # type: ignore[no-untyped-def]
+        run = uuid4()
+        imf, kiosque = await self._kiosque(arbre, run)
+        noeud = await arbre.ajouter_client(
+            run_id=run, kiosque_id=kiosque.id, company_id=imf,
+            country_code="CM", msisdn="23799000002", client_id=uuid4(),
+            produit_entree=None,
+        )
+        assert noeud.product_ids == [], "le serveur ne porte pas la reference inverse"
+
+    async def test_addToSet_est_idempotent_et_dit_le_noeud_absent(self, arbre) -> None:  # type: ignore[no-untyped-def]
+        run, client, entree, extra = uuid4(), uuid4(), uuid4(), uuid4()
+        imf, kiosque = await self._kiosque(arbre, run)
+        await arbre.ajouter_client(
+            run_id=run, kiosque_id=kiosque.id, company_id=imf,
+            country_code="CM", msisdn="23799000003", client_id=client,
+            produit_entree=entree,
+        )
+        assert await arbre.ajouter_souscription(run, client, extra) is True
+        assert await arbre.ajouter_souscription(run, client, extra) is True
+        compte = await arbre.clients_par_produit(run)
+        assert compte[str(extra)] == 1, "rejouer la meme souscription ne duplique rien"
+        assert await arbre.ajouter_souscription(run, uuid4(), extra) is False, (
+            "un noeud absent est DIT, jamais tu"
+        )
+
+    async def test_clients_par_produit_et_par_kiosque_en_une_requete(self, arbre) -> None:  # type: ignore[no-untyped-def]
+        run, populaire, rare = uuid4(), uuid4(), uuid4()
+        imf, kiosque_a = await self._kiosque(arbre, run, "A")
+        _, kiosque_b = await self._kiosque(arbre, run, "B")
+        for rang, (kiosque, produit) in enumerate(
+            [(kiosque_a, populaire), (kiosque_a, populaire), (kiosque_b, rare)]
+        ):
+            await arbre.ajouter_client(
+                run_id=run, kiosque_id=kiosque.id, company_id=imf,
+                country_code="CM", msisdn=f"237990001{rang:02d}", client_id=uuid4(),
+                produit_entree=produit,
+            )
+        assert await arbre.clients_par_produit(run) == {
+            str(populaire): 2, str(rare): 1,
+        }
+        assert await arbre.clients_par_kiosque(run) == {
+            str(kiosque_a.id): 2, str(kiosque_b.id): 1,
+        }
 
 
 class TestRattachementProduitA12:

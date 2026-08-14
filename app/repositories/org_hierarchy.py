@@ -21,6 +21,7 @@ meme endroit, ce qu'un bailleur reperait immediatement.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Any
 from uuid import UUID, uuid4
 
 from pymongo.errors import DuplicateKeyError
@@ -217,6 +218,7 @@ class OrgHierarchyRepository(RepositoryBase):
         country_code: str,
         msisdn: str,
         client_id: UUID,
+        produit_entree: UUID | None,
     ) -> OrgHierarchyNode:
         """Rattache un Client a son Kiosque — `EF-26`, PREMIER TEMPS.
 
@@ -254,6 +256,10 @@ class OrgHierarchyRepository(RepositoryBase):
             name=f"{PREFIXE_DONNEES}Client {msisdn}",
             country_code=country_code.upper(),
             client_id=client_id,
+            # `P-01` — le produit d'entree est enregistre AU RATTACHEMENT ;
+            # None sur une reprise (le serveur ne porte pas la reference
+            # inverse, on n'invente rien).
+            product_ids=[str(produit_entree)] if produit_entree else [],
             # AUCUN `district_id` : voir `NiveauOrganisation`. L'index
             # `uniq_district_par_run` le rejetterait, mais la vraie raison est que
             # la geographie du client est DERIVEE de ce Kiosque — la dupliquer
@@ -269,6 +275,60 @@ class OrgHierarchyRepository(RepositoryBase):
                 raise
             return OrgHierarchyNode.model_validate(existant)
         return noeud
+
+    async def ajouter_souscription(
+        self, run_id: UUID, client_id: UUID, product_id: UUID
+    ) -> bool:
+        """`P-01` — chaque `PUT /subscribe` s'enregistre sur le noeud CLIENT.
+
+        `$addToSet` : idempotent par construction (rejouer la meme souscription
+        ne duplique rien — la meme discipline que `uniq_client_par_run`).
+        Rend False si le noeud n'existe pas : l'appelant DOIT le dire, un lien
+        perdu en silence referait exactement le defaut que P-01 corrige."""
+        resultat = await self.collection.update_one(
+            {
+                "run_id": str(run_id),
+                "client_id": str(client_id),
+                "niveau": NiveauOrganisation.CLIENT.value,
+            },
+            {"$addToSet": {"product_ids": str(product_id)}},
+        )
+        return bool(resultat.matched_count)
+
+    async def clients_par_produit(self, run_id: UUID) -> dict[str, int]:
+        """`P-01`, la question du plan de sprints : « combien de clients par
+        produit ? » — UNE agregation chez nous, jamais 20 requetes paginees
+        vers FinZuu. Sur l'index `idx_run_niveau`."""
+        pipeline: list[dict[str, Any]] = [
+            {
+                "$match": {
+                    "run_id": str(run_id),
+                    "niveau": NiveauOrganisation.CLIENT.value,
+                }
+            },
+            {"$unwind": "$product_ids"},
+            {"$group": {"_id": "$product_ids", "clients": {"$sum": 1}}},
+        ]
+        return {
+            str(d["_id"]): int(d["clients"])
+            async for d in self.collection.aggregate(pipeline)
+        }
+
+    async def clients_par_kiosque(self, run_id: UUID) -> dict[str, int]:
+        """`P-01` — le versant kiosque : compte par `parent_id`, meme index."""
+        pipeline: list[dict[str, Any]] = [
+            {
+                "$match": {
+                    "run_id": str(run_id),
+                    "niveau": NiveauOrganisation.CLIENT.value,
+                }
+            },
+            {"$group": {"_id": "$parent_id", "clients": {"$sum": 1}}},
+        ]
+        return {
+            str(d["_id"]): int(d["clients"])
+            async for d in self.collection.aggregate(pipeline)
+        }
 
     async def clients_du_kiosque(self, kiosque_id: UUID) -> list[OrgHierarchyNode]:
         """La relation inverse — *« quels clients rattaches a ce Kiosque ? »*.

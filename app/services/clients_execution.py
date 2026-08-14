@@ -1657,7 +1657,9 @@ class ExecuteurClients:
             # occasion de reconstruire `org_hierarchy` — et l'index
             # `uniq_client_par_run` rend l'operation sans effet quand elle
             # existe deja.
-            await self._sceller(faker.client_id, deja, kiosque, compose, rapport)
+            await self._sceller(
+                faker.client_id, deja, kiosque, compose, rapport, produit_entree=None
+            )
             rapport.deja_presents.append(faker.client_id)
             return compose
 
@@ -1718,9 +1720,11 @@ class ExecuteurClients:
         #                         n'ont que `PUT /clients/subscribe`. Jusqu'au
         #                         12/08 le Loader s'arretait a la premiere.
         try:
-            await self._sceller(faker.client_id, fiche, kiosque, compose, rapport)
+            entite = await self._sceller(
+                faker.client_id, fiche, kiosque, compose, rapport, produit_entree=produit
+            )
             await self._doter(compose, faker, fiche, rapport)
-            await self._souscrire_le_reste(compose, suivants, rapport)
+            await self._souscrire_le_reste(compose, suivants, rapport, client_id=entite)
         except Exception as erreur:
             logger.exception("apres-onboarding de %s", compose.msisdn)
             rapport.alertes.append(
@@ -1740,8 +1744,14 @@ class ExecuteurClients:
         compose: ClientCompose,
         suivants: list[ProduitSouscriptible],
         rapport: RapportClients,
+        client_id: UUID | None,
     ) -> None:
         """Attache les produits 2 et 3. Un echec n'annule JAMAIS le client.
+
+        `P-01` : chaque souscription CONFIRMEE par le serveur s'enregistre
+        aussitot sur le noeud CLIENT (`$addToSet`) — le lien inverse s'ecrit
+        A L'ECRITURE, jamais reconstruit apres coup. Un noeud introuvable est
+        une ALERTE : le lien perdu en silence referait le defaut corrige.
 
         Meme raison que pour la dotation : le Client existe cote serveur,
         definitivement, et aucun des trois services de la cascade n'expose de
@@ -1764,6 +1774,13 @@ class ExecuteurClients:
                 )
                 continue
             rapport.souscriptions += 1
+            if client_id is not None and not await self._hierarchie.ajouter_souscription(
+                self.run_id, client_id, produit.product_id
+            ):
+                rapport.alertes.append(
+                    f"{compose.msisdn} : souscription a {produit.nom} confirmee par le "
+                    "serveur mais SANS noeud CLIENT pour porter le lien inverse P-01"
+                )
 
     async def _doter(
         self,
@@ -1841,8 +1858,14 @@ class ExecuteurClients:
         kiosque: OrgHierarchyNode,
         compose: ClientCompose,
         rapport: RapportClients,
-    ) -> None:
+        produit_entree: ProduitSouscriptible | None,
+    ) -> UUID | None:
         """Scelle le client : registre `D-FAKER-1` ET rattachement `EF-26`.
+
+        Rend l'UUID de l'entite scellee — la cle du noeud CLIENT, dont
+        `_souscrire_le_reste` a besoin pour l'index inverse `P-01`.
+        `produit_entree` est None sur une REPRISE : le serveur ne porte pas la
+        reference inverse, on n'enregistre que ce qu'on SAIT.
 
         LES DEUX TRACES SONT INDISSOCIABLES, et les separer aurait ete l'erreur.
         Le registre dit *« ce client Faker a produit une entite »* ; le
@@ -1892,6 +1915,7 @@ class ExecuteurClients:
                 country_code=compose.identite.adresse.country,
                 msisdn=compose.msisdn,
                 client_id=entite,
+                produit_entree=produit_entree.product_id if produit_entree else None,
             )
         except (ValueError, PyMongoError) as erreur:
             rapport.alertes.append(
@@ -1899,5 +1923,6 @@ class ExecuteurClients:
                 f"{type(erreur).__name__} : {erreur}. EF-26 exige ce lien, et il "
                 "n'existe nulle part cote serveur : sans lui CR-02 reste non verifiable."
             )
-            return
+            return entite
         rapport.rattaches += 1
+        return entite

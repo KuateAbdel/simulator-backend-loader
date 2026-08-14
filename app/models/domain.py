@@ -235,6 +235,14 @@ class OrgHierarchyNode(LoaderDocument):
     #: et CR-07 verifie les noms de noeuds par prefixe — le choix rend CAT 6
     #: satisfait sans modifier la recette.
     product_id: UUID | None = Field(default=None)
+    #: `P-01` — l'index INVERSE client→produit, renseigne au niveau CLIENT :
+    #: le produit d'entree a l'onboarding, puis chaque `PUT /subscribe`
+    #: supplementaire. La plateforme ne stocke JAMAIS la reference inverse
+    #: (« combien de clients par produit ? » = 20 requetes paginees la-bas) —
+    #: enregistre A L'ECRITURE, ce lien y repond en UNE requete chez nous.
+    #: Vide sur une REPRISE (D-CLI-5) : le serveur ne sait pas dire a quoi un
+    #: client existant a souscrit, et on n'invente jamais.
+    product_ids: list[str] = Field(default_factory=list)
     #: Le package de licence qui AUTORISE ce rattachement (UC-11 pt 3).
     package: str | None = Field(default=None)
 
