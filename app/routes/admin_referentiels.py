@@ -573,6 +573,89 @@ async def creer_pays(
     }
 
 
+class CreerDevise(BaseModel):
+    """Creer une monnaie sur config-service (decision Yaniv 14/08) — meme
+    logique que le pays. `POST /currencies/create` attend
+    `{name_en, name_fr, iso_name, accepts_decimal}`. `iso_name` = code ISO 4217
+    (3 lettres : XOF, XAF, NGN...). `extra="forbid"`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    iso_name: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
+    name_en: str = Field(min_length=2, max_length=60)
+    name_fr: str = Field(min_length=2, max_length=60)
+    accepts_decimal: bool = False
+
+
+@router.post("/devises", status_code=201)
+async def creer_devise(
+    demande: CreerDevise,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Creer une monnaie — meme rite et memes invariants que le pays :
+    verrou EF-55, `GET`-avant-`POST` sur `iso_name` (existe -> 409, jamais de
+    doublon), creation puis RELECTURE, journalisee sous RUN_ADMIN. Formulaire
+    pur, aucune donnee en dur."""
+    from uuid import NAMESPACE_OID, uuid5
+
+    from app.clients.base import ErreurService
+    from app.repositories.audit_trail import AuditTrailRepository
+    from app.routes.admin_entites import RUN_ADMIN
+
+    await refuser_si_run_en_cours()
+
+    payload = {
+        "name_en": demande.name_en,
+        "name_fr": demande.name_fr,
+        "iso_name": demande.iso_name,
+        "accepts_decimal": demande.accepts_decimal,
+    }
+    admin = _config_admin()
+    try:
+        audit = AuditTrailRepository()
+        entite = uuid5(NAMESPACE_OID, f"finzuu-devise:{demande.iso_name}")
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="Currency",
+            entity_id=entite,
+            operation="CREATE",
+            cible="config-service POST /currencies/create",
+            payload={"iso_name": demande.iso_name},
+        ) as suivi:
+            try:
+                fiche, cree = await admin.creer_devise_si_absent(payload)
+            except ErreurService as exc:
+                suivi.echoue(f"HTTP {exc.status}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"config-service a refuse la creation : HTTP {exc.status}",
+                ) from exc
+            identifiant = str(fiche.get("id") or fiche.get("_id") or "")
+            if not cree:
+                suivi.echoue("existe deja")
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"la devise {demande.iso_name} EXISTE deja sur config-service "
+                        f"(id {identifiant}) — reutiliser, jamais doubler."
+                    ),
+                )
+            suivi.reussi({"currency_id": identifiant, "iso_name": demande.iso_name})
+    finally:
+        await admin.fermer()
+
+    return {
+        "devise": {
+            "id": identifiant,
+            "iso_name": demande.iso_name,
+            "name_fr": demande.name_fr,
+            "accepts_decimal": demande.accepts_decimal,
+        },
+        "statut": "a_nous",
+        "note": "monnaie declaree sur config-service — utilisable pour creer un pays",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Regions et quartiers — SANS AUCUNE LIMITE DE NOMBRE (decision Yaniv 14/08)
 # ---------------------------------------------------------------------------

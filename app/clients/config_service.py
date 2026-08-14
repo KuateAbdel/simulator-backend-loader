@@ -370,6 +370,26 @@ class AdministrationConfigService:
         )
         return (reponse.data if isinstance(reponse.data, dict) else {}), True
 
+    async def creer_devise_si_absent(
+        self, payload: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool]:
+        """Cree une devise sur config-service, ou rend celle qui porte deja cet
+        `iso_name`. MEME doctrine que pays/telco : aucune unicite serveur
+        (`RC-182`/`RC-183`), c'est NOUS l'autorite — `GET`-avant-`POST` sur
+        `iso_name` normalise. `POST /currencies/create` attend
+        `{name_en, name_fr, iso_name, accepts_decimal}`. Rend `(fiche, cree?)`."""
+        cible = str(payload.get("iso_name", "")).strip().upper()
+        for existant in await self._client.lister_tout("/api/v1/currencies/"):
+            if str(existant.get("iso_name", "")).strip().upper() == cible:
+                if "_id" in existant and not existant.get("id"):
+                    existant["id"] = existant["_id"]
+                return existant, False
+        reponse = await self._client.requete(
+            "POST", "/api/v1/currencies/create", json_body=payload
+        )
+        fiche = reponse.data if isinstance(reponse.data, dict) else {}
+        return fiche, True
+
     async def resoudre_devise(self, code_iso: str) -> str | None:
         """L'UUID d'une devise a partir de son code ISO (`XOF`, `XAF`...).
         Rend None si le code est inconnu de config-service — l'appelant
