@@ -56,3 +56,42 @@ class SuperAdminRepository(RepositoryBase):
 
     async def existe_au_moins_un(self) -> bool:
         return await self._compter() > 0
+
+    # -- Reinitialisation par email (`US-A4` v2) ---------------------------
+
+    async def poser_code_reinitialisation(
+        self, email: str, code_hash: str, expire_epoch: float
+    ) -> bool:
+        """Pose un code (HASH seulement) et remet le compteur d'essais a zero.
+
+        Un nouveau code remplace l'ancien : il n'existe jamais deux codes
+        valides en meme temps pour un compte.
+        """
+        resultat = await self.collection.update_one(
+            {"email": email.strip().lower()},
+            {
+                "$set": {
+                    "code_reset_hash": code_hash,
+                    "code_reset_expire": expire_epoch,
+                    "code_reset_essais": 0,
+                }
+            },
+        )
+        return bool(resultat.matched_count)
+
+    async def incrementer_essais_reset(self, email: str) -> None:
+        await self.collection.update_one(
+            {"email": email.strip().lower()}, {"$inc": {"code_reset_essais": 1}}
+        )
+
+    async def effacer_code_reinitialisation(self, email: str) -> None:
+        await self.collection.update_one(
+            {"email": email.strip().lower()},
+            {
+                "$set": {
+                    "code_reset_hash": None,
+                    "code_reset_expire": None,
+                    "code_reset_essais": 0,
+                }
+            },
+        )

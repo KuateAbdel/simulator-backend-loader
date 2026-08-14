@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     #: Duree de vie d'une session — 4 h, alignee sur le jeton de la plateforme.
     admin_session_duree_heures: int = 4
 
+    # -- Reinitialisation par email (US-A4 v2, Mailjet) --------------------
+    #: Les TROIS valeurs sont requises pour que la route existe vraiment :
+    #: sans elles, /admin/auth/mot-de-passe-oublie repond 503 NOMME — le
+    #: reset est provisionne ou il n'est pas, jamais un envoi perdu en
+    #: silence. L'expediteur doit etre une adresse VALIDEE du compte Mailjet
+    #: (GET /v3/REST/sender), sinon Mailjet refuse l'envoi.
+    mailjet_api_key: str | None = None
+    mailjet_secret_key: str | None = None
+    mailjet_expediteur: str | None = None
+
     # -- Fenetre de simulation (ENF-16 : 180 jours parametrable) -----------
     sim_start_date: date | None = None
     sim_end_date: date | None = None

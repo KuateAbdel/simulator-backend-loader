@@ -262,3 +262,9 @@ class SuperAdminAccount(LoaderDocument):
     email: str
     password_hash: str
     must_change_password: bool = True
+    #: Reinitialisation par email (`US-A4` v2) — seul le HASH du code est
+    #: persiste, avec sa peremption (epoch, sans piege de fuseau) et un
+    #: compteur d'essais : 5 echecs consomment le code.
+    code_reset_hash: str | None = None
+    code_reset_expire: float | None = None
+    code_reset_essais: int = 0

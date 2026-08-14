@@ -192,6 +192,141 @@ class TestUSA2MotDePasseForce:
         assert identique.status_code == 422
 
 
+class TestUSA4ReinitialisationParEmail:
+    """`US-A4` v2 — le reset par email (Mailjet), livre le 14/08.
+
+    Le vrai Mailjet n'est JAMAIS appele : le client est monkeypatche par un
+    faux qui capture (destinataire, sujet, texte) — le code est extrait du
+    texte capture, exactement ce que ferait l'utilisateur dans sa boite.
+    """
+
+    @staticmethod
+    def _provisionner(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
+        monkeypatch.setattr(settings, "mailjet_api_key", "cle-de-test")
+        monkeypatch.setattr(settings, "mailjet_secret_key", "secret-de-test")
+        monkeypatch.setattr(settings, "mailjet_expediteur", "loader@finzuu.com")
+        captures: list[tuple[str, str, str]] = []
+
+        async def faux_envoi(destinataire: str, sujet: str, texte: str) -> bool:
+            captures.append((destinataire, sujet, texte))
+            return True
+
+        # La route importe le MODULE (mailjet.envoyer_email) — on patche la
+        # fonction dans le module, la route voit le faux.
+        from app.clients import mailjet as module_mailjet
+
+        monkeypatch.setattr(module_mailjet, "envoyer_email", faux_envoi)
+        return captures
+
+    @staticmethod
+    def _code_depuis(captures: list[tuple[str, str, str]]) -> str:
+        import re
+
+        assert captures, "aucun email capture"
+        trouve = re.search(r"\b(\d{8})\b", captures[-1][2])
+        assert trouve, f"pas de code a 8 chiffres dans : {captures[-1][2]!r}"
+        return trouve.group(1)
+
+    async def test_non_provisionne_503_nomme(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # L'etat non provisionne est FORCE — le .env de la machine de dev
+        # peut porter de vraies cles, le test ne doit pas en dependre.
+        monkeypatch.setattr(settings, "mailjet_api_key", None)
+        monkeypatch.setattr(settings, "mailjet_secret_key", None)
+        monkeypatch.setattr(settings, "mailjet_expediteur", None)
+        reponse = await client.post(
+            "/admin/auth/mot-de-passe-oublie", json={"email": EMAIL}
+        )
+        assert reponse.status_code == 503
+        assert "MAILJET" in reponse.json()["detail"]
+
+    async def test_202_identique_que_le_compte_existe_ou_non(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captures = self._provisionner(monkeypatch)
+        connu = await client.post(
+            "/admin/auth/mot-de-passe-oublie", json={"email": EMAIL}
+        )
+        inconnu = await client.post(
+            "/admin/auth/mot-de-passe-oublie", json={"email": "personne@finzuu.com"}
+        )
+        assert connu.status_code == inconnu.status_code == 202
+        assert connu.json()["detail"] == inconnu.json()["detail"], (
+            "la reponse ne doit pas reveler l'existence du compte"
+        )
+        assert len(captures) == 1, "un seul email : celui du compte qui existe"
+
+    async def test_le_code_recu_reinitialise_et_ouvre_une_session_pleine(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captures = self._provisionner(monkeypatch)
+        await client.post("/admin/auth/mot-de-passe-oublie", json={"email": EMAIL})
+        code = self._code_depuis(captures)
+
+        nouveau = "reinitialise-par-email-14aout"
+        reponse = await client.post(
+            "/admin/auth/reinitialiser",
+            json={"email": EMAIL, "code": code, "nouveau": nouveau},
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json()["must_change_password"] is False, (
+            "le mot de passe choisi par son proprietaire est DURABLE"
+        )
+        # Le nouveau mot de passe fonctionne au login ; l'ancien est mort.
+        assert (await _login(client, nouveau))["must_change_password"] is False
+        mort = await client.post(
+            "/admin/auth/login", json={"email": EMAIL, "mot_de_passe": MDP_INITIAL}
+        )
+        assert mort.status_code == 401
+        # Le code est CONSOMME : le rejouer echoue.
+        rejoue = await client.post(
+            "/admin/auth/reinitialiser",
+            json={"email": EMAIL, "code": code, "nouveau": "encore-un-autre-mdp-long"},
+        )
+        assert rejoue.status_code == 401
+
+    async def test_cinq_essais_rates_tuent_le_code_meme_correct(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captures = self._provisionner(monkeypatch)
+        await client.post("/admin/auth/mot-de-passe-oublie", json={"email": EMAIL})
+        code = self._code_depuis(captures)
+        faux = "00000000" if code != "00000000" else "11111111"
+        for _ in range(5):
+            rate = await client.post(
+                "/admin/auth/reinitialiser",
+                json={"email": EMAIL, "code": faux, "nouveau": "un-mdp-suffisamment-long"},
+            )
+            assert rate.status_code == 401
+        bloque = await client.post(
+            "/admin/auth/reinitialiser",
+            json={"email": EMAIL, "code": code, "nouveau": "un-mdp-suffisamment-long"},
+        )
+        assert bloque.status_code == 401, "5 echecs consomment le code, meme correct"
+
+    async def test_code_expire_401_generique(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captures = self._provisionner(monkeypatch)
+        await client.post("/admin/auth/mot-de-passe-oublie", json={"email": EMAIL})
+        code = self._code_depuis(captures)
+        # Perime le code en base — la voie du temps, sans attendre 15 min.
+        import time as module_time
+
+        await SuperAdminRepository().collection.update_one(
+            {"email": EMAIL}, {"$set": {"code_reset_expire": module_time.time() - 1}}
+        )
+        reponse = await client.post(
+            "/admin/auth/reinitialiser",
+            json={"email": EMAIL, "code": code, "nouveau": "un-mdp-suffisamment-long"},
+        )
+        assert reponse.status_code == 401
+        assert reponse.json()["detail"] == "code invalide ou expiré", (
+            "le refus est GENERIQUE — expire et faux sont indistinguables"
+        )
+
+
 class TestSessionRequise:
     async def test_sans_jeton_401(self, client: httpx.AsyncClient) -> None:
         reponse = await client.get("/admin/referentiels/catalogue-statique")
