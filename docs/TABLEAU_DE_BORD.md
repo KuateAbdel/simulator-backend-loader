@@ -42,6 +42,20 @@ le dashboard et la purge possibles. La machine locale = développement
 uniquement. Protocole chirurgical : déployer → brancher les 9 services (.env)
 → sonde E1 verte sur les 10 → DRY_RUN complet DEPUIS le serveur → paliers.
 
+## C-1. GITHUB & CI/CD — configuré le 14/08 (v0.5.0)
+
+Dépôt : description + 6 topics posés · **Release v0.5.0 publiée**
+(CHANGELOG Keep-a-Changelog, premier tag du dépôt) · main protégée
+(force-push et suppression INTERDITS — historique append-only) · **CI verte
+sur GitHub en 1 min 29** (ruff+mypy+948 tests contre MongoDB de service) ·
+CD prêt : SSH par empreinte, ff-only, build natif ARM64, santé vérifiée —
+**en attente des 4 secrets** (`DEPLOY_HOST/USER/SSH_KEY/KNOWN_HOSTS`, geste
+Yaniv, runbook `docs/DEPLOIEMENT.md` §3) et de la préparation du serveur
+(§3c). Domaine vérifié le 14/08 : DNS → 152.53.118.110, certificat
+Let's Encrypt valide jusqu'au 18/10, **503 = proxy prêt, backend attendu** ;
+port 22 ouvert. Les tests sont poussés sur GitHub mais JAMAIS déployés
+(.dockerignore en liste blanche).
+
 ## C. La séquence REAL — l'ordre topologique d'ORCHESTRATION.md
 
 | Palier | Tâche | État |
