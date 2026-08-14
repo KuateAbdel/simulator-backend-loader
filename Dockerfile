@@ -1,20 +1,25 @@
 # Loader FinZuu — image de production.
 #
-# Cible : le serveur 152.53.118.110 (Ubuntu 24.04 ARM64) — l'image uv
-# officielle est multi-arch, la construction se fait NATIVEMENT sur le
-# serveur (pas de cross-build depuis la machine de dev, decision C-0 :
-# heberger avant de charger).
+# Cible : le serveur 152.53.118.110 (Ubuntu 24.04 ARM64). Base sur l'image
+# officielle Python de Docker Hub (multi-arch, tiree anonymement) — PAS sur
+# ghcr.io : le Docker du serveur porte des identifiants ghcr perimes (images
+# privees d'un autre projet) qui cassent meme les tirages publics ghcr
+# (mesure du 14/08 : `failed to fetch oauth token: denied`). `uv` s'installe
+# depuis PyPI. La construction est NATIVE sur le serveur (decision C-0).
 #
 # Le classeur `docs/reference/` est DANS l'image : les chemins du code sont
-# relatifs (`docs/reference/Loader_Base_FinZuu_v1_1.xlsx`) et le referentiel
-# enrichi est la richesse anti-corruption du Loader — sans lui, aucun run.
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+# relatifs et le referentiel enrichi est la richesse anti-corruption du
+# Loader — sans lui, aucun run.
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app
+
+# uv depuis PyPI (pas de ghcr). Couche cachee tant que la version ne bouge pas.
+RUN pip install --no-cache-dir uv
 
 # Les dependances d'abord — couche cachee tant que le lock ne change pas.
 COPY pyproject.toml uv.lock ./
@@ -31,7 +36,8 @@ USER loader
 
 EXPOSE 8000
 
-# La sonde du conteneur EST /health — la meme que le dashboard E1.
+# La sonde du conteneur EST /health — la meme que le dashboard E1. Pur Python
+# (pas de curl a installer dans l'image slim).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD python -c "import urllib.request,sys; \
 sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status==200 else 1)"
