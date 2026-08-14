@@ -63,7 +63,7 @@ Source : `FZ-INFRA-SIMUL-2026-001` (Confluence TST 52330498).
 | | |
 |---|---|
 | Frontend | `simul.fintech4esg.com` |
-| Backend | `simul.api.fintech4esg.com` |
+| Backend | `simul.fintech4esg.com` |
 | Serveur | NetCup, **ARM64**, 6 vCPU / 8 Go / 256 Go, `152.53.53.139` |
 | OS | Debian 13 Trixie minimal |
 | Reverse proxy | **Traefik** — ADR-02, Nginx explicitement rejeté |
@@ -74,7 +74,7 @@ Source : `FZ-INFRA-SIMUL-2026-001` (Confluence TST 52330498).
 >
 > 1. Le CDC écrit trois fois `loader.fintech4esg.com` (§268, `ENF-11`, `H-04`).
 >    **Ce lien est incorrect** — arbitrage de Yaniv. Le domaine réel est
->    `simul.*`. `ENF-11` se lit donc : déploiement sur `simul.api.fintech4esg.com`
+>    `simul.*`. `ENF-11` se lit donc : déploiement sur `simul.fintech4esg.com`
 >    avec authentification requise.
 > 2. Ce document et `app/main.py` annonçaient « le Nginx déjà en place sur
 >    152.53.118.110 ». **Ni cette IP ni Nginx n'existent dans la documentation

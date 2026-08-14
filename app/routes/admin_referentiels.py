@@ -27,6 +27,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.cdc import PAYS_CIBLES
 from app.repositories.surcouche import SurcoucheRepository
 from app.routes.dependances import (
     SessionAdmin,
@@ -401,3 +402,100 @@ async def catalogue_statique(
             for f in statique.fonctions_dirigeant
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# US-B6 — demander un nouveau pays : le REFUS PEDAGOGIQUE (EF-05)
+# ---------------------------------------------------------------------------
+
+#: La matiere qu'un 5e pays exigerait, chaque manque NOMME avec sa raison —
+#: c'est la story elle-meme : « la liste exacte de la matiere manquante,
+#: afin de preparer une future extension au lieu de me heurter a un mur ».
+MATIERE_REQUISE_PAYS: list[dict[str, str]] = [
+    {
+        "matiere": "regions",
+        "pourquoi": "chaque Branche s'ancre dans une region (arbre CR-02)",
+    },
+    {
+        "matiere": "villes",
+        "pourquoi": "chaque Agence se place dans une ville (unicite par company)",
+    },
+    {
+        "matiere": "quartiers",
+        "pourquoi": "chaque Kiosque habite un quartier — un seul par run (CR-02)",
+    },
+    {
+        "matiere": "plan de numerotation telco",
+        "pourquoi": "sans regex COMPOSABLE, aucun MSISDN generable (US-B7)",
+    },
+    {
+        "matiere": "parts de marche des telcos",
+        "pourquoi": "le tirage des operateurs exige des parts sommant a 100 (INV-18)",
+    },
+    {
+        "matiere": "patronymes et prenoms",
+        "pourquoi": "le generateur n'a aucun corpus de noms pour ce pays",
+    },
+    {
+        "matiere": "profils de revenus par profession",
+        "pourquoi": "le solde initial est un LogNormal par metier ET par pays (SD-5)",
+    },
+    {
+        "matiere": "quota clients",
+        "pourquoi": "la repartition EF-22 est definie par pays — sans quota, part nulle",
+    },
+]
+
+
+class DemandePays(BaseModel):
+    """Le formulaire de demande — deux champs, car la reponse utile n'est pas
+    une creation mais un DIAGNOSTIC."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")
+    nom: str = Field(default="", max_length=60)
+
+
+@router.post("/pays")
+async def demander_pays(
+    demande: DemandePays,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`US-B6` — demander un 5e pays. Cette route ne CREE jamais rien.
+
+    Deux issues, toutes deux des refus INSTRUCTIFS — famille 1 et famille 4
+    de la doctrine d'erreurs :
+
+      - le pays EXISTE deja (un des 4 cibles EF-05) -> 409 avec son identite
+        et le geste correct (l'activer/desactiver via US-B3) — le scenario
+        « l'admin cree par erreur ce qui existe » ne fabrique jamais un double ;
+      - un pays HORS cible -> 422 listant CHAQUE matiere manquante et sa
+        raison, et RIEN n'est modifie — ni surcouche, ni config-service.
+
+    Aucune ecriture nulle part : le verrou EF-55 ne s'applique qu'aux
+    ecritures, cette route reste lisible meme pendant un run.
+    """
+    code = demande.code
+    if code in PAYS_CIBLES:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"le pays {code} EXISTE deja — il compte parmi les 4 pays cibles "
+                "(EF-05 : CM, CI, BF, SN), deja porte par config-service et jamais "
+                f"recree. Pour l'activer ou le desactiver cote Loader : "
+                f"PUT /admin/configuration/pays/{code} (US-B3)."
+            ),
+        )
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "refus": (
+                f"EF-05 — {code} {demande.nom!r} est hors des 4 pays cibles ; "
+                "l'ajout d'un 5e pays actif est hors perimetre v1 (Won't, "
+                "backlog canonique). Voici la matiere exacte a reunir pour une "
+                "future extension — rien n'a ete modifie."
+            ),
+            "matiere_manquante": MATIERE_REQUISE_PAYS,
+        },
+    )

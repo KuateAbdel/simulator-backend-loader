@@ -34,7 +34,7 @@
 
 ## C-0. DÉCISION du 13/08 (Yaniv) — HÉBERGER AVANT DE CHARGER
 
-Le Loader est déployé sur `simul.api.fintech4esg.com` AVANT tout palier REAL.
+Le Loader est déployé sur `simul.fintech4esg.com` AVANT tout palier REAL.
 Raison de fond : la MongoDB du Loader (registre Faker, org_hierarchy, runs,
 configuration) est SA MÉMOIRE — charger depuis la machine de dev puis héberger
 donnerait une instance vierge, amputée du registre qui rend CR-03, la reprise,
@@ -72,7 +72,16 @@ relecture 9 champs), 4 invariants (unicité CROISÉE nom/code, regex compilable
 ET composable avec preuve `exemple_msisdn`, somme des parts ≤ 100 = INV-18 à
 l'écriture), échec d'envoi jamais silencieux (le local reste + motif),
 journalisé sous RUN_ADMIN. La VILLE (US-B4) fait aussi l'aller complet.
-Reste de #26 : ajout de PAYS complet (formulaire guidé) — v2.
+**US-B6 livrée (14/08)** : POST /admin/referentiels/pays — le refus
+pédagogique de la story v1. Un des 4 pays cibles → **409 « existe déjà »**
+avec le geste correct (activation US-B3) — le scénario « l'admin crée ce qui
+existe » ne fabrique jamais un double ; un 5ᵉ pays → **422 avec la liste
+exacte de la matière manquante** (8 matières, chacune avec sa raison :
+régions, villes, quartiers, plan de numérotation, parts de marché,
+patronymes, profils de revenus, quota), et RIEN n'est modifié (ni surcouche,
+ni config-service — testé). L'ajout d'un 5ᵉ pays ACTIF reste Won't v1
+(backlog canonique) → v2. **#26 est CLOS pour la v1.**
+Domaine corrigé (Yaniv 14/08) : `simul.fintech4esg.com`.
 
 ## E. Backlog S4/S5 restant
 

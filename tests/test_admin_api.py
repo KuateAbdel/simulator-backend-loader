@@ -1822,6 +1822,88 @@ class TestInventaireReconciliation:
             await registre.delete_many({})
 
 
+class TestUSB6DemandeDePays:
+    """`US-B6` — demander un 5e pays : refus PEDAGOGIQUE, jamais un mur.
+    Et le scenario « creer ce qui existe deja » (famille 1) : un des 4 pays
+    cibles repond 409 avec le geste correct, jamais un double."""
+
+    async def test_un_pays_cible_repond_409_existe_deja_avec_le_geste_correct(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays", json={"code": "CM"}, headers=entetes
+        )
+        assert reponse.status_code == 409
+        detail = reponse.json()["detail"]
+        assert "EXISTE deja" in detail
+        assert "PUT /admin/configuration/pays/CM" in detail, (
+            "le refus INSTRUIT : il pointe le geste correct (US-B3)"
+        )
+
+    async def test_un_5e_pays_recoit_la_liste_exacte_de_la_matiere_manquante(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays",
+            json={"code": "GA", "nom": "Gabon"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        detail = reponse.json()["detail"]
+        matieres = [m["matiere"] for m in detail["matiere_manquante"]]
+        # La story nomme ces manques ; chacun DOIT etre present.
+        for attendu in (
+            "regions",
+            "villes",
+            "plan de numerotation telco",
+            "parts de marche des telcos",
+            "patronymes et prenoms",
+        ):
+            assert attendu in matieres, f"manque non nomme : {attendu}"
+        assert all(m["pourquoi"] for m in detail["matiere_manquante"]), (
+            "chaque manque porte sa raison — pedagogique, pas un mur"
+        )
+
+    async def test_rien_n_est_modifie_ni_surcouche_ni_config_service(
+        self,
+        client: httpx.AsyncClient,
+        _config_service_double: dict[str, Any],
+    ) -> None:
+        from app.repositories.surcouche import SurcoucheRepository
+
+        entetes = await _session_complete(client)
+        _, meta_avant = await SurcoucheRepository().charger()
+        reponse = await client.post(
+            "/admin/referentiels/pays",
+            json={"code": "GA", "nom": "Gabon"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        _, meta_apres = await SurcoucheRepository().charger()
+        assert meta_apres["version"] == meta_avant["version"], (
+            "la surcouche n'a pas bouge d'une version"
+        )
+        assert _config_service_double["crees"] == [], "aucun POST vers config-service"
+        assert _config_service_double["villes"] == [], "aucune ville envoyee"
+
+    async def test_un_code_mal_forme_est_un_422_de_validation(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays", json={"code": "gabon"}, headers=entetes
+        )
+        assert reponse.status_code == 422
+
+    async def test_sans_jeton_401(self, client: httpx.AsyncClient) -> None:
+        reponse = await client.post(
+            "/admin/referentiels/pays", json={"code": "GA"}
+        )
+        assert reponse.status_code == 401
+
+
 class TestJournalisationDesRoles:
     """Le trou du 13/08, ferme et prouve de bout en bout : les groupes crees
     en REAL par `ExecuteurRoles` etaient la SEULE ecriture non journalisee du
