@@ -150,8 +150,22 @@ les champs touchés partent au PUT, réponse = vue RELUE, chips pays avec
 motif obligatoire + « config-service jamais appelé » dit, quotas EF-22/23
 verrouillés avec exigence citée, 409 EF-55 en bannière nommée). 401 →
 déconnexion propre partout (prouvé navigateur : jeton invalide → retour
-login + motif + purge). Reste : phases 3→8. Mailjet annoncé par Yaniv pour
-le reset US-A4 v2 (backend + UI) — en attente de l'API key.
+login + motif + purge). Reste : phases 3→8.
+
+**US-A4 v2 LIVRÉE ET DÉPLOYÉE (14/08 soir, commits `f4eeac4` backend +
+`7084f79` frontend)** : reset par email via Mailjet (clés Yaniv) — code 8
+chiffres/15 min/5 essais, 202 anti-énumération, refus générique 401, mot de
+passe durable + session pleine. **Fait mesuré** : compte Mailjet
+« temporarily blocked » (mj-0001) sur v3.1 mais v3 historique ACCEPTE →
+client à repli automatique, envoi réel prouvé (2 emails de test vers
+l'adresse validée du compte = celle de Yaniv ; il doit contacter le support
+Mailjet pour débloquer v3.1). 962 tests verts. Serveur provisionné
+(MAILJET_* ajoutées au .env, conteneur recréé, health 200, route 202 en
+prod). **Logo réel intégré** (zip WhatsApp de Yaniv, variante F violet +
+étoile verte) : favicon, icônes PWA, login, sidebar (commit `d7b53d1`).
+Credentials Loader retrouvés et vérifiés serveur : `ak@finzuu.com` (.env,
+must_change_password actif — Yaniv choisira le durable). Session
+persistante au refresh + compte à rebours réel du jeton.
 
 ## E. Backlog S4/S5 restant
 
