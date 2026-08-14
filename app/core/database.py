@@ -153,6 +153,17 @@ async def ensure_indexes() -> None:
         [("run_id", 1), ("timestamp", 1)],
         name="idx_run_timestamp",
     )
+    # LE REGISTRE EST DERIVE DU JOURNAL — 14/08. `registre_groupes` et
+    # `registre_produits` (reconciliation, garde du DELETE, purge) lisent par
+    # `entity_type`. Sans cet index, chaque garde balaierait le journal
+    # ENTIER — negligeable aujourd'hui, un scan de dizaines de milliers
+    # d'entrees apres les 180 jours de mouvements du module VIE. L'index
+    # porte aussi `action` : les lectures du registre distinguent
+    # INTENTION/RESULTAT/DELETE, la paire est la cle d'acces reelle.
+    await db[COLLECTION_AUDIT_TRAIL].create_index(
+        [("entity_type", 1), ("action", 1)],
+        name="idx_entity_type_action",
+    )
     await db[COLLECTION_SUPER_ADMIN_ACCOUNTS].create_index(
         [("email", 1)],
         name="uniq_email",

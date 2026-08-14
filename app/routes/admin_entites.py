@@ -484,3 +484,153 @@ async def creer_company_unite(
         "cascade_owner_verifiee": rapport.cascades_identity_verifiees == 1,
         "note": "sequence S3-03 executee — fiche relue du serveur",
     }
+
+
+# ---------------------------------------------------------------------------
+# GROUPE a l'unite (decision Yaniv 14/08) — le seul module REVERSIBLE
+# ---------------------------------------------------------------------------
+
+
+def _client_users() -> Any:
+    """Fabrique du client user-service — doublee dans les tests."""
+    from app.clients.user_service import UserServiceClient
+
+    return UserServiceClient()
+
+
+class GroupeDemande(BaseModel):
+    """Creer un groupe, avec TOUT ce que ca implique (D-06/D-09/A4) :
+    description REQUISE au contrat, tag jamais ROOT en ecriture (persiste en
+    base mais absent de l'enumeration), company_id chaine vide = role GLOBAL
+    (ce que portent les groupes existants), permissions par NOM parmi celles
+    que user-service expose."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nom: str = Field(min_length=2, max_length=60)
+    description: str = Field(min_length=3, max_length=200)
+    tag: Literal["STAFF", "COMPANY", "CUSTOMER"]
+    permissions: list[str] = Field(default_factory=list, max_length=120)
+    company_id: str = Field(default="", max_length=60)
+
+
+@router.post("/groupes", status_code=201)
+async def creer_groupe(
+    demande: GroupeDemande,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Creation d'un groupe a l'unite — et le Loader SAIT quoi envoyer.
+
+    Le GET-avant-POST a TROIS issues, parce que le serveur n'a AUCUNE unicite
+    sur `name` (mesure) et que l'unicite, c'est NOUS :
+      - homonyme A NOUS (registre)  -> 409 avec son id : reutiliser, jamais doubler ;
+      - homonyme ETRANGER           -> 409 : ni consomme ni recree (A-10), autre nom ;
+      - absent                      -> creation, write-ahead, RELECTURE, registre.
+
+    Les permissions sont validees contre la liste VIVANTE de user-service —
+    un nom inconnu est un 422 qui le nomme, avant tout POST. Le RESULTAT
+    `SUCCES` porte le `group_id` serveur : c'est la ligne qui rend le groupe
+    reconnaissable a la reconciliation (aucun prefixe sur les groupes) et
+    supprimable par DELETE /admin/inventaire/groupes/{id}.
+    """
+    from app.clients.contracts import TagGroupe
+    from app.services.inventaire import registre_groupes
+
+    await refuser_si_run_en_cours()
+
+    client = _client_users()
+    try:
+        disponibles = set(await client.lister_permissions())
+        inconnues = sorted(set(demande.permissions) - disponibles)
+        if inconnues:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"permissions inconnues de user-service : {inconnues} — "
+                    "la liste vivante est GET /admin/referentiels/permissions"
+                ),
+            )
+
+        existant = await client.chercher_groupe(demande.nom)
+        if existant is not None:
+            gid = str(existant.get("_id") or existant.get("id"))
+            if gid in await registre_groupes():
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"le groupe {demande.nom!r} existe deja et il est A NOUS "
+                        f"(id {gid}) — reutiliser, jamais doubler (le serveur "
+                        "accepterait le doublon, c'est NOUS l'unicite)"
+                    ),
+                )
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"homonyme ETRANGER {demande.nom!r} (id {gid}) sur la "
+                    "plateforme — ni consomme (A-10) ni recree ; choisir un autre nom"
+                ),
+            )
+
+        audit = AuditTrailRepository()
+        entite = uuid5(NAMESPACE_OID, f"finzuu-groupe:{demande.nom}")
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="Group",
+            entity_id=entite,
+            operation="CREATE",
+            cible="user-service POST /api/v1/groupes/create",
+            payload={"name": demande.nom, "tag": demande.tag},
+        ) as suivi:
+            try:
+                reponse = await client.creer_groupe(
+                    nom=demande.nom,
+                    description=demande.description,
+                    tag=TagGroupe(demande.tag),
+                    permissions=sorted(set(demande.permissions)),
+                    company_id=demande.company_id,
+                )
+            except Exception as erreur:
+                suivi.echoue(type(erreur).__name__)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"user-service a refuse la creation : {type(erreur).__name__}",
+                ) from erreur
+            gid = str(reponse.get("_id") or reponse.get("id") or "")
+            if not gid:
+                suivi.echoue("identifiant absent de la reponse serveur")
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "user-service a repondu sans identifiant — groupe "
+                        "peut-etre cree mais INTRACABLE, a verifier a la main"
+                    ),
+                )
+            suivi.reussi({"group_id": gid, "name": demande.nom})
+
+        # RELECTURE — la preuve vient de la liste, jamais de l'echo du POST.
+        fiche = await client.chercher_groupe(demande.nom)
+        if fiche is None:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"le groupe {demande.nom!r} n'apparait PAS a la relecture — "
+                    "le serveur a repondu sans agir, a verifier a la main"
+                ),
+            )
+    finally:
+        await client.fermer()
+
+    return {
+        "groupe": {
+            "id": gid,
+            "nom": str(fiche.get("name", "")),
+            "tag": str(fiche.get("tag", "")),
+            "permissions": len(fiche.get("permissions") or []),
+        },
+        "statut": "a_nous",
+        "au_registre": True,
+        "note": (
+            "reconnaissable a la reconciliation et supprimable via "
+            "DELETE /admin/inventaire/groupes/{id} — seul module reversible"
+        ),
+    }

@@ -556,6 +556,19 @@ class TestIndexInverseP01:
             "un noeud absent est DIT, jamais tu"
         )
 
+    async def test_l_index_du_registre_existe_sur_audit_trail(self, arbre) -> None:  # type: ignore[no-untyped-def]
+        """14/08 — le registre (groupes, produits) est DERIVE du journal, lu
+        par `entity_type`. Sans cet index, chaque garde du DELETE balaierait le
+        journal entier apres 180 jours de mouvements. STRUCTUREL, donc teste."""
+        from app.core.database import get_collection
+
+        infos = await get_collection("audit_trail").index_information()
+        assert "idx_entity_type_action" in infos
+        assert infos["idx_entity_type_action"]["key"] == [
+            ("entity_type", 1),
+            ("action", 1),
+        ]
+
     async def test_clients_par_produit_et_par_kiosque_en_une_requete(self, arbre) -> None:  # type: ignore[no-untyped-def]
         run, populaire, rare = uuid4(), uuid4(), uuid4()
         imf, kiosque_a = await self._kiosque(arbre, run, "A")

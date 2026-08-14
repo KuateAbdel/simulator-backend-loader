@@ -1904,6 +1904,297 @@ class TestUSB6DemandeDePays:
         assert reponse.status_code == 401
 
 
+class TestRegionsQuartiersSansLimite:
+    """Decision Yaniv 14/08 : « le nombre que l'on veut, pas de barrieres
+    fixes — juste la consistance et la non-duplication. » Et le Loader SAIT
+    quoi envoyer : la ville part la-bas, region et quartier restent chez nous
+    avec la RAISON dite dans la reponse."""
+
+    @staticmethod
+    async def _surcouche_vierge() -> None:
+        await database.get_database()["loader_configuration"].delete_one(
+            {"_id": "surcouche"}
+        )
+
+    async def test_la_chaine_complete_region_ville_quartier(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """L'admin CONSTITUE sa geographie : region -> ville -> quartier.
+        Chaque niveau dit s'il part la-bas, et pourquoi."""
+        await self._surcouche_vierge()
+        entetes = await _session_complete(client)
+
+        region = await client.post(
+            "/admin/referentiels/regions",
+            json={"pays": "CM", "nom": "Region Test G", "capitale": "Ville Test G"},
+            headers=entetes,
+        )
+        assert region.status_code == 201, region.text
+        assert region.json()["config_service"]["envoye"] is False
+        assert "region CONTINENTALE" in region.json()["config_service"]["raison"]
+
+        ville = await client.post(
+            "/admin/referentiels/villes",
+            json={"region_id": region.json()["region"]["id"], "nom": "Ville Test G"},
+            headers=entetes,
+        )
+        assert ville.status_code == 201, ville.text
+        assert _config_service_double["villes"], "la VILLE, elle, part a config-service"
+
+        quartier = await client.post(
+            "/admin/referentiels/quartiers",
+            json={"city_id": ville.json()["ville"]["id"], "nom": "Quartier Test G"},
+            headers=entetes,
+        )
+        assert quartier.status_code == 201, quartier.text
+        assert quartier.json()["config_service"]["envoye"] is False
+        assert "Kiosque" in quartier.json()["config_service"]["raison"]
+        await self._surcouche_vierge()
+
+    async def test_aucune_barriere_fixe_quinze_regions_d_affilee(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await self._surcouche_vierge()
+        entetes = await _session_complete(client)
+        for rang in range(15):
+            reponse = await client.post(
+                "/admin/referentiels/regions",
+                json={"pays": "SN", "nom": f"Region Sans Limite {rang}"},
+                headers=entetes,
+            )
+            assert reponse.status_code == 201, (
+                f"la {rang + 1}e region est refusee — une barriere fixe existe : "
+                f"{reponse.text}"
+            )
+        await self._surcouche_vierge()
+
+    async def test_les_seuls_refus_sont_des_invariants(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await self._surcouche_vierge()
+        entetes = await _session_complete(client)
+        premier = await client.post(
+            "/admin/referentiels/regions",
+            json={"pays": "CM", "nom": "Region Doublon"},
+            headers=entetes,
+        )
+        assert premier.status_code == 201
+        doublon = await client.post(
+            "/admin/referentiels/regions",
+            json={"pays": "CM", "nom": "Region Doublon"},
+            headers=entetes,
+        )
+        assert doublon.status_code == 422
+        assert "existe deja" in doublon.json()["detail"]
+        orphelin = await client.post(
+            "/admin/referentiels/regions",
+            json={"pays": "GA", "nom": "Region Sans Pays"},
+            headers=entetes,
+        )
+        assert orphelin.status_code == 422, "EF-02 : le pays parent doit exister"
+        fantome = await client.post(
+            "/admin/referentiels/quartiers",
+            json={"city_id": "CM-CT-INEXISTANTE", "nom": "Quartier Fantome"},
+            headers=entetes,
+        )
+        assert fantome.status_code == 422, "EF-02 : la ville parente doit exister"
+        await self._surcouche_vierge()
+
+
+class TestPermissionsEtCreationDeGroupe:
+    """Decision Yaniv 14/08 : voir les permissions et CREER un groupe depuis
+    l'ecran — avec tout ce que ca implique (D-06/D-09/A4), et l'unicite chez
+    NOUS puisque le serveur n'en a aucune."""
+
+    @staticmethod
+    def _doubler_users(
+        monkeypatch: pytest.MonkeyPatch,
+        groupes: list[dict[str, Any]] | None = None,
+        *,
+        sans_id: bool = False,
+        muet: bool = False,
+    ) -> dict[str, Any]:
+        from uuid import uuid4 as _uuid4
+
+        from app.routes import admin_entites, admin_referentiels
+
+        etat: dict[str, Any] = {"groupes": list(groupes or []), "crees": []}
+
+        class _Users:
+            async def lister_permissions(self):  # type: ignore[no-untyped-def]
+                return ["CLIENT_CLIENT_ONBOARD", "USER_USER_CREATE"]
+
+            async def chercher_groupe(self, nom):  # type: ignore[no-untyped-def]
+                cible = nom.strip().lower()
+                for g in etat["groupes"]:
+                    if str(g.get("name", "")).strip().lower() == cible:
+                        return g
+                return None
+
+            async def creer_groupe(self, **kwargs):  # type: ignore[no-untyped-def]
+                if sans_id:
+                    return {}
+                groupe = {
+                    "_id": str(_uuid4()),
+                    "name": kwargs["nom"],
+                    "tag": kwargs["tag"].value,
+                    "permissions": kwargs["permissions"],
+                }
+                etat["crees"].append(groupe)
+                if not muet:
+                    etat["groupes"].append(groupe)
+                return groupe
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_entites, "_client_users", lambda: _Users())
+        monkeypatch.setattr(admin_referentiels, "_client_users", lambda: _Users())
+        return etat
+
+    async def test_les_permissions_se_lisent_depuis_l_ecran(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_users(monkeypatch)
+        entetes = await _session_complete(client)
+        reponse = await client.get("/admin/referentiels/permissions", headers=entetes)
+        assert reponse.status_code == 200
+        assert reponse.json()["compte"] == 2
+        assert "LENDER" in reponse.json()["note"], "l'ecartement D-07 est DIT"
+
+    async def test_creer_un_groupe_l_inscrit_au_registre(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.services.inventaire import registre_groupes
+
+        etat = self._doubler_users(monkeypatch)
+        await _registre_vierge()
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/groupes",
+            json={
+                "nom": "Auditeur Externe",
+                "description": "Lecture seule pour les audits bailleurs",
+                "tag": "STAFF",
+                "permissions": ["CLIENT_CLIENT_ONBOARD"],
+            },
+            headers=entetes,
+        )
+        assert reponse.status_code == 201, reponse.text
+        corps = reponse.json()
+        assert corps["statut"] == "a_nous"
+        gid = corps["groupe"]["id"]
+        assert etat["crees"][0]["_id"] == gid
+        registre = await registre_groupes()
+        assert registre.get(gid) == "Auditeur Externe", (
+            "sans cette ligne, le groupe serait invisible a la reconciliation"
+        )
+
+    async def test_homonyme_a_nous_409_reutiliser_jamais_doubler(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        gid = str(_uuid4())
+        self._doubler_users(monkeypatch, [{"_id": gid, "name": "Agent"}])
+        await _registre_vierge()
+        await _inscrire_groupe_au_registre(gid, "Agent")
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/groupes",
+            json={"nom": "Agent", "description": "doublon tente", "tag": "COMPANY"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 409
+        assert "A NOUS" in reponse.json()["detail"]
+        assert gid in reponse.json()["detail"], "l'identite de l'existant est rendue"
+
+    async def test_homonyme_etranger_409_ni_consomme_ni_recree(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        self._doubler_users(monkeypatch, [{"_id": str(_uuid4()), "name": "CUSTOMER"}])
+        await _registre_vierge()
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/groupes",
+            json={"nom": "CUSTOMER", "description": "collision", "tag": "CUSTOMER"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 409
+        assert "ETRANGER" in reponse.json()["detail"]
+
+    async def test_permission_inconnue_422_nommee_avant_tout_POST(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        etat = self._doubler_users(monkeypatch)
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/groupes",
+            json={
+                "nom": "Groupe Errone",
+                "description": "permission qui n'existe pas",
+                "tag": "STAFF",
+                "permissions": ["PERMISSION_INVENTEE"],
+            },
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "PERMISSION_INVENTEE" in reponse.json()["detail"]
+        assert etat["crees"] == [], "refus AVANT le POST — rien n'est parti"
+
+    async def test_le_tag_ROOT_est_refuse_en_ecriture(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_users(monkeypatch)
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/groupes",
+            json={"nom": "Racine", "description": "tentative ROOT", "tag": "ROOT"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422, "A4 : ROOT jamais en ecriture"
+
+    async def test_un_serveur_sans_identifiant_502_et_journal_ECHEC(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.repositories.audit_trail import AuditTrailRepository
+        from app.routes.admin_entites import RUN_ADMIN
+
+        self._doubler_users(monkeypatch, sans_id=True)
+        await _registre_vierge()
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/groupes",
+            json={"nom": "Intracable", "description": "reponse vide", "tag": "STAFF"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 502
+        assert "INTRACABLE" in reponse.json()["detail"].upper()
+        journal = await AuditTrailRepository().exporter_run(RUN_ADMIN)
+        statuts = [
+            (e.after or {}).get("statut")
+            for e in journal
+            if e.action == "RESULTAT" and e.entity_type == "Group"
+        ]
+        assert "ECHEC" in statuts
+
+    async def test_un_serveur_qui_repond_sans_lister_502(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_users(monkeypatch, muet=True)
+        await _registre_vierge()
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/groupes",
+            json={"nom": "Invisible", "description": "cree mais absent", "tag": "STAFF"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 502
+        assert "relecture" in reponse.json()["detail"]
+
+
 class TestIndexInverseCommeService:
     """`P-01` cote SERVICE : GET /admin/dashboard/index-inverse — deux
     agregations chez NOUS, jamais 20 requetes paginees vers FinZuu."""

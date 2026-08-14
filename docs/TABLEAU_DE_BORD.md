@@ -72,6 +72,24 @@ relecture 9 champs), 4 invariants (unicité CROISÉE nom/code, regex compilable
 ET composable avec preuve `exemple_msisdn`, somme des parts ≤ 100 = INV-18 à
 l'écriture), échec d'envoi jamais silencieux (le local reste + motif),
 journalisé sous RUN_ADMIN. La VILLE (US-B4) fait aussi l'aller complet.
+**LOT H livré (14/08, décisions Yaniv)** : (1) **régions et quartiers SANS
+LIMITE** — POST /admin/referentiels/{regions,quartiers}, invariants seulement
+(EF-02 parent, non-duplication), jamais de plafond (testé : 15 régions
+d'affilée) ; la réponse DIT que rien ne part à config-service et POURQUOI
+(la ville seule a un contrat là-bas) ; pays en ISO 3166-1 alpha-2 strict ;
+**défaut réel attrapé par le test** : `_toutes_regions` ignorait la surcouche
+— une région ajoutée 2× écrasait la 1ʳᵉ en silence, corrigé. (2) **GET
+/admin/referentiels/permissions** — la liste vivante, écartement D-07 dit.
+(3) **POST /admin/entites/groupes** — création à l'unité avec tout ce que ça
+implique (description requise, tag jamais ROOT/A4, company_id vide = global,
+permissions validées contre la liste vivante → 422 nommé avant tout POST),
+GET-avant-POST à TROIS issues (409 « À NOUS » avec id / 409 homonyme
+ÉTRANGER / création), write-ahead + relecture + inscription au REGISTRE
+(reconnaissable à la réconciliation, supprimable). (4) **Index structurel
+`idx_entity_type_action`** sur audit_trail — le registre est dérivé du
+journal, lu par entity_type : sans lui, chaque garde balaierait le journal
+entier après les 180 jours du module VIE (avertissement indexage Yaniv,
+testé structurellement). 944 tests (+12), 3 mutations attrapées.
 **US-B6 livrée (14/08)** : POST /admin/referentiels/pays — le refus
 pédagogique de la story v1. Un des 4 pays cibles → **409 « existe déjà »**
 avec le geste correct (activation US-B3) — le scénario « l'admin crée ce qui

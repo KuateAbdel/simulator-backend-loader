@@ -434,9 +434,15 @@ class SurcoucheReferentiel:
         base = "".join(c if c.isalnum() else "-" for c in libelle.upper()).strip("-")
         return f"{PREFIXE_SURCOUCHE}-{pays}-{genre}-{base}"
 
-    @staticmethod
-    def _toutes_regions(base: ReferentielGeo) -> list[Region]:
-        return list(base.regions.values())
+    def _toutes_regions(self, base: ReferentielGeo) -> list[Region]:
+        """Classeur ET surcouche — comme `_toutes_villes` le fait deja.
+
+        DEFAUT du 14/08, attrape par le test d'invariants de la route : cette
+        methode ne regardait QUE le classeur. Une region ajoutee deux fois
+        n'etait donc jamais refusee — le second ajout ECRASAIT la premiere en
+        silence (l'identifiant est deterministe). La non-duplication promise
+        etait trouee precisement la ou l'ecran vient d'ouvrir la porte."""
+        return list(base.regions.values()) + list(self.regions.values())
 
     def _toutes_villes(self, base: ReferentielGeo, pays: str) -> list[City]:
         villes = [v for v in base.villes.values() if v.country_iso2 == pays]

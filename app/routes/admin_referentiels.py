@@ -499,3 +499,166 @@ async def demander_pays(
             "matiere_manquante": MATIERE_REQUISE_PAYS,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Regions et quartiers — SANS AUCUNE LIMITE DE NOMBRE (decision Yaniv 14/08)
+# ---------------------------------------------------------------------------
+# La regle est celle qu'il a posee : « le nombre que l'on veut, pas de
+# barrieres fixes — juste la consistance et la non-duplication. » Les seuls
+# refus possibles sont donc des INVARIANTS : parent inexistant (EF-02), nom
+# vide, doublon. Jamais un plafond.
+#
+# ET LE LOADER SAIT QUOI ENVOYER : la VILLE part a config-service (il connait
+# Country.cities[]) ; la REGION et le QUARTIER restent CHEZ NOUS — le systeme
+# n'a aucun champ pour eux (mesure : CreateDepositaireSchema ne porte aucune
+# geographie, le `region` de config-service est la region CONTINENTALE).
+# Les envoyer serait inventer un contrat qui n'existe pas.
+
+
+class RegionDemande(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: ISO 3166-1 alpha-2 STRICT — majuscules au contrat, comme US-B6.
+    #: Accepter `cm` puis corriger en silence serait une tolerance, pas un
+    #: format ; le 422 dit la regle, l'ecran l'applique.
+    pays: str = Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")
+    nom: str = Field(min_length=1, max_length=80)
+    capitale: str = Field(default="", max_length=80)
+    population: int | None = Field(default=None, ge=1)
+
+
+@router.post("/regions", status_code=201)
+async def ajouter_region(
+    demande: RegionDemande,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """L'ajout d'une region — invariants seulement, jamais de plafond.
+
+    Meme rite que la ville : valider chez nous, persister, RELIRE de la base.
+    `config_service.envoye = False` est DIT avec sa raison — un champ absent
+    serait un silence, et le silence est le defaut qu'on ne commet pas."""
+    await refuser_si_run_en_cours()
+
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    try:
+        region = surcouche.ajouter_region(
+            _geo(),
+            pays=demande.pays,
+            nom=demande.nom,
+            capitale=demande.capitale,
+            population=demande.population,
+        )
+    except AjoutRefuse as refus:
+        raise HTTPException(status_code=422, detail=str(refus)) from refus
+
+    meta = await depot.enregistrer(surcouche, par=session.email)
+    relue, _ = await depot.charger()
+    fiche = relue.regions[region.region_id]
+    return {
+        "config_service": {
+            "envoye": False,
+            "raison": (
+                "config-service n'a aucune notion de region administrative — "
+                "son champ `region` est la region CONTINENTALE ; la region vit "
+                "chez nous (anti-corruption), seules les VILLES partent la-bas"
+            ),
+        },
+        "region": {
+            "id": fiche.region_id,
+            "nom": fiche.name,
+            "pays": fiche.country_iso2,
+            "capitale": fiche.capitale,
+            "population": fiche.population,
+        },
+        "surcouche": {"resume": relue.resume(), "version": meta["version"]},
+    }
+
+
+class QuartierDemande(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    city_id: str = Field(min_length=1)
+    nom: str = Field(min_length=1, max_length=80)
+    zone_type: str = Field(default="residential", max_length=30)
+    population: int | None = Field(default=None, ge=1)
+
+
+@router.post("/quartiers", status_code=201)
+async def ajouter_quartier(
+    demande: QuartierDemande,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """L'ajout d'un quartier — c'est de la CAPACITE : le quartier porte un
+    Kiosque, et l'index unique `(run_id, district_id)` n'en admet qu'un par
+    quartier (D-03). Plus de quartiers = plus de Kiosques possibles.
+    Invariants seulement (ville parente, non-duplication) — aucun plafond."""
+    await refuser_si_run_en_cours()
+
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    try:
+        quartier = surcouche.ajouter_quartier(
+            _geo(),
+            city_id=demande.city_id.strip(),
+            nom=demande.nom,
+            zone_type=demande.zone_type,
+            population=demande.population,
+        )
+    except AjoutRefuse as refus:
+        raise HTTPException(status_code=422, detail=str(refus)) from refus
+
+    meta = await depot.enregistrer(surcouche, par=session.email)
+    relue, _ = await depot.charger()
+    fiche = relue.quartiers[quartier.district_id]
+    return {
+        "config_service": {
+            "envoye": False,
+            "raison": (
+                "le quartier n'existe dans AUCUN contrat serveur (mesure : "
+                "CreateDepositaireSchema ne porte aucune geographie) — il vit "
+                "chez nous, c'est lui qui donne son adresse au Kiosque"
+            ),
+        },
+        "quartier": {
+            "id": fiche.district_id,
+            "nom": fiche.name,
+            "ville": fiche.city_id,
+            "zone_type": fiche.zone_type,
+            "population": fiche.population,
+        },
+        "surcouche": {"resume": relue.resume(), "version": meta["version"]},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Permissions — la LECTURE depuis l'ecran (decision Yaniv 14/08)
+# ---------------------------------------------------------------------------
+
+
+def _client_users() -> Any:
+    """Fabrique du client user-service — doublee dans les tests."""
+    from app.clients.user_service import UserServiceClient
+
+    return UserServiceClient()
+
+
+@router.get("/permissions")
+async def permissions(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Les permissions RELUES de user-service, telles que l'ecran de creation
+    de groupe doit les proposer. Les 22 `LENDER_*` (sprint 5, hors perimetre
+    D-07) et la parasite RC169 sont ecartees par le client — dit ici pour que
+    l'ecran n'aille pas les chercher ailleurs."""
+    client = _client_users()
+    try:
+        noms = await client.lister_permissions()
+    finally:
+        await client.fermer()
+    return {
+        "permissions": noms,
+        "compte": len(noms),
+        "note": "les 22 LENDER_* et RC169_* sont ecartees (D-07) — hors perimetre v1",
+    }
