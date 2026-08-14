@@ -5,6 +5,28 @@
 > de dev, DNS instable — ENF-01 est intenable d'ici. Tout run REAL part du
 > serveur.
 
+## 0. LE SERVEUR EST PARTAGÉ — reconnaissance SSH du 14/08
+
+`152.53.118.110` (Netcup, Ubuntu 24.04 ARM64, 10 vCPU, 16 Go, 460 Go libres)
+héberge **déjà 3 projets critiques** : ERPNext CRM, Nextcloud Talk/Collabora,
+Newsletter (Zidane). **On ne touche à RIEN de tout ça.** Faits qui commandent
+notre déploiement :
+
+- **nginx est sur le HOST (systemd), pas dockerisé** — il est le seul pont
+  Internet→conteneurs, `enabled` au boot. Notre vhost `simul.conf` **existe
+  déjà** (préparé par Yaniv : renvoie 503 + cert Let's Encrypt valide au
+  18/10). On ne le CRÉE pas, on modifie juste son `location /`.
+- **Le port 8000 est PRIS** (`finzuu-talk-recording`). Le Loader prend **8003**
+  (libre) — déjà corrigé dans `docker-compose.yml`.
+- **Réseau `loader-net` déjà pré-créé** (vide, prêt — préparé par Yaniv) : le
+  compose l'adopte en `external`, pas de doublon. Chaque app a son réseau isolé.
+- **User de déploiement = `apps`** (groupes `sudo`+`docker`), sous
+  `/home/apps/` — jamais root pour une app sur un serveur partagé. Les autres
+  projets vivent sous `/home/apps/{erpnext-production,finzuu,newsletter}`.
+- Les secrets des autres services (ERPNext, Newsletter, TURN…) ont été **vus**
+  pendant la recon : **hors de notre périmètre, jamais copiés, jamais dans ce
+  dépôt.**
+
 ## 1. La chaîne, en une phrase
 
 `git push main` → **CI** (ruff + mypy strict + 948 tests contre un vrai
@@ -19,7 +41,7 @@ par empreinte), `git merge --ff-only`, `docker compose up -d --build`
 |---|---|
 | `Dockerfile` | image uv/py3.12 multi-arch, non-root, `docs/reference/` embarqué (chemins relatifs du code), HEALTHCHECK sur `/health` |
 | `.dockerignore` | **liste blanche** — un secret ne PEUT PAS entrer dans l'image |
-| `docker-compose.yml` | loader + mongo ; volume nommé (la MÉMOIRE du Loader) ; mongo sans port publié ; loader sur `127.0.0.1:8000` seulement (le reverse-proxy expose le 443) |
+| `docker-compose.yml` | loader + mongo ; volume nommé (la MÉMOIRE du Loader) ; mongo sans port publié ; loader sur `127.0.0.1:8003` seulement (8000 pris — recon), réseau `loader-net` externe ; le nginx du HOST expose le 443 |
 | `.github/workflows/ci.yml` | les portes du protocole §6, sur chaque push/PR |
 | `.github/workflows/deploy.yml` | le déploiement, uniquement après CI verte de main |
 
@@ -40,19 +62,36 @@ ssh-keyscan -t ed25519 152.53.118.110                  # -> la ligne pour DEPLOY
 | `DEPLOY_SSH_KEY` | le contenu de `deploy_key` (la privée) |
 | `DEPLOY_KNOWN_HOSTS` | la ligne `ssh-keyscan` ci-dessus |
 
-Variable optionnelle : `DEPLOY_PATH` (défaut `/opt/loader-finzuu`).
+Variable optionnelle : `DEPLOY_PATH` (défaut `/home/apps/loader`).
 
-### c) Préparer le serveur (une fois)
+### c) Préparer le serveur (une fois) — user `apps`, docker déjà présent
 ```bash
-ssh <user>@152.53.118.110
-sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2  # si absent
-sudo mkdir -p /opt/loader-finzuu && sudo chown $USER /opt/loader-finzuu
-git clone https://github.com/KuateAbdel/simulator-backend-loader.git /opt/loader-finzuu
-cd /opt/loader-finzuu && cp .env.example .env && nano .env   # voir §4
-docker compose up -d --build && curl -fsS http://127.0.0.1:8000/health
+ssh apps@152.53.118.110          # docker 29.7 + compose v5.4 déjà installés
+git clone https://github.com/KuateAbdel/simulator-backend-loader.git /home/apps/loader
+cd /home/apps/loader && cp .env.example .env && nano .env   # voir §4
+docker compose up -d --build && curl -fsS http://127.0.0.1:8003/health
 ```
-Puis brancher le vhost `simul.fintech4esg.com` (déjà pré-câblé côté DNS,
-recon du 08/08) en `proxy_pass http://127.0.0.1:8000`.
+Le réseau `loader-net` existe déjà (préparé) — le compose l'adopte.
+
+### c-bis) Brancher le vhost nginx du HOST (une fois, en root)
+Le fichier `/etc/nginx/sites-available/simul.conf` existe et renvoie 503.
+Remplacer, DANS LE BLOC `server` HTTPS (443) uniquement, le `location /` qui
+renvoie 503 par le proxy — **sans toucher les autres vhosts** :
+```nginx
+    location / {
+        proxy_pass http://127.0.0.1:8003;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+```
+Puis, avec le filet de sécurité obligatoire :
+```bash
+nginx -t && systemctl reload nginx      # -t REFUSE de recharger une config cassée
+curl -fsS https://simul.fintech4esg.com/health   # le 503 devient 200, public
+```
+Garder le `location /.well-known/acme-challenge/` intact (renouvellement TLS).
 
 ### d) La fiche du dépôt (gh non authentifié sur la machine de dev)
 Tape dans la session : `! gh auth login` — puis je pose description, topics

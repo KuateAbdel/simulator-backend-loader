@@ -30,10 +30,20 @@ services:
       mongo:
         condition: service_healthy
     ports:
-      # Publie sur le loopback SEULEMENT : c'est le reverse-proxy du serveur
-      # (vhost simul.fintech4esg.com, deja en place — recon du 08/08) qui
-      # expose le port 443 au monde. Jamais 8000 en direct sur Internet.
-      - "127.0.0.1:8000:8000"
+      # 127.0.0.1:8003 — LE PORT 8000 EST DEJA PRIS (recon serveur du 14/08 :
+      # `finzuu-talk-recording` de Nextcloud ecoute sur 0.0.0.0:8000). Publier
+      # sur 8000 aurait fait echouer `up` (address already in use). 8003 est
+      # libre. Loopback SEULEMENT : le nginx du HOST (vhost simul.fintech4esg
+      # deja en place, cert Let's Encrypt valide) proxifie le 443 vers ce port.
+      - "127.0.0.1:8003:8000"
+
+networks:
+  # Reseau `loader-net` DEJA PRE-CREE sur le serveur (recon du 14/08, vide et
+  # pret) : on l'adopte plutot que d'en fabriquer un doublon. Chaque app du
+  # VPS partage est isolee dans son propre reseau — on respecte le motif.
+  default:
+    name: loader-net
+    external: true
 
 volumes:
   loader_mongo_data:

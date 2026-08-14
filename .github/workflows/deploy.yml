@@ -11,7 +11,7 @@
 #   DEPLOY_KNOWN_HOSTS  la ligne `ssh-keyscan` du serveur (l'empreinte)
 # Variable optionnelle :
 #   DEPLOY_PATH         chemin du depot sur le serveur
-#                       (defaut /opt/loader-finzuu)
+#                       (defaut /home/apps/loader)
 name: Deploiement
 
 on:
@@ -43,13 +43,14 @@ jobs:
               -o UserKnownHostsFile=~/.ssh/known_hosts \
               "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" bash -s <<'FIN'
           set -euo pipefail
-          cd "${DEPLOY_PATH:-/opt/loader-finzuu}"
+          cd "${DEPLOY_PATH:-/home/apps/loader}"
           git fetch origin main
           git merge --ff-only origin/main
           docker compose up -d --build
           # La preuve, jamais la deduction : /health doit repondre 200.
+          # Port 8003 (8000 est pris par finzuu-talk-recording — recon 14/08).
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+            if curl -fsS http://127.0.0.1:8003/health >/dev/null 2>&1; then
               echo "sante OK apres ${i} tentative(s)"
               exit 0
             fi
@@ -60,4 +61,7 @@ jobs:
           exit 1
           FIN
         env:
+          # Defaut /home/apps/loader ; DEPLOY_USER attendu = apps (groupes
+          # sudo+docker), PAS root — on ne deploie pas une app sous root sur
+          # un serveur partage (recon 14/08).
           DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
