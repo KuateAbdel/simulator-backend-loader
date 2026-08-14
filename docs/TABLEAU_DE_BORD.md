@@ -117,3 +117,14 @@ Domaine corrigé (Yaniv 14/08) : `simul.fintech4esg.com`.
 (désactiver un pays) · noms métier du catalogue + marqueur `short_name` ·
 Agents compris ou en sus des 15-25 staff/pays. Recommandations écrites dans
 `PLAN_SPRINTS.md` §3.4 et `A-05_PERMISSIONS_A_TRANCHER.md`.
+
+**A-13 (NOUVEAU — recon passive du 14/08,
+`docs/empirical/2026-08-14_recon_passive.md`)** : les 11 rôles D-09
+EXISTENT DÉJÀ sur user-service (empreinte = la nôtre : tags D-09 v2, comptes
+de permissions exacts sur les 61 filtrées) mais notre registre est VIDE
+(créés avant la journalisation du 13/08). Les ADOPTER au registre
+(mécanisme explicite et journalisé, jamais automatique) ou les laisser
+étrangers ? Sans adoption : palier 1 = 0 création (réutilisation), purge et
+DELETE aveugles sur eux. Autres faits : 6 pays en base (`ca` minuscule
+hors-ISO + CV), doublon produit vivant (ANO-PRD-UNIQ-01 confirmée), réseau
+dev disqualifié (4-6 s/health, DNS instable) → C-0 validée par la mesure.
