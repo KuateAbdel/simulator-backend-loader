@@ -178,6 +178,25 @@ arrêt confirmé « FAILED terminal vrai ») ; Historique & recette
 ConfirmDialog. Preuves : build vert + banc d'essai navigateur sur API
 simulée au contrat (8/8 assertions). Reste frontend : phases 4→8.
 
+**MAILJET — SMTP RELAY en voie principale (14/08 nuit, commit `7963515`)** :
+le compte reste bloqué (mj-0001) sur l'API HTTP — y compris avec le 2ᵉ jeu
+de clés fourni par Yaniv (qui n'a AUCUN expéditeur validé) — mais le relais
+SMTP in-v3.mailjet.com:587 ACCEPTE (mesuré avec les 2 jeux). Ordre d'envoi :
+SMTP → API v3.1 → API v3. Clés anciennes conservées (expéditeur validé) ;
+bascule sur les nouvelles si Yaniv confirme réception de leur test. Action
+Yaniv : faire débloquer le compte au support Mailjet.
+
+**PHASE 4 FRONTEND LIVRÉE (14/08 nuit, commit `2987561`)** — Référentiels :
+Géographie (arbre pays→région→ville→quartier, badges anti-corruption
+« ↗ config-service » / « ⌂ chez nous » avec raison, 3 formulaires EF-02
+par construction, sans-limite dit), Pays & Monnaies (CountrySelect ISO 54
+pays qui pré-remplit, monnaie d'abord, matière-pour-générer affichée après
+création — déclarer ≠ générer), Telcos (4 invariants doublés à la frappe,
+somme INV-18 en direct), Catalogue (comptes exacts en KPI + 5 onglets).
+Aide « comment ça marche » ajoutée sur Configuration (retour Yaniv — écran
+encore jugé peu clair : dette UX notée, mode simple/avancé à concevoir).
+Preuves : build vert + banc navigateur 8/8. Reste : phases 5→8.
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |
