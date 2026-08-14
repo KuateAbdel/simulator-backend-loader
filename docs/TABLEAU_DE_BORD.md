@@ -34,7 +34,7 @@
 
 ## C-0. DÉCISION du 13/08 (Yaniv) — HÉBERGER AVANT DE CHARGER
 
-Le Loader est déployé sur `simul.fintech4esg.com` AVANT tout palier REAL.
+Le Loader (backend) est déployé sur `simul.api.fintech4esg.com` AVANT tout palier REAL (Option B, 14/08 — `simul.fintech4esg.com` est réservé au frontend de Zidane).
 Raison de fond : la MongoDB du Loader (registre Faker, org_hierarchy, runs,
 configuration) est SA MÉMOIRE — charger depuis la machine de dev puis héberger
 donnerait une instance vierge, amputée du registre qui rend CR-03, la reprise,
@@ -42,7 +42,10 @@ le dashboard et la purge possibles. La machine locale = développement
 uniquement. Protocole chirurgical : déployer → brancher les 9 services (.env)
 → sonde E1 verte sur les 10 → DRY_RUN complet DEPUIS le serveur → paliers.
 
-## C-1. GITHUB & CI/CD — configuré le 14/08 (v0.5.0)
+## C-1. GITHUB, CI/CD & ARCHITECTURE DE DÉPLOIEMENT — 14/08 (v0.5.0)
+
+**Recon SSH du serveur (lecture seule)** : serveur PARTAGÉ (ERPNext, Nextcloud, Newsletter — on ne touche à rien). Défaut attrapé : port 8000 pris → Loader sur **8003** ; réseau `loader-net` déjà préparé → adopté ; user `apps` sous `/home/apps/loader`, jamais root ; nginx sur le HOST. **Mapping domaines TRANCHÉ (Option B, convention Newsletter)** : `simul.fintech4esg.com` = frontend Zidane, **`simul.api.fintech4esg.com` = notre backend + Swagger** (vhost `deploy/nginx/simul-api.conf` + certbot à créer). **CORS ajouté** (piloté par env, piège du split frontend/backend) + testé. Conception complète : `docs/ARCHITECTURE_DEPLOIEMENT.md`.
+
 
 Dépôt : description + 6 topics posés · **Release v0.5.0 publiée**
 (CHANGELOG Keep-a-Changelog, premier tag du dépôt) · main protégée

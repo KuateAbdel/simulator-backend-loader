@@ -73,25 +73,23 @@ docker compose up -d --build && curl -fsS http://127.0.0.1:8003/health
 ```
 Le réseau `loader-net` existe déjà (préparé) — le compose l'adopte.
 
-### c-bis) Brancher le vhost nginx du HOST (une fois, en root)
-Le fichier `/etc/nginx/sites-available/simul.conf` existe et renvoie 503.
-Remplacer, DANS LE BLOC `server` HTTPS (443) uniquement, le `location /` qui
-renvoie 503 par le proxy — **sans toucher les autres vhosts** :
-```nginx
-    location / {
-        proxy_pass http://127.0.0.1:8003;
-        proxy_set_header Host              $host;
-        proxy_set_header X-Real-IP         $remote_addr;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-```
-Puis, avec le filet de sécurité obligatoire :
+### c-bis) Créer le vhost du BACKEND `simul.api.fintech4esg.com` (root)
+**Décision Option B (14/08)** : le backend est sur `simul.api.fintech4esg.com`.
+On **ne touche PAS** à `simul.conf` (c'est le frontend de Zidane). On **crée**
+un vhost séparé + son certificat (le DNS `simul.api` résout déjà).
+
+1. Obtenir le certificat (nginx tourne, certbot en mode webroot) :
 ```bash
-nginx -t && systemctl reload nginx      # -t REFUSE de recharger une config cassée
-curl -fsS https://simul.fintech4esg.com/health   # le 503 devient 200, public
+certbot certonly --webroot -w /var/www/certbot -d simul.api.fintech4esg.com
 ```
-Garder le `location /.well-known/acme-challenge/` intact (renouvellement TLS).
+2. Poser le vhost (le fichier est fourni : `deploy/nginx/simul-api.conf`) :
+```bash
+cp /home/apps/loader/deploy/nginx/simul-api.conf /etc/nginx/sites-available/
+ln -s /etc/nginx/sites-available/simul-api.conf /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx      # -t REFUSE une config cassée
+curl -fsS https://simul.api.fintech4esg.com/health   # 200 public
+```
+Swagger en ligne pour Zidane : `https://simul.api.fintech4esg.com/docs`.
 
 ### d) La fiche du dépôt (gh non authentifié sur la machine de dev)
 Tape dans la session : `! gh auth login` — puis je pose description, topics

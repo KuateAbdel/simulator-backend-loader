@@ -3,8 +3,8 @@
 > Rédigé en tant que lead SysAdmin / DevOps / DevSecOps / Ingénieur, sur des
 > faits **mesurés** (reconnaissance SSH + doc VPS du 24/03), sans supposition.
 > Le Loader est le **BACKEND** (nous). Le frontend Next.js est celui de Zidane
-> (nous ne le déployons jamais). Ce document fige l'analyse ; une seule
-> décision reste ouverte (§2), elle t'appartient.
+> (nous ne le déployons jamais). Ce document fige l'analyse ; la décision de
+> mapping des domaines (§2) est **tranchée** (Option B, 14/08).
 
 ---
 
@@ -31,34 +31,28 @@ Faits structurants :
 
 ---
 
-## 2. ⚠️ LA SEULE DÉCISION OUVERTE — le mapping des domaines
+## 2. ✅ LE MAPPING DES DOMAINES — TRANCHÉ par Yaniv le 14/08 (Option B)
 
-Frontend et backend **doivent** être deux origines distinctes (c'est le
-standard : deux équipes, deux dépôts, deux cadences de déploiement, CORS net).
-La seule question : **quel domaine pour quel service ?** Deux mondes cohérents :
+Frontend et backend sont **deux origines distinctes** (standard : deux équipes,
+deux dépôts, deux cadences, CORS net). Décision retenue — la **convention
+maison** (identique à la Newsletter) :
 
-**Option B — la convention maison (RECOMMANDÉE)**
-- `simul.fintech4esg.com` → **frontend** (Zidane)
-- `simul.api.fintech4esg.com` → **backend** (Loader + Swagger)
-- Identique à la Newsletter. À faire : vhost + certificat pour `simul.api`
-  (le DNS résout déjà → `certbot` immédiat).
+| Domaine | Service | État |
+|---|---|---|
+| `simul.fintech4esg.com` | **frontend** (Zidane, Next.js) | vhost `simul.conf` + cert déjà là (503 pour l'instant) — Zidane branchera son conteneur |
+| `simul.api.fintech4esg.com` | **backend** (notre Loader + Swagger) | DNS résout déjà ; **vhost + certificat À CRÉER** (certbot, immédiat) |
 
-**Option A — ce que tu avais posé au départ**
-- `simul.fintech4esg.com` → **backend** (Loader + Swagger) — vhost + cert déjà là
-- Frontend de Zidane → sur un autre sous-domaine (`app.simul…`, à créer)
+Conséquences fermes :
+- Le backend répond sur `https://simul.api.fintech4esg.com` — Swagger public sur
+  `https://simul.api.fintech4esg.com/docs`, contrat sur `/openapi.json`.
+- **CORS** : `CORS_ALLOW_ORIGINS=https://simul.fintech4esg.com` (l'origine du
+  frontend) — sans ça, le navigateur bloque les appels de Zidane.
+- On ne touche PAS à `simul.conf` (c'est le frontend, propriété de Zidane) : on
+  **crée** un vhost séparé `simul-api.conf`.
 
-**Recommandation senior : Option B.** Raison : elle est *déjà* la convention
-de ton serveur (Newsletter), donc zéro surprise pour quiconque reprend le
-serveur ; elle met l'API sur le sous-domaine `.api` que tu as **déjà** préparé
-dans le DNS ; et elle laisse le domaine « nu » au produit visible (le
-frontend), ce qui est l'usage attendu par un intégrateur. Techniquement, mettre
-le backend sur `simul.api` **ne pose AUCUN problème** : les deux domaines
-pointent sur le même serveur, nginx tranche par `server_name`.
-
-> **Cette décision ne change PAS le code** : le port (8003), les conteneurs,
-> le CORS (piloté par env) sont identiques dans les deux cas. Elle ne change
-> que le `server_name` du vhost et l'hôte du certificat. On peut donc tout
-> préparer et ne fixer que cette ligne au dernier moment.
+> Cette décision ne change PAS le code (port 8003, 2 conteneurs, CORS par env
+> sont identiques) — seulement le `server_name` du nouveau vhost et l'hôte du
+> certificat.
 
 ---
 
@@ -130,18 +124,20 @@ git push main ─► CI (GitHub Actions)                 ─► CD (si CI verte)
 3. **Le `.env` de production** rempli sur le serveur : `ADMIN_JWT_SECRET`
    (`openssl rand -hex 32`), compte bootstrap, `FAKER_API_KEY`, credentials
    ROOT, et **`CORS_ALLOW_ORIGINS` = l'origine du frontend de Zidane**.
-4. **L'origine exacte du frontend de Zidane** (ex. `https://simul.fintech4esg.com`)
+4. **L'origine exacte du frontend de Zidane** = `https://simul.fintech4esg.com` (le frontend de Zidane)
    — pour le CORS.
 
 ---
 
 ## 7. Le déroulé de déploiement (une fois §6 fourni)
 
-1. `git clone` sous `/home/apps/loader`, `.env` de prod rempli.
+1. `git clone` sous `/home/apps/loader`, `.env` de prod rempli
+   (`CORS_ALLOW_ORIGINS=https://simul.fintech4esg.com`).
 2. `docker compose up -d --build` → `curl 127.0.0.1:8003/health` = 200.
-3. vhost nginx : `proxy_pass 127.0.0.1:8003` (+ `certbot` si Option B),
-   `nginx -t` **avant** `reload` (refuse une config cassée).
-4. `curl https://<domaine-backend>/health` = 200 public ; `/docs` en ligne.
+3. `certbot` pour `simul.api.fintech4esg.com` + vhost `simul-api.conf`
+   (fourni dans `deploy/nginx/`), `nginx -t` **avant** `reload`.
+4. `curl https://simul.api.fintech4esg.com/health` = 200 public ;
+   `https://simul.api.fintech4esg.com/docs` en ligne pour Zidane.
 5. Sonde E1 verte sur les 10 services (depuis le serveur).
 6. Login admin → changement du mot de passe initial.
 7. **Adoption A-13** des 11 rôles sur l'instance hébergée.
