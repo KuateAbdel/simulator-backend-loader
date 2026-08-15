@@ -250,8 +250,22 @@ chaîne (SMTP→v3.1→v3) sont bonnes — **action Yaniv : faire débloquer le
 compte au support Mailjet** ; l'UI de création de compte DIT quand l'email
 n'est pas parti et donne le canal de secours (mot de passe initial remis en
 main propre).
-Reste frontend : phases 6 (écosystème/population/traçabilité + inventaire/
-purge) et 8 (polish final a11y) — la 7 (CI/CD+déploiement) est FAITE en avance.
+(11) **PHASE 6 LIVRÉE (soir, commit `0d1d086`)** — les 5 écrans :
+Écosystème US-E2 (arbre pliable, comptes du run), Population US-E3+P-01
+(MESURE/CIBLE par pays, histogramme des soldes avec la frontière 150 000
+EF-68 tracée, tranches ordonnées MÉTIER, top occupations, naissances SD-6,
+index inverse), Traçabilité US-E4 (verdict d'abord, orphelines des DEUX
+registres), Inventaire (4 statuts = 4 couleurs, adoption A-13 multi-
+sélection à issues par identifiant, DELETE d'un groupe à nous relu),
+Purge US-F1/F2 (rite 2 temps, résidus avec verdicts, case explicite +
+danger). États vides HONNÊTES avec le geste cliquable. (12) **Mongo serveur
+EFFACÉE à la demande de Yaniv** (sauvegarde
+`/data/db/sauvegarde-avant-purge-20260815.gz` dans le volume mongo) : elle
+ne portait que son DRY d'essai + le compte admin ; bootstrap re-créé au
+redémarrage, mot de passe durable REPOSÉ à l'identique
+(`Diag!Loader-2026-08-15a`) — zéro changement pour lui.
+Reste frontend : **phase 8 seulement** (polish final a11y) — 1→6 livrées,
+7 (CI/CD+déploiement) faite en avance le 15/08.
 
 ## E. Backlog S4/S5 restant
 
