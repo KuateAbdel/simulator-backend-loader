@@ -189,6 +189,37 @@ async def classer_companies(plateforme: list[dict[str, Any]]) -> dict[str, Any]:
     )
 
 
+async def registre_depositaires() -> dict[str, str]:
+    """Les depositary_id A NOUS — l'UNION de deux memoires, jamais l'une sans
+    l'autre : les Kiosques d'org_hierarchy (UC-09 — le Kiosque vit a cheval
+    sur les deux mondes) ET le journal (US-D3, depositaire cree a l'unite :
+    son RESULTAT write-ahead porte `depositary_id`)."""
+    from app.core.database import COLLECTION_ORG_HIERARCHY
+
+    crees, supprimes = await _registre_journal("Depositary", "depositary_id")
+    curseur = get_collection(COLLECTION_ORG_HIERARCHY).find(
+        {"niveau": "KIOSQUE", "depositary_id": {"$ne": None}},
+        {"depositary_id": 1, "name": 1},
+    )
+    async for document in curseur:
+        crees.setdefault(
+            str(document["depositary_id"]), str(document.get("name", ""))
+        )
+    # depositary-service n'a AUCUN DELETE (D-DEP-3) : `supprimes` devrait etre
+    # vide a jamais — honore quand meme, le code ne presume pas.
+    return {did: nom for did, nom in crees.items() if did not in supprimes}
+
+
+async def classer_depositaires(plateforme: list[dict[str, Any]]) -> dict[str, Any]:
+    """Reconciliation des depositaires (16/08, question Yaniv « aura-t-on la
+    visibilite ? ») — registre = org_hierarchy, marqueur DEMO_ dans `name`
+    (le depositaire n'a pas de short_name au contrat). Les quatre statuts
+    sont possibles ; AUCUN n'est supprimable (D-DEP-3, desactivation
+    cosmetique — D-DEP-8)."""
+    registre = await registre_depositaires()
+    return await _classer_par_marqueur(plateforme, registre, champ_marqueur="name")
+
+
 async def _classer_par_marqueur(
     plateforme: list[dict[str, Any]],
     registre: dict[str, str],

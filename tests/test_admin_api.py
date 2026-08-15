@@ -1408,6 +1408,14 @@ class TestUSD1CompanyALUnite:
                 dry = str(self.mode).endswith("DRY_RUN")
                 return {"_id": "cid-1", "name": "DEMO_Composee", "_dry_run": dry}
 
+            async def creer_licence(self, company_id, packages, debut, fin, rapport):
+                # Meme comportement observable que le vrai (UC-07) : succes ->
+                # append au rapport ; le test verifie l'ENCHAINEMENT, pas HTTP.
+                appels.append(
+                    {"licence": company_id, "packages": [str(p) for p in packages]}
+                )
+                rapport.licences_creees.append(company_id)
+
         monkeypatch.setattr(
             admin_entites, "_executeur_organisation", lambda mode: _Executeur(mode)
         )
@@ -1461,6 +1469,14 @@ class TestUSD1CompanyALUnite:
         assert reponse.status_code == 201, reponse.text
         assert str(appels[0]["mode"]).endswith("REAL")
         assert reponse.json()["cascade_owner_verifiee"] is True
+        # UC-07 (16/08) : la company a l'unite naît AVEC sa licence, comme au
+        # run — sinon son catalogue resterait ferme (la licence conditionne
+        # UC-11). Le package est ALL, et la reponse le DIT.
+        assert reponse.json()["licence_creee"] is True
+        assert "ALL" in reponse.json()["licence_detail"]
+        licence = next(a for a in appels if "licence" in a)
+        assert licence["licence"] == "cid-1"
+        assert licence["packages"] == ["ALL"]
 
     async def test_un_echec_serveur_est_un_502_avec_le_motif(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
@@ -3078,3 +3094,252 @@ class TestComptesRBAC:
                 headers=entetes_b,
             )
         ).status_code == 409
+
+
+class TestInventaireDepositaires:
+    """16/08 (question Yaniv « aura-t-on la visibilite ? ») — reconciliation
+    des depositaires : registre = depositary_id des Kiosques d'org_hierarchy
+    (UC-09), marqueur DEMO_ dans name, AUCUN supprimable (D-DEP-3)."""
+
+    async def test_les_quatre_statuts_depuis_org_hierarchy_et_le_marqueur(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        from app.routes import admin_inventaire
+
+        du_run, disparu = str(_uuid4()), str(_uuid4())
+        plateforme = [
+            {"_id": du_run, "name": "DEMO_Kiosque Bonapriso", "currency": "XAF"},
+            {"_id": str(_uuid4()), "name": "DEMO_Kiosque Mystere", "currency": "XAF"},
+            {"_id": str(_uuid4()), "name": "Depositaire Metier", "currency": "XOF"},
+        ]
+
+        class _Depositaires:
+            async def lister(self):  # type: ignore[no-untyped-def]
+                return list(plateforme)
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(
+            admin_inventaire, "_client_depositaires", lambda: _Depositaires()
+        )
+
+        org = database.get_database()["org_hierarchy"]
+        await org.delete_many({})
+        await org.insert_many(
+            [
+                {
+                    "niveau": "KIOSQUE",
+                    "depositary_id": du_run,
+                    "name": "DEMO_Kiosque Bonapriso",
+                },
+                {
+                    "niveau": "KIOSQUE",
+                    "depositary_id": disparu,
+                    "name": "DEMO_Kiosque Efface",
+                },
+            ]
+        )
+        entetes = await _session_complete(client)
+
+        reponse = await client.get("/admin/inventaire/depositaires", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert [d["nom"] for d in corps["a_nous"]] == ["DEMO_Kiosque Bonapriso"]
+        assert [d["nom"] for d in corps["disparu_la_bas"]] == ["DEMO_Kiosque Efface"]
+        assert [d["nom"] for d in corps["marque_mais_inconnu"]] == [
+            "DEMO_Kiosque Mystere"
+        ]
+        assert [d["nom"] for d in corps["etranger"]] == ["Depositaire Metier"]
+        assert "D-DEP-3" in corps["note"], "l'insupprimabilite est DITE"
+        await org.delete_many({})
+
+
+class TestUSD3DepositaireALUnite:
+    """US-D3 (16/08) — le depositaire a l'unite : marqueur DEMO_ (EF-63),
+    company A NOUS obligatoire (403), GET-avant-POST par nom (D-DEP-3 :
+    aucune unicite serveur, aucun DELETE), write-ahead + RELECTURE, et le
+    cree est a_nous a la reconciliation PAR LE JOURNAL."""
+
+    @staticmethod
+    async def _company_a_nous(company_id: str) -> None:
+        await database.get_database()["lenders_registry"].insert_one(
+            {"company_id": company_id, "nom": "DEMO_SARL Test"}
+        )
+
+    @staticmethod
+    def _doubler(monkeypatch: pytest.MonkeyPatch, *, existants: list | None = None):
+        from app.routes import admin_entites
+
+        etat = {"liste": list(existants or []), "crees": []}
+
+        class _Depositaires:
+            async def lister(self):  # type: ignore[no-untyped-def]
+                return list(etat["liste"])
+
+            async def chercher_par_nom(self, nom):  # type: ignore[no-untyped-def]
+                cible = nom.strip().lower()
+                return next(
+                    (d for d in etat["liste"] if str(d.get("name", "")).lower() == cible),
+                    None,
+                )
+
+            async def creer(self, nom, devise, company_id):  # type: ignore[no-untyped-def]
+                fiche = {"_id": f"dep-{len(etat['crees']) + 1}", "name": nom,
+                         "currency": devise, "company_id": company_id}
+                etat["crees"].append(fiche)
+                etat["liste"].append(fiche)
+                return fiche
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(
+            admin_entites, "_client_depositaires_unite", lambda: _Depositaires()
+        )
+        return etat
+
+    async def test_company_etrangere_403_meme_a_l_apercu(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler(monkeypatch)
+        await database.get_database()["lenders_registry"].delete_many({})
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/depositaires/apercu",
+            json={"nom": "Kiosque Test", "devise": "XAF", "company_id": "cie-inconnue"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 403
+        assert "etrangere" in reponse.json()["detail"]
+
+    async def test_le_rite_complet_marqueur_relecture_et_registre(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        etat = self._doubler(monkeypatch)
+        await database.get_database()["lenders_registry"].delete_many({})
+        await _registre_vierge()
+        await self._company_a_nous("cie-1")
+        entetes = await _session_complete(client)
+        demande = {"nom": "Kiosque Bonapriso", "devise": "XAF", "company_id": "cie-1"}
+
+        apercu = await client.post(
+            "/admin/entites/depositaires/apercu", json=demande, headers=entetes
+        )
+        assert apercu.status_code == 200, apercu.text
+        assert apercu.json()["payload"]["name"] == "DEMO_Kiosque Bonapriso"
+        assert etat["crees"] == [], "l'apercu n'ecrit JAMAIS"
+
+        creation = await client.post(
+            "/admin/entites/depositaires", json=demande, headers=entetes
+        )
+        assert creation.status_code == 201, creation.text
+        corps = creation.json()
+        assert corps["marqueur"] == "DEMO_Kiosque Bonapriso"
+        assert corps["fiche_relue"]["name"] == "DEMO_Kiosque Bonapriso"
+        assert corps["statut"] == "a_nous"
+
+        # Doublon -> 409 (D-DEP-3 : un doublon serait permanent)
+        doublon = await client.post(
+            "/admin/entites/depositaires", json=demande, headers=entetes
+        )
+        assert doublon.status_code == 409
+
+        # Reconciliation : a_nous PAR LE JOURNAL, sans attendre un run
+        from app.routes import admin_inventaire
+
+        class _MemeListe:
+            async def lister(self):  # type: ignore[no-untyped-def]
+                return list(etat["liste"])
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(
+            admin_inventaire, "_client_depositaires", lambda: _MemeListe()
+        )
+        inventaire = await client.get("/admin/inventaire/depositaires", headers=entetes)
+        assert [d["nom"] for d in inventaire.json()["a_nous"]] == [
+            "DEMO_Kiosque Bonapriso"
+        ]
+        await database.get_database()["lenders_registry"].delete_many({})
+
+
+class TestLicencesALUnite:
+    """16/08 — voir et ATTRIBUER une licence a une company A NOUS (UC-07)."""
+
+    @staticmethod
+    def _doubler(monkeypatch: pytest.MonkeyPatch, *, licences: list | None = None):
+        from app.routes import admin_entites
+
+        etat = {"licences": list(licences or []), "creees": []}
+
+        class _Companies:
+            async def licences_de_company(self, company_id):  # type: ignore[no-untyped-def]
+                return list(etat["licences"])
+
+            async def a_une_licence(self, company_id):  # type: ignore[no-untyped-def]
+                return bool(etat["licences"])
+
+            async def creer_licence(self, company_id, packages, debut, fin):  # type: ignore[no-untyped-def]
+                fiche = {"company_id": str(company_id),
+                         "packages": [p.value for p in packages],
+                         "start_date": debut, "end_date": fin}
+                etat["creees"].append(fiche)
+                etat["licences"].append(fiche)
+                return fiche
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(
+            admin_entites, "_client_companies_unite", lambda: _Companies()
+        )
+        return etat
+
+    async def test_etrangere_403_et_a_nous_licenciee_du_run_UC07(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        etat = self._doubler(monkeypatch)
+        await database.get_database()["lenders_registry"].delete_many({})
+        entetes = await _session_complete(client)
+
+        refus = await client.post(
+            "/admin/entites/companies/cie-x/licences",
+            json={"packages": ["ALL"]},
+            headers=entetes,
+        )
+        assert refus.status_code == 403
+
+        await database.get_database()["lenders_registry"].insert_one(
+            {"company_id": "cie-x", "nom": "DEMO_SARL"}
+        )
+        creation = await client.post(
+            "/admin/entites/companies/cie-x/licences",
+            json={"packages": ["READY_COLLECTE"]},
+            headers=entetes,
+        )
+        assert creation.status_code == 201, creation.text
+        assert creation.json()["licences"][0]["packages"] == ["READY_COLLECTE"]
+        assert etat["creees"][0]["packages"] == ["READY_COLLECTE"]
+        # La fenetre UC-07 : debut < fin, la marge +30 j est dedans
+        fen = creation.json()["fenetre"]
+        assert fen["debut"] < fen["fin"]
+
+        # Deja licenciee -> 409, jamais d'empilement silencieux
+        doublon = await client.post(
+            "/admin/entites/companies/cie-x/licences",
+            json={"packages": ["ALL"]},
+            headers=entetes,
+        )
+        assert doublon.status_code == 409
+
+        # GET : les licences RELUES
+        lecture = await client.get(
+            "/admin/entites/companies/cie-x/licences", headers=entetes
+        )
+        assert lecture.status_code == 200
+        assert lecture.json()["compte"] == 1
+        await database.get_database()["lenders_registry"].delete_many({})

@@ -36,6 +36,7 @@ from app.routes.dependances import (
 )
 from app.services.inventaire import (
     classer_companies,
+    classer_depositaires,
     classer_groupes,
     classer_produits,
     registre_groupes,
@@ -200,6 +201,34 @@ async def companies(
     classement["note"] = (
         "aucune company n'est supprimable — company-service n'a pas de DELETE ; "
         "les notres restent marquees DEMO_ dans short_name"
+    )
+    return classement
+
+
+def _client_depositaires() -> Any:
+    from app.clients.depositary_service import DepositaryServiceClient
+
+    return DepositaryServiceClient()
+
+
+@router.get("/depositaires")
+async def depositaires(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Reconciliation des depositaires (16/08) — registre = les depositary_id
+    des Kiosques d'org_hierarchy (UC-09), marqueur DEMO_ dans `name`. AUCUN
+    n'est supprimable : depositary-service n'a pas de DELETE (D-DEP-3), et la
+    desactivation est cosmetique — elle n'arrete ni collectes ni retraits
+    (D-DEP-8, FRA-203/204)."""
+    client = _client_depositaires()
+    try:
+        classement = await classer_depositaires(await client.lister())
+    finally:
+        await client.fermer()
+    classement["note"] = (
+        "aucun depositaire n'est supprimable — pas de DELETE (D-DEP-3), "
+        "desactivation cosmetique (D-DEP-8) ; les notres viennent des "
+        "Kiosques d'org_hierarchy (UC-09)"
     )
     return classement
 

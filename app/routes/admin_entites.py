@@ -36,7 +36,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.clients.base import ErreurService
-from app.clients.contracts import PolicyMeasure, PolicyType, ProductCategory, ProductType
+from app.clients.contracts import (
+    PackageName,
+    PolicyMeasure,
+    PolicyType,
+    ProductCategory,
+    ProductType,
+)
 from app.core.cdc import TAUX_USURE_MAX_ANNUEL_PCT
 from app.core.config import settings as _settings
 from app.core.database import COLLECTION_LOADER_CONFIGURATION, get_collection
@@ -397,9 +403,10 @@ def _executeur_organisation(mode: Any) -> Any:
 
 async def _composer_company(
     demande: CompanyDemande, mode: Any
-) -> tuple[dict[str, Any] | None, Any]:
+) -> tuple[dict[str, Any] | None, Any, Any]:
     """Le tronc commun apercu/confirmation — seule la valeur de `mode` change,
-    et c'est creer_company() qui en tire les consequences (D-01)."""
+    et c'est creer_company() qui en tire les consequences (D-01). Rend AUSSI
+    l'executeur : la confirmation enchaine la LICENCE (UC-07) avec lui."""
     from app.clients.contracts import CompanyType
     from app.services.generateur import patronyme
     from app.services.organisation_execution import (
@@ -436,7 +443,7 @@ async def _composer_company(
         est_imf=est_imf,
         raison_imposee=demande.nom,
     )
-    return fiche, rapport
+    return fiche, rapport, executeur
 
 
 @router.post("/companies/apercu")
@@ -448,10 +455,11 @@ async def apercu_company(
     `creer_company()` en DRY_RUN valide tout et n'emet rien."""
     from app.models.enums import RunMode
 
-    fiche, rapport = await _composer_company(demande, RunMode.DRY_RUN)
+    fiche, rapport, _executeur = await _composer_company(demande, RunMode.DRY_RUN)
     return {
         "fiche": fiche,
         "admin_annonce": rapport.admins_crees[0] if rapport.admins_crees else None,
+        "licence_annonce": "ALL — validite fenetre de simulation + 30 j (UC-07)",
         "note": (
             "apercu seulement — aucune ecriture n'est partie. Confirmer via "
             "POST /admin/entites/companies avec les MEMES champs."
@@ -470,7 +478,7 @@ async def creer_company_unite(
     from app.models.enums import RunMode
 
     await refuser_si_run_en_cours()
-    fiche, rapport = await _composer_company(demande, RunMode.REAL)
+    fiche, rapport, executeur = await _composer_company(demande, RunMode.REAL)
     if fiche is None:
         motif = (
             rapport.companies_echouees[-1][1]
@@ -478,11 +486,44 @@ async def creer_company_unite(
             else "echec sans motif rapporte"
         )
         raise HTTPException(status_code=502, detail=f"creation refusee : {motif}")
+
+    # UC-07 (trou ferme le 16/08, attrape par la question de Yaniv) : le RUN
+    # cree chaque company AVEC sa licence — la route a l'unite s'arretait a
+    # l'Admin User, laissant une company au catalogue FERME (la licence
+    # conditionne UC-11). Meme geste que le run : package ALL, fenetre de
+    # simulation (ou 180 jours par defaut, ENF-16), garde anti-doublon
+    # `a_une_licence` dans creer_licence, echec RAPPORTE jamais avale.
+    from datetime import date, timedelta
+
+    company_id = str(fiche.get("_id") or fiche.get("id") or "")
+    licence_creee = False
+    licence_detail = "identifiant company absent — licence non tentee"
+    if company_id:
+        debut = _settings.sim_start_date or date.today()
+        fin = _settings.sim_end_date or (debut + timedelta(days=180))
+        avant = len(rapport.licences_creees)
+        await executeur.creer_licence(
+            company_id, [PackageName.ALL], debut, fin, rapport
+        )
+        licence_creee = len(rapport.licences_creees) > avant
+        licence_detail = (
+            f"ALL [{debut.isoformat()} -> {fin.isoformat()} +30 j]"
+            if licence_creee
+            else (
+                rapport.companies_echouees[-1][1]
+                if rapport.companies_echouees
+                and rapport.companies_echouees[-1][0].startswith("licence")
+                else "deja licenciee — rien a recreer (garde UC-07)"
+            )
+        )
+
     return {
         "fiche": fiche,
         "admins_crees": rapport.admins_crees,
         "cascade_owner_verifiee": rapport.cascades_identity_verifiees == 1,
-        "note": "sequence S3-03 executee — fiche relue du serveur",
+        "licence_creee": licence_creee,
+        "licence_detail": licence_detail,
+        "note": "sequence S3-03 executee + licence UC-07 — fiche relue du serveur",
     }
 
 
@@ -633,4 +674,286 @@ async def creer_groupe(
             "reconnaissable a la reconciliation et supprimable via "
             "DELETE /admin/inventaire/groupes/{id} — seul module reversible"
         ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# US-D3 (16/08, demande Yaniv) — le DEPOSITAIRE a l'unite. Le meme rite que
+# le produit et la company : apercu (aucune ecriture) puis confirmation.
+# Contrat serveur maitrise : POST /api/v1/depositaries/create — 3 champs
+# {name, currency, company_id}, pas un de plus ; le Depositaire nait ACTIF.
+# ---------------------------------------------------------------------------
+
+
+def _client_depositaires_unite() -> Any:
+    """Fabrique du client depositary-service — doublee dans les tests."""
+    from app.clients.depositary_service import DepositaryServiceClient
+
+    return DepositaryServiceClient()
+
+
+def _client_companies_unite() -> Any:
+    """Fabrique du client company-service — doublee dans les tests."""
+    from app.clients.company_service import CompanyServiceClient
+
+    return CompanyServiceClient()
+
+
+class DepositaireDemande(BaseModel):
+    """3 champs, comme le contrat serveur — et chacun est GARDE :
+    le nom recoit le marqueur DEMO_ (EF-63), la devise est l'une des NOTRES
+    (D-DEP-6 : le serveur accepte n'importe quoi — FRA-201, PAS NOUS), la
+    company doit etre A NOUS (le Loader n'accroche rien a l'etranger)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nom: str = Field(min_length=3, max_length=70)
+    devise: Literal["XAF", "XOF"]
+    company_id: str = Field(min_length=1, max_length=64)
+
+
+def _marqueur_depositaire(nom: str) -> str:
+    nettoye = nom.strip()
+    return nettoye if nettoye.startswith("DEMO_") else f"DEMO_{nettoye}"
+
+
+async def _garder_depositaire(
+    demande: DepositaireDemande, client_depositaires: Any
+) -> str:
+    """Les gardes communes apercu/creation — chaque refus porte sa regle."""
+    from app.services.inventaire import registre_companies
+
+    if demande.company_id not in await registre_companies():
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"company {demande.company_id!r} absente de NOTRE registre — le "
+                "Loader n'accroche jamais un depositaire a une company etrangere"
+            ),
+        )
+    marqueur = _marqueur_depositaire(demande.nom)
+    # D-DEP-3 : AUCUNE unicite serveur (doublon accepte en 201, mesure) et
+    # AUCUN DELETE — un doublon serait la pour toujours. GET-avant-POST.
+    existant = await client_depositaires.chercher_par_nom(marqueur)
+    if existant is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"le depositaire {marqueur!r} existe deja "
+                f"(_id={existant.get('_id') or existant.get('id')}) — aucun DELETE "
+                "n'existe (D-DEP-3), un doublon serait permanent"
+            ),
+        )
+    return marqueur
+
+
+@router.post("/depositaires/apercu")
+async def apercu_depositaire(
+    demande: DepositaireDemande,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`US-D3` etape 1 — le payload EXACT, AUCUNE ecriture."""
+    client = _client_depositaires_unite()
+    try:
+        marqueur = await _garder_depositaire(demande, client)
+    finally:
+        await client.fermer()
+    return {
+        "payload": {
+            "name": marqueur,
+            "currency": demande.devise,
+            "company_id": demande.company_id,
+        },
+        "marqueur": marqueur,
+        "note": (
+            "apercu seulement — aucune ecriture n'est partie. Le Depositaire "
+            "naitra ACTIF (mesure). Confirmer via POST /admin/entites/depositaires."
+        ),
+    }
+
+
+@router.post("/depositaires", status_code=201)
+async def creer_depositaire(
+    demande: DepositaireDemande,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`US-D3` etape 2 — gardes re-jouees, write-ahead, POST, RELECTURE.
+
+    Le depositaire cree ici s'inscrit au REGISTRE par le journal (RESULTAT
+    `SUCCES` portant `depositary_id`) : il est `a_nous` a la reconciliation
+    des sa naissance — sans attendre qu'un run lui donne un noeud Kiosque.
+    """
+    await refuser_si_run_en_cours()
+
+    client = _client_depositaires_unite()
+    try:
+        marqueur = await _garder_depositaire(demande, client)
+
+        audit = AuditTrailRepository()
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="Depositary",
+            entity_id=uuid5(NAMESPACE_OID, f"finzuu-depositaire:{marqueur}"),
+            operation="CREATE",
+            cible="depositary-service POST /api/v1/depositaries/create",
+            payload={"name": marqueur, "company_id": demande.company_id},
+        ) as suivi:
+            try:
+                reponse = await client.creer(
+                    marqueur, demande.devise, demande.company_id
+                )
+            except ErreurService as erreur:
+                suivi.echoue(f"HTTP {erreur.status}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"depositary-service a refuse : HTTP {erreur.status}",
+                ) from erreur
+            identifiant = str(reponse.get("_id") or reponse.get("id") or "")
+            suivi.reussi({"depositary_id": identifiant, "name": marqueur})
+
+        # RELECTURE — la preuve vient de la liste, jamais de l'echo du POST.
+        fiche = await client.chercher_par_nom(marqueur)
+        if fiche is None:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"le depositaire {marqueur!r} n'apparait PAS a la relecture — "
+                    "le serveur a repondu sans agir, a verifier a la main"
+                ),
+            )
+    finally:
+        await client.fermer()
+
+    return {
+        "depositary_id": identifiant,
+        "fiche_relue": fiche,
+        "marqueur": marqueur,
+        "statut": "a_nous",
+        "note": (
+            "au registre par le journal — visible a_nous a l'inventaire ; "
+            "ACTIF des la naissance ; aucun DELETE n'existe (D-DEP-3)"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# LICENCES a l'unite (16/08, demande Yaniv) — voir et ATTRIBUER une licence
+# a une company A NOUS. UC-07 : la licence conditionne le catalogue (UC-11).
+# ---------------------------------------------------------------------------
+
+
+class LicenceDemande(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: READY_CASH = credit, READY_COLLECTE = collecte, ALL = les deux (UC-07).
+    packages: list[Literal["ALL", "READY_CASH", "READY_COLLECTE"]] = Field(
+        min_length=1, max_length=3
+    )
+
+
+async def _garder_company_a_nous(company_id: str) -> None:
+    from app.services.inventaire import registre_companies
+
+    if company_id not in await registre_companies():
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"company {company_id!r} absente de NOTRE registre — le Loader "
+                "ne licencie jamais une company etrangere"
+            ),
+        )
+
+
+@router.get("/companies/{company_id}/licences")
+async def licences_de_company(
+    company_id: str,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Les licences RELUES de company-service pour une company A NOUS."""
+    await _garder_company_a_nous(company_id)
+    client = _client_companies_unite()
+    try:
+        licences = await client.licences_de_company(company_id)
+    finally:
+        await client.fermer()
+    return {
+        "company_id": company_id,
+        "licences": licences,
+        "compte": len(licences),
+        "note": (
+            "la licence conditionne le catalogue (UC-11) : READY_CASH credit, "
+            "READY_COLLECTE collecte, ALL les deux — une company sans licence "
+            "a un catalogue FERME"
+        ),
+    }
+
+
+@router.post("/companies/{company_id}/licences", status_code=201)
+async def creer_licence_company(
+    company_id: str,
+    demande: LicenceDemande,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Attribue une licence a une company A NOUS — le geste exact du run.
+
+    Fenetre UC-07 : la fenetre de simulation configuree (ou 180 jours par
+    defaut, ENF-16) PLUS 30 jours a venir. 409 si la company est deja
+    licenciee — une licence active suffit, jamais d'empilement silencieux.
+    """
+    from datetime import date, timedelta
+
+    from app.clients.contracts import PackageName as _Pkg
+    from app.core.cdc import LICENCE_MARGE_FUTURE_JOURS
+
+    await refuser_si_run_en_cours()
+    await _garder_company_a_nous(company_id)
+
+    client = _client_companies_unite()
+    try:
+        if await client.a_une_licence(company_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"la company {company_id!r} est DEJA licenciee — une licence "
+                    "active suffit (UC-07), rien n'est empile"
+                ),
+            )
+        debut = _settings.sim_start_date or date.today()
+        fin = (_settings.sim_end_date or (debut + timedelta(days=180))) + timedelta(
+            days=LICENCE_MARGE_FUTURE_JOURS
+        )
+        audit = AuditTrailRepository()
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="License",
+            entity_id=uuid5(NAMESPACE_OID, f"finzuu-licence:{company_id}"),
+            operation="CREATE",
+            cible="company-service POST /api/v1/licenses/",
+            payload={"company_id": company_id, "packages": list(demande.packages)},
+        ) as suivi:
+            try:
+                await client.creer_licence(
+                    company_id,
+                    [_Pkg(p) for p in demande.packages],
+                    debut.isoformat(),
+                    fin.isoformat(),
+                )
+            except ErreurService as erreur:
+                suivi.echoue(f"HTTP {erreur.status}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"company-service a refuse la licence : HTTP {erreur.status}",
+                ) from erreur
+            suivi.reussi({"company_id": company_id, "packages": list(demande.packages)})
+
+        # RELECTURE — les licences d'APRES, jamais l'echo du POST.
+        licences = await client.licences_de_company(company_id)
+    finally:
+        await client.fermer()
+
+    return {
+        "company_id": company_id,
+        "licences": licences,
+        "fenetre": {"debut": debut.isoformat(), "fin": fin.isoformat()},
+        "note": "licence attribuee — le catalogue (UC-11) s'ouvre selon les packages",
     }
