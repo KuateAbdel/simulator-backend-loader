@@ -359,7 +359,22 @@ class ExecuteurOrganisation:
                 # que le rapport a blanc soit complet.
                 rapport.porteuses.append(CompanyPorteuse(uuid4(), raison, pays, devise))
             logger.info("[DRY_RUN] Company %s (%s, %s) — payload valide", raison, pays, devise)
-            return {"_id": str(uuid4()), "name": raison, "short_name": court, "_dry_run": True}
+            # US-D1 (15/08) : l'apercu montre la MATIERE composee — tout est
+            # deja calcule ici, la fiche a blanc n'a aucune raison d'etre
+            # muette. Cles ADDITIVES : les 4 historiques restent en tete.
+            return {
+                "_id": str(uuid4()),
+                "name": raison,
+                "short_name": court,
+                "_dry_run": True,
+                "type_company": type_company.value,
+                "country": pays,
+                "currency": devise,
+                "industries": industries,
+                "sectors": secteurs,
+                "adresse": adresse.en_payload(),
+                "owner": owner.en_payload(),
+            }
 
         try:
             company = await self._companies.creer_company(
