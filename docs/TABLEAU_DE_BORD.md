@@ -233,6 +233,23 @@ Yaniv) : source unique package.json (SemVer), injectée AU BUILD avec le
 commit court, affichée bas de sidebar + login (« Loader v0.5.0 · abc1234 »),
 CHANGELOG Keep-a-Changelog, **tag v0.5.0** ; v1.0.0 quand les 8 phases
 seront tenues.
+(9) **RBAC (décision Yaniv 15/08) : Super-Admin est un RÔLE multi-comptes**
+(backend `6b45e10`, frontend `4f769cd`) — chaque personne a SON compte
+(email RÉEL : le code US-A4 part vers l'email du compte), son mot de passe
+changé librement SANS toucher les autres (bouton header à tout moment), son
+cycle US-A2 propre. GET/POST /admin/comptes + PUT /{email}/etat :
+désactivation réversible motivée (jamais de suppression — journal
+attribuable), 401 générique pour un compte désactivé, gardes anti-lock-out
+(jamais soi-même, jamais le dernier actif), write-ahead RUN_ADMIN. Écran
+« Utilisateurs » : mot de passe initial généré affiché UNE fois + copie.
+967 tests (+5). (10) **MAILJET — diagnostic verbatim CLOS** : le COMPTE est
+bloqué (mj-0001) — v3.1 401 franc ; v3 « Sent »+MessageID puis **404 sur ce
+même ID** ; SMTP accepte (250) puis journal du compte VIDE ; compteurs À VIE
+à zéro ; expéditeur validé actif, login SMTP accepté. Nos clés et notre
+chaîne (SMTP→v3.1→v3) sont bonnes — **action Yaniv : faire débloquer le
+compte au support Mailjet** ; l'UI de création de compte DIT quand l'email
+n'est pas parti et donne le canal de secours (mot de passe initial remis en
+main propre).
 Reste frontend : phases 6 (écosystème/population/traçabilité + inventaire/
 purge) et 8 (polish final a11y) — la 7 (CI/CD+déploiement) est FAITE en avance.
 
