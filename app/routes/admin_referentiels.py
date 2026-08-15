@@ -139,6 +139,20 @@ async def geographie(
                         "quartiers": sorted(
                             q.name for q in referentiel.quartiers_de_ville(ville.city_id)
                         ),
+                        # ADDITIF (16/08, US-D3) : l'ecran Depositaire choisit
+                        # un quartier PAR IDENTIFIANT — les noms seuls ne
+                        # suffisent plus. L'ancien champ reste tel quel.
+                        "quartiers_detail": sorted(
+                            (
+                                {
+                                    "id": q.district_id,
+                                    "nom": q.name,
+                                    "zone_type": q.zone_type,
+                                }
+                                for q in referentiel.quartiers_de_ville(ville.city_id)
+                            ),
+                            key=lambda q: q["nom"],
+                        ),
                     }
                 )
             regions.append(
