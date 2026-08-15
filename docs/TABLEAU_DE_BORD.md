@@ -224,8 +224,17 @@ cochées-seules + cocher/décocher le filtré ; 409 à trois issues nommées).
 carte Monnaie pré-remplissable). (6) **Mot de passe Super-Admin réinitialisé**
 (l'ancien bootstrap ne marchait plus — changé à la 1ʳᵉ connexion puis perdu) :
 `scripts/reinitialiser_admin.py` dans le conteneur, login 200 vérifié.
+(7) **RESPONSIVE réel (même soir, commit `6edc666`)** — mesuré avant de
+corriger : à 390 px la sidebar en flux laissait 160 px au contenu. Sous
+768 px elle devient un TIROIR superposé (fermée par défaut, hamburger,
+backdrop, se referme à la navigation) ; banc 390/768/1366 vert, desktop
+inchangé, zéro débordement X. (8) **VERSIONNING de la webapp** (demande
+Yaniv) : source unique package.json (SemVer), injectée AU BUILD avec le
+commit court, affichée bas de sidebar + login (« Loader v0.5.0 · abc1234 »),
+CHANGELOG Keep-a-Changelog, **tag v0.5.0** ; v1.0.0 quand les 8 phases
+seront tenues.
 Reste frontend : phases 6 (écosystème/population/traçabilité + inventaire/
-purge) et 8 (polish) — la 7 (CI/CD+déploiement) est FAITE en avance.
+purge) et 8 (polish final a11y) — la 7 (CI/CD+déploiement) est FAITE en avance.
 
 ## E. Backlog S4/S5 restant
 
