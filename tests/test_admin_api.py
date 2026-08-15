@@ -2900,3 +2900,181 @@ class TestUSB7AjoutDeTelco:
         assert reponse.status_code == 201, reponse.text
         assert reponse.json()["config_service"]["statut"] == "envoye"
         assert _config_service_double["villes"] == [("cfg-CM", "Bafia")]
+
+
+class TestComptesRBAC:
+    """RBAC (decision Yaniv 15/08) — Super-Admin est un ROLE multi-comptes :
+    chacun son email reel, son mot de passe, son cycle US-A2 ; desactivation
+    reversible, jamais de suppression ; gardes anti-lock-out."""
+
+    EMAIL_B = "collegue-tests@finzuu.com"
+
+    @pytest.fixture(autouse=True)
+    def _aucun_email_reel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """AUCUN test n'emet de courrier reel — la route appelle le MODULE
+        (mailjet.envoyer_email), on patche la fonction du module. Le faux
+        rend False : le createur est le canal de secours, et c'est dit."""
+        from app.clients import mailjet as module_mailjet
+
+        async def faux_envoi(*_: object, **__: object) -> bool:
+            return False
+
+        monkeypatch.setattr(module_mailjet, "envoyer_email", faux_envoi)
+
+    async def test_la_liste_montre_la_vue_publique_jamais_un_hash(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        reponse = await client.get("/admin/comptes", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["compte"] == 1
+        fiche = corps["comptes"][0]
+        assert fiche["email"] == EMAIL
+        assert fiche["actif"] is True
+        assert "password_hash" not in fiche and "hash" not in str(fiche).lower()
+
+    async def test_creer_un_compte_puis_son_cycle_A2_complet_et_independant(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """LE coeur de la demande : un 2e compte nait, se connecte avec son
+        mot de passe initial, le change LUI-MEME — et le compte du createur
+        continue de fonctionner, intact."""
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/comptes", json={"email": self.EMAIL_B}, headers=entetes
+        )
+        assert reponse.status_code == 201, reponse.text
+        corps = reponse.json()
+        initial_b = corps["mot_de_passe_initial"]
+        assert len(initial_b) >= 20
+        assert corps["compte"]["must_change_password"] is True
+        assert corps["compte"]["cree_par"] == EMAIL
+        # Mailjet n'est pas provisionne dans les tests : l'envoi est FAUX dit,
+        # jamais une exception — le createur est le canal de secours.
+        assert corps["email_envoye"] is False
+
+        connexion_b = await client.post(
+            "/admin/auth/login",
+            json={"email": self.EMAIL_B, "mot_de_passe": initial_b},
+        )
+        assert connexion_b.status_code == 200, connexion_b.text
+        assert connexion_b.json()["must_change_password"] is True
+
+        durable_b = "mon-durable-a-moi-15aout!"
+        change_b = await client.post(
+            "/admin/auth/password",
+            json={"ancien": initial_b, "nouveau": durable_b},
+            headers={
+                "Authorization": f"Bearer {connexion_b.json()['access_token']}"
+            },
+        )
+        assert change_b.status_code == 200, change_b.text
+
+        # B se connecte avec SON durable ; A avec le SIEN — independants.
+        assert (
+            await client.post(
+                "/admin/auth/login",
+                json={"email": self.EMAIL_B, "mot_de_passe": durable_b},
+            )
+        ).status_code == 200
+        assert (
+            await client.post(
+                "/admin/auth/login",
+                json={"email": EMAIL, "mot_de_passe": MDP_DURABLE},
+            )
+        ).status_code == 200
+
+    async def test_un_email_deja_porteur_est_un_409_jamais_un_doublon(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        assert (
+            await client.post("/admin/comptes", json={"email": EMAIL}, headers=entetes)
+        ).status_code == 409
+
+    async def test_gardes_anti_lock_out_puis_desactivation_reelle(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await _session_complete(client)
+        # Se desactiver soi-meme : refuse.
+        soi = await client.put(
+            f"/admin/comptes/{EMAIL}/etat",
+            json={"actif": False, "motif": "test lock-out"},
+            headers=entetes,
+        )
+        assert soi.status_code == 409
+        # Creer B, le desactiver : accepte — et son login devient le MEME
+        # 401 generique que des identifiants faux (rien a enumerer).
+        creation = await client.post(
+            "/admin/comptes", json={"email": self.EMAIL_B}, headers=entetes
+        )
+        initial_b = creation.json()["mot_de_passe_initial"]
+        desactivation = await client.put(
+            f"/admin/comptes/{self.EMAIL_B}/etat",
+            json={"actif": False, "motif": "depart de l'equipe (test)"},
+            headers=entetes,
+        )
+        assert desactivation.status_code == 200, desactivation.text
+        assert desactivation.json()["compte"]["actif"] is False
+        refus = await client.post(
+            "/admin/auth/login",
+            json={"email": self.EMAIL_B, "mot_de_passe": initial_b},
+        )
+        assert refus.status_code == 401
+        assert refus.json()["detail"] == "identifiants invalides"
+        # Reactivation : le mot de passe n'a pas change.
+        reactivation = await client.put(
+            f"/admin/comptes/{self.EMAIL_B}/etat",
+            json={"actif": True, "motif": "retour (test)"},
+            headers=entetes,
+        )
+        assert reactivation.status_code == 200
+        assert (
+            await client.post(
+                "/admin/auth/login",
+                json={"email": self.EMAIL_B, "mot_de_passe": initial_b},
+            )
+        ).status_code == 200
+
+    async def test_le_dernier_compte_actif_est_indesactivable(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Meme un AUTRE admin ne peut pas eteindre la derniere lumiere."""
+        entetes = await _session_complete(client)
+        creation = await client.post(
+            "/admin/comptes", json={"email": self.EMAIL_B}, headers=entetes
+        )
+        initial_b = creation.json()["mot_de_passe_initial"]
+        connexion_b = await client.post(
+            "/admin/auth/login",
+            json={"email": self.EMAIL_B, "mot_de_passe": initial_b},
+        )
+        durable_b = "durable-de-b-15aout!"
+        jeton_b = (
+            await client.post(
+                "/admin/auth/password",
+                json={"ancien": initial_b, "nouveau": durable_b},
+                headers={
+                    "Authorization": f"Bearer {connexion_b.json()['access_token']}"
+                },
+            )
+        ).json()["access_token"]
+        entetes_b = {"Authorization": f"Bearer {jeton_b}"}
+        # B desactive A (createur) : accepte, il reste B.
+        assert (
+            await client.put(
+                f"/admin/comptes/{EMAIL}/etat",
+                json={"actif": False, "motif": "test dernier actif"},
+                headers=entetes_b,
+            )
+        ).status_code == 200
+        # B tente de se desactiver : 409 soi-meme ; et A (desactive) ne
+        # compte plus — B est le dernier actif.
+        assert (
+            await client.put(
+                f"/admin/comptes/{self.EMAIL_B}/etat",
+                json={"actif": False, "motif": "test"},
+                headers=entetes_b,
+            )
+        ).status_code == 409

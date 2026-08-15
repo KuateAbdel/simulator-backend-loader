@@ -26,26 +26,56 @@ class SuperAdminRepository(RepositoryBase):
     async def par_email(self, email: str) -> SuperAdminAccount | None:
         return await self._trouver_un(SuperAdminAccount, {"email": email.strip().lower()})
 
-    async def creer(self, email: str, mot_de_passe_initial: str) -> SuperAdminAccount:
+    async def creer(
+        self,
+        email: str,
+        mot_de_passe_initial: str,
+        cree_par: str | None = None,
+    ) -> SuperAdminAccount:
         """Cree le compte avec `must_change_password=True`.
 
-        Le mot de passe fourni par variable d'environnement est un mot de passe
-        de premiere connexion, jamais un mot de passe durable.
+        Le mot de passe initial (env au bootstrap, genere pour un compte
+        cree par l'API) est un mot de passe de premiere connexion, jamais un
+        mot de passe durable. `cree_par` trace le createur (RBAC 15/08).
         """
+        from datetime import UTC, datetime
+
         compte = SuperAdminAccount(
             id=uuid4(),
             email=email.strip().lower(),
             password_hash=hacher(mot_de_passe_initial),
             must_change_password=True,
+            cree_par=cree_par,
+            cree_le=datetime.now(tz=UTC).isoformat() if cree_par else None,
         )
         await self._inserer(compte)
         return compte
 
     async def authentifier(self, email: str, mot_de_passe: str) -> SuperAdminAccount | None:
+        """None si inconnu, mot de passe faux OU compte DESACTIVE — le meme
+        401 generique pour les trois : rien a enumerer."""
         compte = await self.par_email(email)
-        if compte is None:
+        if compte is None or not compte.actif:
             return None
         return compte if verifier(mot_de_passe, compte.password_hash) else None
+
+    # -- Gestion des comptes (RBAC, 15/08) ---------------------------------
+
+    async def lister(self) -> list[SuperAdminAccount]:
+        curseur = self.collection.find({}).sort("email", 1)
+        return [
+            SuperAdminAccount.model_validate(document)
+            async for document in curseur
+        ]
+
+    async def changer_etat(self, email: str, actif: bool) -> bool:
+        resultat = await self.collection.update_one(
+            {"email": email.strip().lower()}, {"$set": {"actif": actif}}
+        )
+        return bool(resultat.matched_count)
+
+    async def compter_actifs(self) -> int:
+        return int(await self.collection.count_documents({"actif": {"$ne": False}}))
 
     async def changer_mot_de_passe(self, email: str, nouveau: str) -> bool:
         resultat = await self.collection.update_one(

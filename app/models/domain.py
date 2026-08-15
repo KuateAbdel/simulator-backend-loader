@@ -262,6 +262,14 @@ class SuperAdminAccount(LoaderDocument):
     email: str
     password_hash: str
     must_change_password: bool = True
+    #: RBAC (decision Yaniv 15/08) : « Super-Admin » est un ROLE que PLUSIEURS
+    #: comptes portent — chacun avec son email reel et son propre cycle de mot
+    #: de passe. Un compte desactive ne se connecte plus (401 generique) mais
+    #: n'est jamais supprime : l'historique du journal reste attribuable.
+    actif: bool = True
+    #: Qui a cree ce compte (email du createur) — None pour le bootstrap.
+    cree_par: str | None = None
+    cree_le: str | None = None
     #: Reinitialisation par email (`US-A4` v2) — seul le HASH du code est
     #: persiste, avec sa peremption (epoch, sans piege de fuseau) et un
     #: compteur d'essais : 5 echecs consomment le code.

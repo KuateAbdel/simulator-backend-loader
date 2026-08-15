@@ -54,6 +54,7 @@ from app.core import database
 from app.core.config import settings
 from app.routes import (
     admin_auth,
+    admin_comptes,
     admin_configuration,
     admin_dashboard,
     admin_entites,
@@ -120,6 +121,7 @@ app.include_router(health.router)
 # Lot A de l'API Super-Admin (US-A1..A4, US-B5) — le contrat OpenAPI que le
 # frontend de Zidane consomme est publie sur /docs des ce lot.
 app.include_router(admin_auth.router)
+app.include_router(admin_comptes.router)
 app.include_router(admin_configuration.router)
 app.include_router(admin_referentiels.router)
 app.include_router(admin_dashboard.router)
