@@ -197,6 +197,36 @@ Aide « comment ça marche » ajoutée sur Configuration (retour Yaniv — écra
 encore jugé peu clair : dette UX notée, mode simple/avancé à concevoir).
 Preuves : build vert + banc navigateur 8/8. Reste : phases 5→8.
 
+**15/08 — FRONTEND HÉBERGÉ + CI/CD + PHASE 5 LIVRÉE.**
+(1) **Hébergé** : `https://simul.fintech4esg.com` EN LIGNE (nginx statique,
+vhost simul.conf : SPA fallback, assets immutable, sw.js no-cache ; autres
+services du serveur vérifiés 200 depuis l'hôte). (2) **CI/CD frontend** :
+CI (tsc strict + build + URL API prouvée dans le bundle) puis CD (clé ed25519
+dédiée en secret, hôte par empreinte, rsync --delete vers
+/var/www/loader-frontend en user apps, santé = l'index en ligne sert LE
+bundle du build) ; main protégée (CI requise, force-push/suppression
+interdits) ; chaîne prouvée : push → CI 32 s → CD 35 s → vérifié en ligne.
+**Plus AUCUN déploiement depuis la machine de dev.** (3) **BUG Géographie
+attrapé par CAPTURE navigateur** (les assertions texte le rataient) :
+`surcouche.resume` est une CHAÎNE, le front faisait `'ajouts' in resume` →
+TypeError → l'ErrorBoundary GLOBAL avalait tout le cockpit (l'impression
+« plusieurs pages en erreur » de Yaniv). Fix : type corrigé + **PageBoundary
+PAR PAGE** (un écran qui casse reste local, sidebar vivante). Même famille
+attrapée sur `admin_annonce` (email-chaîne rendue caractère par caractère).
+(4) **PHASE 5 (commit `14722a5`)** : Produit US-D2 (3 interfaces par
+policy_type, invariants doublés à la frappe, marqueur DEMO_ annoncé, aperçu
+= payload exact, fiche relue), Company US-D1 (ville choisie DANS le
+référentiel EF-02, aperçu = fiche composée ~40 champs — le backend DRY
+renvoie désormais la MATIÈRE composée, commit backend `823299b`, 962 tests),
+Groupe Lot H (permissions VIVANTES avec familles DÉRIVÉES + recherche +
+cochées-seules + cocher/décocher le filtré ; 409 à trois issues nommées).
+(5) **Devise ISO 4217 CONNUE par pays** (demande Yaniv : CM→XAF pré-rempli,
+carte Monnaie pré-remplissable). (6) **Mot de passe Super-Admin réinitialisé**
+(l'ancien bootstrap ne marchait plus — changé à la 1ʳᵉ connexion puis perdu) :
+`scripts/reinitialiser_admin.py` dans le conteneur, login 200 vérifié.
+Reste frontend : phases 6 (écosystème/population/traçabilité + inventaire/
+purge) et 8 (polish) — la 7 (CI/CD+déploiement) est FAITE en avance.
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |
