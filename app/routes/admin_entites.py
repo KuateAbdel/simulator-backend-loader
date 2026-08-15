@@ -700,29 +700,36 @@ def _client_companies_unite() -> Any:
 
 
 class DepositaireDemande(BaseModel):
-    """3 champs, comme le contrat serveur — et chacun est GARDE :
-    le nom recoit le marqueur DEMO_ (EF-63), la devise est l'une des NOTRES
-    (D-DEP-6 : le serveur accepte n'importe quoi — FRA-201, PAS NOUS), la
-    company doit etre A NOUS (le Loader n'accroche rien a l'etranger)."""
+    """DEUX champs saisis — le reste est COMPOSE, c'est notre conception
+    (refonte 16/08, exigence Yaniv) : un depositaire n'existe jamais « en
+    l'air ». Il naît d'un QUARTIER (CR-02 : chaque Kiosque a un District
+    valide) et d'une company A NOUS. Le nom devient `DEMO_Kiosque <Quartier>`
+    (EF-63, comme au run) et la devise est DERIVEE du pays — jamais saisie
+    (D-DEP-6/FRA-201 : le serveur accepterait n'importe quoi, PAS NOUS)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    nom: str = Field(min_length=3, max_length=70)
-    devise: Literal["XAF", "XOF"]
+    quartier_id: str = Field(min_length=1, max_length=64)
     company_id: str = Field(min_length=1, max_length=64)
 
 
-def _marqueur_depositaire(nom: str) -> str:
-    nettoye = nom.strip()
-    return nettoye if nettoye.startswith("DEMO_") else f"DEMO_{nettoye}"
+async def _composer_depositaire(
+    demande: DepositaireDemande, client_depositaires: Any, client_companies: Any
+) -> dict[str, Any]:
+    """Les gardes ET la composition, communes apercu/creation.
 
-
-async def _garder_depositaire(
-    demande: DepositaireDemande, client_depositaires: Any
-) -> str:
-    """Les gardes communes apercu/creation — chaque refus porte sa regle."""
+    COHERENCE (exigence Yaniv 16/08) : pas de kiosque a Douala pour une
+    company de Dakar. La devise du depositaire = la devise du pays du
+    quartier = la devise de la company — verifiee sur la meilleure source
+    disponible (currency de la fiche, sinon pays de l'adresse ; FRA-199
+    peut faire perdre currency a la persistance, et on DIT sur quoi la
+    verification a porte).
+    """
+    from app.repositories.surcouche import SurcoucheRepository
+    from app.routes.admin_referentiels import _geo
     from app.services.inventaire import registre_companies
 
+    # 1) La company : A NOUS (403), et RELUE la-bas (404 si disparue).
     if demande.company_id not in await registre_companies():
         raise HTTPException(
             status_code=403,
@@ -731,9 +738,96 @@ async def _garder_depositaire(
                 "Loader n'accroche jamais un depositaire a une company etrangere"
             ),
         )
-    marqueur = _marqueur_depositaire(demande.nom)
-    # D-DEP-3 : AUCUNE unicite serveur (doublon accepte en 201, mesure) et
-    # AUCUN DELETE — un doublon serait la pour toujours. GET-avant-POST.
+    fiche_company = await client_companies.obtenir_company(demande.company_id)
+    if fiche_company is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"company {demande.company_id!r} au registre mais ABSENTE de "
+                "company-service — anomalie a investiguer (disparu_la_bas)"
+            ),
+        )
+
+    # 2) Le quartier : existant (EF-02) et LIBRE (un quartier = UN kiosque).
+    surcouche, _ = await SurcoucheRepository().charger()
+    referentiel = surcouche.appliquer(_geo())
+    quartier = referentiel.quartier(demande.quartier_id)
+    if quartier is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"quartier {demande.quartier_id!r} inconnu du referentiel (EF-02) "
+                "— l'ecran Geographie porte l'arbre complet et ses identifiants"
+            ),
+        )
+    ville = referentiel.ville(quartier.city_id)
+    if ville is None:  # pragma: no cover — un referentiel incoherent
+        raise HTTPException(
+            status_code=422,
+            detail=f"quartier {quartier.name!r} orphelin de ville — referentiel a verifier",
+        )
+    from app.core.database import COLLECTION_ORG_HIERARCHY
+
+    occupe = await get_collection(COLLECTION_ORG_HIERARCHY).count_documents(
+        {"niveau": "KIOSQUE", "district_id": demande.quartier_id}
+    )
+    if occupe:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"le quartier {quartier.name!r} heberge deja un Kiosque — un "
+                "quartier n'en porte qu'UN (UC-09), un second entrerait en "
+                "collision avec les runs"
+            ),
+        )
+
+    # 3) La devise : DECLAREE par le pays du quartier — jamais un choix.
+    pays = ville.country_iso2
+    devise = referentiel.devise_du_pays(pays)
+    if devise is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"aucune devise rattachee au pays {pays!r} dans le referentiel",
+        )
+
+    # 4) COHERENCE company <-> quartier, sur la meilleure source disponible.
+    devise_company = str(fiche_company.get("currency") or "")
+    adresse_company = fiche_company.get("address") or {}
+    pays_company = str(
+        (adresse_company.get("country") or "") if isinstance(adresse_company, dict) else ""
+    )
+    if devise_company and devise_company != devise.code:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"INCOHERENCE : la company opere en {devise_company} mais le "
+                f"quartier {quartier.name!r} est en zone {devise.code} ({pays}) — "
+                "pas de kiosque a Douala pour une company de Dakar"
+            ),
+        )
+    if pays_company and pays_company != pays:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"INCOHERENCE : la company est en {pays_company}, le quartier "
+                f"{quartier.name!r} en {pays} — le depositaire vit dans le pays "
+                "de sa company"
+            ),
+        )
+    coherence = (
+        "devise de la company"
+        if devise_company
+        else (
+            "pays de l'adresse company"
+            if pays_company
+            else "referentiel seul — FRA-199 : la fiche company ne rend ni currency ni pays"
+        )
+    )
+
+    # 5) Le nom COMPOSE (EF-63, comme au run) + GET-avant-POST (D-DEP-3 :
+    #    AUCUNE unicite serveur mesuree, AUCUN DELETE — un doublon serait
+    #    permanent).
+    marqueur = f"DEMO_Kiosque {quartier.name}"
     existant = await client_depositaires.chercher_par_nom(marqueur)
     if existant is not None:
         raise HTTPException(
@@ -744,7 +838,16 @@ async def _garder_depositaire(
                 "n'existe (D-DEP-3), un doublon serait permanent"
             ),
         )
-    return marqueur
+    return {
+        "marqueur": marqueur,
+        "devise": devise.code,
+        "pays": pays,
+        "ville": ville.name,
+        "quartier": quartier.name,
+        "zone_type": quartier.zone_type,
+        "coherence_verifiee_par": coherence,
+        "company_nom": str(fiche_company.get("name", "")),
+    }
 
 
 @router.post("/depositaires/apercu")
@@ -752,19 +855,22 @@ async def apercu_depositaire(
     demande: DepositaireDemande,
     _: Annotated[SessionAdmin, Depends(admin_complet)],
 ) -> dict[str, Any]:
-    """`US-D3` etape 1 — le payload EXACT, AUCUNE ecriture."""
+    """`US-D3` etape 1 — la COMPOSITION complete, AUCUNE ecriture."""
     client = _client_depositaires_unite()
+    client_cies = _client_companies_unite()
     try:
-        marqueur = await _garder_depositaire(demande, client)
+        composition = await _composer_depositaire(demande, client, client_cies)
     finally:
         await client.fermer()
+        await client_cies.fermer()
     return {
         "payload": {
-            "name": marqueur,
-            "currency": demande.devise,
+            "name": composition["marqueur"],
+            "currency": composition["devise"],
             "company_id": demande.company_id,
         },
-        "marqueur": marqueur,
+        "composition": composition,
+        "marqueur": composition["marqueur"],
         "note": (
             "apercu seulement — aucune ecriture n'est partie. Le Depositaire "
             "naitra ACTIF (mesure). Confirmer via POST /admin/entites/depositaires."
@@ -786,8 +892,10 @@ async def creer_depositaire(
     await refuser_si_run_en_cours()
 
     client = _client_depositaires_unite()
+    client_cies = _client_companies_unite()
     try:
-        marqueur = await _garder_depositaire(demande, client)
+        composition = await _composer_depositaire(demande, client, client_cies)
+        marqueur = composition["marqueur"]
 
         audit = AuditTrailRepository()
         async with audit.intention(
@@ -800,7 +908,7 @@ async def creer_depositaire(
         ) as suivi:
             try:
                 reponse = await client.creer(
-                    marqueur, demande.devise, demande.company_id
+                    marqueur, composition["devise"], demande.company_id
                 )
             except ErreurService as erreur:
                 suivi.echoue(f"HTTP {erreur.status}")
@@ -823,15 +931,19 @@ async def creer_depositaire(
             )
     finally:
         await client.fermer()
+        await client_cies.fermer()
 
     return {
         "depositary_id": identifiant,
         "fiche_relue": fiche,
+        "composition": composition,
         "marqueur": marqueur,
         "statut": "a_nous",
         "note": (
             "au registre par le journal — visible a_nous a l'inventaire ; "
-            "ACTIF des la naissance ; aucun DELETE n'existe (D-DEP-3)"
+            "ACTIF des la naissance ; aucun DELETE n'existe (D-DEP-3). Le "
+            "noeud d'arbre est DIFFERE : le prochain run rattache (les "
+            "kiosques deja presents sont SAUTES par nom, jamais recrees)"
         ),
     }
 

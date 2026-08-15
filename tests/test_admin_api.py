@@ -3158,19 +3158,40 @@ class TestInventaireDepositaires:
 
 
 class TestUSD3DepositaireALUnite:
-    """US-D3 (16/08) — le depositaire a l'unite : marqueur DEMO_ (EF-63),
-    company A NOUS obligatoire (403), GET-avant-POST par nom (D-DEP-3 :
-    aucune unicite serveur, aucun DELETE), write-ahead + RELECTURE, et le
-    cree est a_nous a la reconciliation PAR LE JOURNAL."""
+    """US-D3 REFONDU (16/08, conception Yaniv) — le depositaire naît d'un
+    QUARTIER + une company A NOUS : nom COMPOSE `DEMO_Kiosque <Quartier>`
+    (EF-63), devise DERIVEE du pays (D-DEP-6), COHERENCE company<->quartier
+    (pas de kiosque a Douala pour une company de Dakar), quartier LIBRE
+    (un quartier = UN kiosque), GET-avant-POST (D-DEP-3), relecture."""
+
+    @staticmethod
+    def _un_quartier(pays: str = "CM") -> tuple[str, str]:
+        """(district_id, nom) d'un quartier REEL du referentiel."""
+        from app.routes.admin_referentiels import _geo
+
+        referentiel = _geo()
+        for ville in referentiel.villes.values():
+            if ville.country_iso2 != pays:
+                continue
+            quartiers = referentiel.quartiers_de_ville(ville.city_id)
+            if quartiers:
+                return quartiers[0].district_id, quartiers[0].name
+        raise AssertionError(f"aucun quartier pour {pays} dans le classeur")
 
     @staticmethod
     async def _company_a_nous(company_id: str) -> None:
+        await database.get_database()["lenders_registry"].delete_many({})
         await database.get_database()["lenders_registry"].insert_one(
             {"company_id": company_id, "nom": "DEMO_SARL Test"}
         )
 
     @staticmethod
-    def _doubler(monkeypatch: pytest.MonkeyPatch, *, existants: list | None = None):
+    def _doubler(
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        fiche_company: dict | None = None,
+        existants: list | None = None,
+    ):
         from app.routes import admin_entites
 
         etat = {"liste": list(existants or []), "crees": []}
@@ -3196,75 +3217,117 @@ class TestUSD3DepositaireALUnite:
             async def fermer(self):  # type: ignore[no-untyped-def]
                 return None
 
+        class _Companies:
+            async def obtenir_company(self, company_id):  # type: ignore[no-untyped-def]
+                return dict(fiche_company) if fiche_company is not None else None
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
         monkeypatch.setattr(
             admin_entites, "_client_depositaires_unite", lambda: _Depositaires()
         )
+        monkeypatch.setattr(
+            admin_entites, "_client_companies_unite", lambda: _Companies()
+        )
         return etat
 
-    async def test_company_etrangere_403_meme_a_l_apercu(
+    async def test_company_etrangere_403_avant_tout(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        self._doubler(monkeypatch)
+        self._doubler(monkeypatch, fiche_company={"name": "X"})
         await database.get_database()["lenders_registry"].delete_many({})
+        qid, _ = self._un_quartier()
         entetes = await _session_complete(client)
         reponse = await client.post(
             "/admin/entites/depositaires/apercu",
-            json={"nom": "Kiosque Test", "devise": "XAF", "company_id": "cie-inconnue"},
+            json={"quartier_id": qid, "company_id": "cie-inconnue"},
             headers=entetes,
         )
         assert reponse.status_code == 403
         assert "etrangere" in reponse.json()["detail"]
 
-    async def test_le_rite_complet_marqueur_relecture_et_registre(
+    async def test_l_incoherence_devise_est_un_422_nomme(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        etat = self._doubler(monkeypatch)
-        await database.get_database()["lenders_registry"].delete_many({})
-        await _registre_vierge()
-        await self._company_a_nous("cie-1")
+        """Company de Dakar (XOF) + quartier de Douala (XAF) -> refus DIT."""
+        self._doubler(
+            monkeypatch,
+            fiche_company={"name": "DEMO_SARL Dakar", "currency": "XOF"},
+        )
+        await self._company_a_nous("cie-sn")
+        qid, _ = self._un_quartier("CM")
         entetes = await _session_complete(client)
-        demande = {"nom": "Kiosque Bonapriso", "devise": "XAF", "company_id": "cie-1"}
+        reponse = await client.post(
+            "/admin/entites/depositaires/apercu",
+            json={"quartier_id": qid, "company_id": "cie-sn"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "INCOHERENCE" in reponse.json()["detail"]
+        assert "XOF" in reponse.json()["detail"] and "XAF" in reponse.json()["detail"]
+
+    async def test_le_rite_complet_compose_depuis_le_quartier(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        etat = self._doubler(
+            monkeypatch,
+            fiche_company={"name": "DEMO_SARL Douala", "currency": "XAF"},
+        )
+        await self._company_a_nous("cie-cm")
+        await _registre_vierge()
+        await database.get_database()["org_hierarchy"].delete_many({})
+        qid, qnom = self._un_quartier("CM")
+        entetes = await _session_complete(client)
+        demande = {"quartier_id": qid, "company_id": "cie-cm"}
 
         apercu = await client.post(
             "/admin/entites/depositaires/apercu", json=demande, headers=entetes
         )
         assert apercu.status_code == 200, apercu.text
-        assert apercu.json()["payload"]["name"] == "DEMO_Kiosque Bonapriso"
+        corps = apercu.json()
+        assert corps["payload"]["name"] == f"DEMO_Kiosque {qnom}"
+        assert corps["payload"]["currency"] == "XAF", "la devise est DERIVEE"
+        assert corps["composition"]["coherence_verifiee_par"] == "devise de la company"
         assert etat["crees"] == [], "l'apercu n'ecrit JAMAIS"
 
         creation = await client.post(
             "/admin/entites/depositaires", json=demande, headers=entetes
         )
         assert creation.status_code == 201, creation.text
-        corps = creation.json()
-        assert corps["marqueur"] == "DEMO_Kiosque Bonapriso"
-        assert corps["fiche_relue"]["name"] == "DEMO_Kiosque Bonapriso"
-        assert corps["statut"] == "a_nous"
+        assert creation.json()["statut"] == "a_nous"
+        assert creation.json()["fiche_relue"]["currency"] == "XAF"
 
-        # Doublon -> 409 (D-DEP-3 : un doublon serait permanent)
-        doublon = await client.post(
-            "/admin/entites/depositaires", json=demande, headers=entetes
+        # Doublon de nom -> 409 (D-DEP-3 : permanent)
+        assert (
+            await client.post(
+                "/admin/entites/depositaires", json=demande, headers=entetes
+            )
+        ).status_code == 409
+
+    async def test_un_quartier_occupe_est_un_409(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Un quartier n'heberge qu'UN kiosque — l'unite respecte le run."""
+        self._doubler(
+            monkeypatch, fiche_company={"name": "DEMO_SARL", "currency": "XAF"}
         )
-        assert doublon.status_code == 409
-
-        # Reconciliation : a_nous PAR LE JOURNAL, sans attendre un run
-        from app.routes import admin_inventaire
-
-        class _MemeListe:
-            async def lister(self):  # type: ignore[no-untyped-def]
-                return list(etat["liste"])
-
-            async def fermer(self):  # type: ignore[no-untyped-def]
-                return None
-
-        monkeypatch.setattr(
-            admin_inventaire, "_client_depositaires", lambda: _MemeListe()
+        await self._company_a_nous("cie-cm")
+        qid, _ = self._un_quartier("CM")
+        org = database.get_database()["org_hierarchy"]
+        await org.delete_many({})
+        await org.insert_one(
+            {"niveau": "KIOSQUE", "district_id": qid, "name": "DEMO_Kiosque Occupant"}
         )
-        inventaire = await client.get("/admin/inventaire/depositaires", headers=entetes)
-        assert [d["nom"] for d in inventaire.json()["a_nous"]] == [
-            "DEMO_Kiosque Bonapriso"
-        ]
-        await database.get_database()["lenders_registry"].delete_many({})
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/depositaires/apercu",
+            json={"quartier_id": qid, "company_id": "cie-cm"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 409
+        assert "UN" in reponse.json()["detail"]
+        await org.delete_many({})
 
 
 class TestLicencesALUnite:
