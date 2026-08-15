@@ -264,8 +264,16 @@ EFFACÉE à la demande de Yaniv** (sauvegarde
 ne portait que son DRY d'essai + le compte admin ; bootstrap re-créé au
 redémarrage, mot de passe durable REPOSÉ à l'identique
 (`Diag!Loader-2026-08-15a`) — zéro changement pour lui.
-Reste frontend : **phase 8 seulement** (polish final a11y) — 1→6 livrées,
-7 (CI/CD+déploiement) faite en avance le 15/08.
+(13) **PHASE 8 LIVRÉE + v1.0.0 TAGGÉE (nuit, commit `7dfcd65`)** — a11y
+(:focus-visible global, prefers-reduced-motion, Échap sur dialogues avec
+focus sur l'action SÛRE, lang du document dynamique FR/EN, aria), titre
+d'onglet par page, noscript, README à l'état réel. **QA finale : 18/18
+écrans vérifiés au navigateur sur le site EN LIGNE** (+ mobile 390 : tiroir,
+zéro débordement). Release :
+github.com/KuateAbdel/simulator-frontend/releases/tag/v1.0.0.
+**LES 8 PHASES DU PLAN FRONTEND SONT TENUES — la webapp Loader est v1.0.0.**
+(La v1.0.0 du BACKEND reste liée à la recette CR-01→12 / 2000 clients en
+30 min — voir section C.)
 
 ## E. Backlog S4/S5 restant
 
