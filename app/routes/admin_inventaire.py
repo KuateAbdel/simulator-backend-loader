@@ -316,3 +316,107 @@ async def adopter_groupes(
             "DELETE /admin/inventaire/groupes/{id}, purge"
         ),
     }
+
+
+class EtatDepositaireDemande(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actif: bool
+    motif: str = Field(min_length=3, max_length=200)
+
+
+@router.patch("/depositaires/{depositaire_id}/etat")
+async def changer_etat_depositaire(
+    depositaire_id: Annotated[str, Path(min_length=1, max_length=64)],
+    demande: EtatDepositaireDemande,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Active/desactive un depositaire LA-BAS — avec la verite D-DEP-8.
+
+    DECISION Yaniv 16/08 : l'action vaut pour N'IMPORTE QUEL depositaire
+    (l'exception a la doctrine « jamais toucher l'etranger » — le geste est
+    REVERSIBLE et cosmetique) ; quand la cible est etrangere, la reponse LE
+    DIT. La verite D-DEP-8 est portee : desactiver n'arrete NI les collectes
+    NI les retraits sur les souscriptions existantes (FRA-203/204) — le
+    geste existe, son effet reel est dit, jamais survendu. Write-ahead sous
+    RUN_ADMIN, RELECTURE qui prouve que `is_active` a change (502 sinon).
+    """
+    from app.services.inventaire import registre_depositaires
+
+    await refuser_si_run_en_cours()
+
+    client = _client_depositaires()
+    try:
+        cible = next(
+            (
+                d
+                for d in await client.lister()
+                if str(d.get("_id") or d.get("id")) == str(depositaire_id)
+            ),
+            None,
+        )
+        if cible is None:
+            raise HTTPException(
+                status_code=404, detail=f"depositaire {depositaire_id} inconnu la-bas"
+            )
+        nom = str(cible.get("name", ""))
+        est_a_nous = str(depositaire_id) in await registre_depositaires()
+
+        audit = AuditTrailRepository()
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="Depositary",
+            entity_id=uuid_stable(depositaire_id),
+            operation="UPDATE",
+            cible="depositary-service PATCH /status",
+            payload={"name": nom, "actif": demande.actif, "motif": demande.motif},
+        ) as suivi:
+            try:
+                await client.changer_statut(depositaire_id, demande.actif)
+            except Exception as erreur:
+                suivi.echoue(type(erreur).__name__)
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "depositary-service a refuse le changement d'etat : "
+                        f"{type(erreur).__name__}"
+                    ),
+                ) from erreur
+            suivi.reussi({"depositary_id": str(depositaire_id), "actif": demande.actif})
+
+        # RELECTURE — l'etat d'APRES, jamais l'echo du PATCH.
+        relu = next(
+            (
+                d
+                for d in await client.lister()
+                if str(d.get("_id") or d.get("id")) == str(depositaire_id)
+            ),
+            None,
+        )
+        if relu is None or relu.get("is_active") is not demande.actif:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"l'etat de {nom!r} n'a PAS change a la relecture — le "
+                    "serveur a repondu sans agir, a verifier a la main"
+                ),
+            )
+    finally:
+        await client.fermer()
+
+    return {
+        "id": str(depositaire_id),
+        "nom": nom,
+        "actif": demande.actif,
+        "statut": "a_nous" if est_a_nous else "etranger",
+        "verite_d_dep_8": (
+            "desactiver n'arrete NI les collectes NI les retraits sur les "
+            "souscriptions existantes (FRA-203/204) — l'etat est administratif"
+        ),
+        "note": (
+            "cible ETRANGERE — action permise par decision Yaniv 16/08 (geste "
+            "reversible), tracee au journal"
+            if not est_a_nous
+            else "depositaire a nous — geste trace au journal"
+        ),
+    }

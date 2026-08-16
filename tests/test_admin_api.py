@@ -3406,3 +3406,181 @@ class TestLicencesALUnite:
         assert lecture.status_code == 200
         assert lecture.json()["compte"] == 1
         await database.get_database()["lenders_registry"].delete_many({})
+
+
+class TestEtatsLaBas:
+    """16/08 (Yaniv : visibilite ET action COMPLETES) — l'etat des
+    depositaires se voit et se change LA-BAS ; les telcos config-service
+    s'activent/desactivent avec la garde des references inverses ; la
+    devise porte son refus MESURE."""
+
+    @staticmethod
+    def _doubler_depositaires(monkeypatch: pytest.MonkeyPatch):
+        from app.routes import admin_inventaire
+
+        etat = {
+            "liste": [
+                {"_id": "dep-1", "name": "DEMO_Kiosque Bonapriso", "is_active": True},
+                {"_id": "dep-2", "name": "Depositaire Metier", "is_active": True},
+            ]
+        }
+
+        class _Depositaires:
+            async def lister(self):  # type: ignore[no-untyped-def]
+                return [dict(d) for d in etat["liste"]]
+
+            async def changer_statut(self, did, actif):  # type: ignore[no-untyped-def]
+                for d in etat["liste"]:
+                    if d["_id"] == str(did):
+                        d["is_active"] = actif
+                return {}
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(
+            admin_inventaire, "_client_depositaires", lambda: _Depositaires()
+        )
+        return etat
+
+    async def test_l_etat_du_depositaire_se_voit_et_se_change_avec_la_verite(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_depositaires(monkeypatch)
+        await database.get_database()["org_hierarchy"].delete_many({})
+        await _registre_vierge()
+        entetes = await _session_complete(client)
+
+        # L'etat est VISIBLE a l'inventaire
+        inventaire = await client.get("/admin/inventaire/depositaires", headers=entetes)
+        assert all(
+            ligne["actif"] is True for ligne in inventaire.json()["etranger"]
+        ), "is_active de la plateforme reporte sur chaque ligne"
+
+        # Desactivation d'un ETRANGER : permise (decision 16/08) mais DITE
+        reponse = await client.patch(
+            "/admin/inventaire/depositaires/dep-2/etat",
+            json={"actif": False, "motif": "test de visibilite"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["actif"] is False
+        assert corps["statut"] == "etranger"
+        assert "ETRANGERE" in corps["note"]
+        assert "n'arrete NI les collectes NI les retraits" in corps["verite_d_dep_8"]
+
+        # 404 pour un inconnu
+        assert (
+            await client.patch(
+                "/admin/inventaire/depositaires/fantome/etat",
+                json={"actif": True, "motif": "test"},
+                headers=entetes,
+            )
+        ).status_code == 404
+
+    @staticmethod
+    def _doubler_config(monkeypatch: pytest.MonkeyPatch, *, garde: bool = False):
+        from app.clients.config_service import ReferenceInverse
+        from app.routes import admin_referentiels
+
+        etat = {
+            "telcos": [
+                {"_id": "t-1", "network_name": "Orange CM", "short_name": "OCM",
+                 "is_active": True},
+            ],
+            "pays": [
+                {"iso_name": "CM", "telcos": ["t-1"], "currencies": ["d-1"]},
+                *([{"iso_name": "CI", "telcos": ["t-1"], "currencies": []}] if garde else []),
+            ],
+        }
+
+        class _Lecture:
+            async def lister_telcos(self):  # type: ignore[no-untyped-def]
+                return [dict(t) for t in etat["telcos"]]
+
+            async def lister_pays(self):  # type: ignore[no-untyped-def]
+                return [dict(p) for p in etat["pays"]]
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        class _Admin:
+            async def activer_telco(self, tid):  # type: ignore[no-untyped-def]
+                etat["telcos"][0]["is_active"] = True
+                return {}
+
+            async def desactiver_telco(self, tid, *, pays_attendu):  # type: ignore[no-untyped-def]
+                autres = [
+                    p["iso_name"] for p in etat["pays"]
+                    if tid in p["telcos"] and p["iso_name"] != pays_attendu
+                ]
+                if autres:
+                    raise ReferenceInverse(
+                        f"operateur {tid} encore reference par {autres} — "
+                        "desactivation refusee."
+                    )
+                etat["telcos"][0]["is_active"] = False
+                return {}
+
+            async def desactiver_devise(self, did):  # type: ignore[no-untyped-def]
+                raise ReferenceInverse(
+                    "devise partagee par 3 pays — desactivation refusee (mesure 09/08)"
+                )
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_referentiels, "_config_lecture", lambda: _Lecture())
+        monkeypatch.setattr(admin_referentiels, "_config_admin", lambda: _Admin())
+        return etat
+
+    async def test_telco_liste_puis_desactivation_reelle_avec_relecture(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_config(monkeypatch)
+        entetes = await _session_complete(client)
+
+        liste = await client.get("/admin/referentiels/telcos-config", headers=entetes)
+        assert liste.status_code == 200, liste.text
+        ligne = liste.json()["telcos"][0]
+        assert ligne["actif"] is True and ligne["porteurs"] == ["CM"]
+
+        reponse = await client.patch(
+            "/admin/referentiels/telcos-config/t-1/etat",
+            json={"actif": False, "motif": "test"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json()["etat_relu"] is False
+        assert "GESTE SEPARE" in reponse.json()["note"], (
+            "la verite INV-18 est dite : la generation suit le classeur"
+        )
+
+    async def test_la_garde_des_references_inverses_PARLE_en_409(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deux pays referencent l'operateur : la desactivation refusee avec
+        le message MESURE — le scenario `ca`/Cote d'Ivoire du 09/08."""
+        self._doubler_config(monkeypatch, garde=True)
+        entetes = await _session_complete(client)
+        reponse = await client.patch(
+            "/admin/referentiels/telcos-config/t-1/etat",
+            json={"actif": False, "motif": "test"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 409
+        assert "encore reference par" in reponse.json()["detail"]
+
+    async def test_la_devise_porte_son_refus_mesure(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_config(monkeypatch)
+        entetes = await _session_complete(client)
+        reponse = await client.patch(
+            "/admin/referentiels/devises-config/d-1/etat",
+            json={"actif": False, "motif": "test"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 409
+        assert "mesure 09/08" in reponse.json()["detail"]

@@ -300,6 +300,15 @@ class AdministrationConfigService:
         reponse = await self._client.requete("PATCH", f"/api/v1/countries/deactivate/{country_id}")
         return reponse.data if isinstance(reponse.data, dict) else {}
 
+    async def activer_telco(self, telco_id: str) -> dict[str, Any]:
+        """`PATCH /telcos/activate/{id}` — le symetrique mesure de deactivate.
+
+        Aucune garde de reference inverse necessaire : REACTIVER un operateur
+        ne casse aucun pays — c'est la desactivation qui ampute.
+        """
+        reponse = await self._client.requete("PATCH", f"/api/v1/telcos/activate/{telco_id}")
+        return reponse.data if isinstance(reponse.data, dict) else {}
+
     async def desactiver_telco(self, telco_id: str, *, pays_attendu: str) -> dict[str, Any]:
         """Desactive un operateur — **apres controle des references inverses**.
 

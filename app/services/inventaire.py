@@ -217,7 +217,19 @@ async def classer_depositaires(plateforme: list[dict[str, Any]]) -> dict[str, An
     sont possibles ; AUCUN n'est supprimable (D-DEP-3, desactivation
     cosmetique — D-DEP-8)."""
     registre = await registre_depositaires()
-    return await _classer_par_marqueur(plateforme, registre, champ_marqueur="name")
+    classement = await _classer_par_marqueur(plateforme, registre, champ_marqueur="name")
+    # L'ETAT fait partie de la visibilite (Yaniv 16/08) : `is_active` de la
+    # fiche plateforme, reporte sur chaque ligne (None si la fiche ne le
+    # porte pas — dit tel quel, jamais invente).
+    etats = {
+        _normaliser_id(d): d.get("is_active")
+        for d in plateforme
+        if isinstance(d.get("is_active"), bool)
+    }
+    for statut in (STATUT_A_NOUS, STATUT_ETRANGER, STATUT_MARQUE_INCONNU):
+        for ligne in classement.get(statut, []):
+            ligne["actif"] = etats.get(ligne["id"])
+    return classement
 
 
 async def _classer_par_marqueur(

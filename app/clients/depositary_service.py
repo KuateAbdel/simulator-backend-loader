@@ -193,8 +193,18 @@ class DepositaryServiceClient:
     def identifiant(depositaire: dict[str, Any]) -> str | None:
         return normaliser_id(depositaire)
 
-    # Aucune methode de desactivation n'est exposee, et c'est DELIBERE.
-    # `PATCH /{id}/status/{bool}` modifie bien le champ `is_active`, mais
-    # n'arrete ni les collectes ni les retraits sur les souscriptions
-    # existantes (FRA-203). Exposer une « fermeture » qui ne ferme rien
-    # inviterait a construire une logique fausse.
+    async def changer_statut(self, depositary_id: UUID | str, actif: bool) -> dict[str, Any]:
+        """`PATCH /{id}/status/{bool}` — modifie `is_active` (mesure).
+
+        EXPOSE le 16/08 sur DECISION Yaniv (visibilite et action completes
+        depuis le Loader) — longtemps volontairement absent, parce que la
+        desactivation est COSMETIQUE : elle n'arrete ni les collectes ni les
+        retraits sur les souscriptions existantes (D-DEP-8, FRA-203). La
+        route qui appelle ceci PORTE cette verite dans sa reponse — le geste
+        existe, son effet reel est dit, jamais survendu.
+        """
+        reponse = await self._client.requete(
+            "PATCH",
+            f"/api/v1/depositaries/{depositary_id}/status/{str(actif).lower()}",
+        )
+        return reponse.data if isinstance(reponse.data, dict) else {}

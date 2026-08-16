@@ -831,3 +831,206 @@ async def permissions(
         "compte": len(noms),
         "note": "les 22 LENDER_* et RC169_* sont ecartees (D-07) — hors perimetre v1",
     }
+
+
+# ---------------------------------------------------------------------------
+# ETATS sur le referentiel PARTAGE (16/08, demande Yaniv) — telcos et devises
+# TELS QUE config-service les porte, avec activation/desactivation REELLE
+# la-bas. Deux verites toujours dites : (1) c'est le referentiel de TOUTES
+# les equipes ; (2) la garde des references inverses est le SEUL garde-fou
+# existant (la relation est unidirectionnelle cote serveur — mesure 09/08).
+# ---------------------------------------------------------------------------
+
+
+class EtatRessourceDemande(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actif: bool
+    motif: str = Field(min_length=3, max_length=200)
+
+
+async def _porteurs_par_ressource(lecture: Any, famille: str) -> dict[str, list[str]]:
+    """{ressource_id: [codes pays]} en UNE passe sur les pays — jamais un
+    scan par ressource."""
+    porteurs: dict[str, list[str]] = {}
+    for fiche in await lecture.lister_pays():
+        code = str(fiche.get("iso_name", "?"))
+        for element in fiche.get(famille) or []:
+            identifiant = (
+                str(element.get("_id") or element.get("id"))
+                if isinstance(element, dict)
+                else str(element)
+            )
+            porteurs.setdefault(identifiant, []).append(code)
+    return porteurs
+
+
+@router.get("/telcos-config")
+async def telcos_config(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Les operateurs TELS QUE config-service les porte — id, etat, et les
+    pays qui les referencent (la matiere de la garde)."""
+    lecture = _config_lecture()
+    try:
+        telcos = await lecture.lister_telcos()
+        porteurs = await _porteurs_par_ressource(lecture, "telcos")
+    finally:
+        await lecture.fermer()
+    lignes = [
+        {
+            "id": str(t.get("_id") or t.get("id")),
+            "nom": str(t.get("network_name") or t.get("name") or ""),
+            "code": str(t.get("short_name") or ""),
+            "actif": t.get("is_active"),
+            "porteurs": porteurs.get(str(t.get("_id") or t.get("id")), []),
+        }
+        for t in telcos
+    ]
+    return {
+        "telcos": sorted(lignes, key=lambda ligne: str(ligne["nom"])),
+        "compte": len(lignes),
+        "note": (
+            "referentiel PARTAGE (toutes les equipes) — desactiver passe par la "
+            "garde des references inverses ; la GENERATION du Loader suit le "
+            "classeur+surcouche (INV-18), pas cet etat : deux choses, deux verites"
+        ),
+    }
+
+
+@router.patch("/telcos-config/{telco_id}/etat")
+async def changer_etat_telco(
+    telco_id: Annotated[str, Path(min_length=1, max_length=64)],
+    demande: EtatRessourceDemande,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Active/desactive un operateur LA-BAS — la garde parle avant le reseau.
+
+    Desactivation : refusee (409, message MESURE de la garde) si un AUTRE
+    pays reference encore l'operateur — sans ce controle, desactiver les
+    telcos du pays parasite `ca` casserait la Cote d'Ivoire (09/08).
+    Activation : aucun risque, aucune garde. Write-ahead + RELECTURE.
+    """
+    from app.clients.config_service import ReferenceInverse
+    from app.repositories.audit_trail import AuditTrailRepository
+    from app.routes.admin_entites import RUN_ADMIN
+    from app.services.inventaire import uuid_stable
+
+    await refuser_si_run_en_cours()
+
+    lecture = _config_lecture()
+    admin = _config_admin()
+    try:
+        telcos = {str(t.get("_id") or t.get("id")): t for t in await lecture.lister_telcos()}
+        cible = telcos.get(str(telco_id))
+        if cible is None:
+            raise HTTPException(
+                status_code=404, detail=f"operateur {telco_id} inconnu de config-service"
+            )
+        nom = str(cible.get("network_name") or cible.get("name") or "")
+        porteurs = (await _porteurs_par_ressource(lecture, "telcos")).get(
+            str(telco_id), []
+        )
+
+        audit = AuditTrailRepository()
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="Telco",
+            entity_id=uuid_stable(telco_id),
+            operation="UPDATE",
+            cible="config-service PATCH /telcos/(de)activate",
+            payload={"name": nom, "actif": demande.actif, "motif": demande.motif},
+        ) as suivi:
+            try:
+                if demande.actif:
+                    await admin.activer_telco(telco_id)
+                else:
+                    await admin.desactiver_telco(
+                        telco_id, pays_attendu=porteurs[0] if porteurs else ""
+                    )
+            except ReferenceInverse as garde:
+                suivi.echoue("ReferenceInverse")
+                raise HTTPException(status_code=409, detail=str(garde)) from garde
+            except Exception as erreur:
+                suivi.echoue(type(erreur).__name__)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"config-service a refuse : {type(erreur).__name__}",
+                ) from erreur
+            suivi.reussi({"telco_id": str(telco_id), "actif": demande.actif})
+
+        # RELECTURE — l'etat d'APRES.
+        relu = next(
+            (
+                t
+                for t in await lecture.lister_telcos()
+                if str(t.get("_id") or t.get("id")) == str(telco_id)
+            ),
+            None,
+        )
+        etat_relu = relu.get("is_active") if relu else None
+        if isinstance(etat_relu, bool) and etat_relu is not demande.actif:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"l'etat de {nom!r} n'a PAS change a la relecture — le "
+                    "serveur a repondu sans agir (l'ANO-CFG-LIFECYCLE de juin "
+                    "portait exactement cette signature)"
+                ),
+            )
+    finally:
+        await lecture.fermer()
+        await admin.fermer()
+
+    return {
+        "id": str(telco_id),
+        "nom": nom,
+        "actif": demande.actif,
+        "etat_relu": etat_relu,
+        "porteurs": porteurs,
+        "note": (
+            "referentiel PARTAGE modifie — visible par toutes les equipes. La "
+            "generation du Loader (INV-18) suit le classeur+surcouche : exclure "
+            "cet operateur des tirages est un GESTE SEPARE, arbitrage a "
+            "trancher (il modifie les parts de marche du CDC)"
+        ),
+    }
+
+
+@router.patch("/devises-config/{devise_id}/etat")
+async def changer_etat_devise(
+    devise_id: Annotated[str, Path(min_length=1, max_length=64)],
+    demande: EtatRessourceDemande,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """La desactivation d'une devise est TOUJOURS refusee — par MESURE.
+
+    100 % des devises sont partagees (09/08) : XOF porte le Senegal, le
+    Burkina et la Cote d'Ivoire ; XAF le Cameroun. Il n'existe AUCUN cas ou
+    desactiver une devise ne casse pas au moins un pays. La route existe
+    pour que le refus soit EXPLICITE et porte sa preuve — jamais un bouton
+    absent sans explication.
+    """
+    from app.clients.config_service import ReferenceInverse
+
+    if demande.actif:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "aucun contrat d'ACTIVATION de devise n'a ete mesure sur "
+                "config-service — seul le refus de desactivation est etabli"
+            ),
+        )
+    admin = _config_admin()
+    try:
+        await admin.desactiver_devise(devise_id)
+    except ReferenceInverse as garde:
+        raise HTTPException(status_code=409, detail=str(garde)) from garde
+    finally:
+        await admin.fermer()
+    # desactiver_devise leve TOUJOURS — arriver ici signifierait que la
+    # mesure du 09/08 n'est plus vraie : on le dirait plutot que le cacher.
+    return {  # pragma: no cover
+        "id": str(devise_id),
+        "note": "desactivation ACCEPTEE — la mesure du 09/08 est PERIMEE, a re-auditer",
+    }
