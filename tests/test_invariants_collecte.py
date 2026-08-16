@@ -90,15 +90,25 @@ class TestDepositaire:
         }
         assert len(COMPTES_DEPOSITAIRE) == 6
 
-    def test_aucune_methode_de_fermeture_n_est_exposee(self) -> None:
+    def test_aucune_methode_de_FERMETURE_mensongere_n_est_exposee(self) -> None:
         """D-DEP-8 / FRA-203 : desactiver un Depositaire n'arrete NI les
         collectes NI les retraits. Exposer une « fermeture » qui ne ferme rien
-        inviterait a construire une logique fausse."""
+        inviterait a construire une logique fausse.
+
+        REVISION 16/08 (decision Yaniv — visibilite et action completes) :
+        `changer_statut` est desormais EXPOSE, parce que la route qui
+        l'appelle PORTE la verite D-DEP-8 dans sa reponse (l'etat est
+        administratif, jamais une fermeture). Les noms MENSONGERS restent
+        interdits : fermer/cloturer promettraient un arret qui n'existe pas.
+        """
         from app.clients import depositary_service
 
-        interdits = {"fermer_depositaire", "desactiver", "changer_statut", "cloturer"}
+        interdits = {"fermer_depositaire", "cloturer", "cloturer_depositaire"}
         exposees = set(dir(depositary_service.DepositaryServiceClient))
         assert not (interdits & exposees)
+        assert "changer_statut" in exposees, (
+            "le geste d'etat est expose (16/08) — avec sa verite, cote route"
+        )
 
     def test_aucune_methode_de_cloture_de_collecte(self) -> None:
         """D-COL-11 / FRA-196 — la cloture est bloquee cote serveur.
