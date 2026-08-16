@@ -1034,3 +1034,38 @@ async def changer_etat_devise(
         "id": str(devise_id),
         "note": "desactivation ACCEPTEE — la mesure du 09/08 est PERIMEE, a re-auditer",
     }
+
+
+@router.get("/devises-config")
+async def devises_config(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Les devises TELLES QUE config-service les porte — avec leurs PORTEURS.
+
+    La matiere du refus : 100 % des devises sont partagees (mesure 09/08),
+    c'est pour CA que la desactivation est toujours refusee — l'ecran montre
+    les porteurs, le refus se comprend d'un regard."""
+    lecture = _config_lecture()
+    try:
+        devises = await lecture.lister_devises()
+        porteurs = await _porteurs_par_ressource(lecture, "currencies")
+    finally:
+        await lecture.fermer()
+    lignes = [
+        {
+            "id": str(d.get("_id") or d.get("id")),
+            "iso": str(d.get("iso_name") or ""),
+            "nom": str(d.get("name_fr") or d.get("name_en") or ""),
+            "actif": d.get("is_active"),
+            "porteurs": porteurs.get(str(d.get("_id") or d.get("id")), []),
+        }
+        for d in devises
+    ]
+    return {
+        "devises": sorted(lignes, key=lambda ligne: str(ligne["iso"])),
+        "compte": len(lignes),
+        "note": (
+            "100 % des devises sont PARTAGEES (mesure 09/08) — la desactivation "
+            "est toujours refusee, et le refus porte sa preuve"
+        ),
+    }
