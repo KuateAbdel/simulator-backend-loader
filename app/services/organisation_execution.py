@@ -132,6 +132,12 @@ class RapportOrganisation:
     #: de Kiosque recompose apres coup — un identifiant se transporte, il ne se
     #: redecouvre pas.
     porteuses: list[CompanyPorteuse] = field(default_factory=list)
+    #: DIFF payload<->relecture (16/08) — le sous-ensemble CONTRACTUEL du
+    #: payload Company envoye, capture depuis les MEMES variables locales que
+    #: l'appel client (jamais reconstruit apres coup : une reconstruction qui
+    #: derive fabriquerait de fausses divergences). La route a l'unite (US-D1)
+    #: le confronte a la relecture ; les runs de masse l'ignorent.
+    payload_company: dict[str, Any] | None = None
 
     @property
     def statut(self) -> RunStatus:
@@ -347,6 +353,20 @@ class ExecuteurOrganisation:
             statique=self._statique,
         )
         devise = self._devise_du_pays(pays)
+
+        # Le payload CONTRACTUEL qui part (ou partirait) — les champs
+        # scalaires dont l'alteration silencieuse importe. `owner` et
+        # `address` n'y figurent pas : le serveur REGENERE l'Identity (mesure
+        # du 08/08, l'UUID envoye n'est jamais celui rendu) — une divergence
+        # CONNUE et documentee n'est pas un signal, c'est du bruit.
+        rapport.payload_company = {
+            "name": raison,
+            "short_name": court,
+            "type": type_company.value,
+            "industries": industries,
+            "sectors": secteurs,
+            "currency": devise,
+        }
 
         if not self.ecriture_reelle:
             rapport.companies_creees.append(raison)

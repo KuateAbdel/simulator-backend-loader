@@ -3662,3 +3662,251 @@ class TestScenariosNommes:
                 headers=entetes,
             )
         ).status_code == 404
+
+
+class TestDiffPayloadRelecture:
+    """16/08 — la 3e recommandation validee par Yaniv : la relecture prouvait
+    l'EXISTENCE (FRA-218), le diff prouve la FIDELITE. Chaque champ ENVOYE est
+    confronte a la fiche RELUE ; une divergence n'invalide jamais la creation
+    (201 maintenu), elle se DIT avec les deux valeurs en face."""
+
+    async def _preparer_produits(self, client: httpx.AsyncClient) -> dict[str, str]:
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "produits_admin"}
+        )
+        await _registre_vierge()
+        return entetes
+
+    @staticmethod
+    def _doubler_produits_avec(monkeypatch: pytest.MonkeyPatch, deformer):
+        """Un product-service qui persiste `deformer(payload)` — l'identite
+        pour un serveur fidele, une alteration pour un serveur qui trahit."""
+        from app.routes import admin_entites
+
+        etat: dict[str, Any] = {"fiche": None}
+
+        class _Produits:
+            async def chercher_par_short_name(self, marqueur):  # type: ignore[no-untyped-def]
+                return etat["fiche"]
+
+            async def chercher_par_nom(self, nom):  # type: ignore[no-untyped-def]
+                return None
+
+            async def creer_produit(self, payload):  # type: ignore[no-untyped-def]
+                etat["fiche"] = {"_id": "p-1", **deformer(dict(payload))}
+                return {"_id": "p-1"}
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_entites, "_client_produits", lambda: _Produits())
+
+    async def test_produit_fidele_le_diff_le_PROUVE(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler_produits_avec(monkeypatch, lambda p: p)
+        entetes = await self._preparer_produits(client)
+        reponse = await client.post(
+            "/admin/entites/produits",
+            json=TestUSD2ProduitALUnite.VALIDE_CASH,
+            headers=entetes,
+        )
+        assert reponse.status_code == 201, reponse.text
+        diff = reponse.json()["diff_relecture"]
+        assert diff["fidele"] is True
+        assert diff["divergences"] == {}
+        assert diff["absents_de_la_relecture"] == []
+        assert diff["champs_compares"] >= 7, (
+            "le payload produit entier est confronte, policy comprise"
+        )
+
+    async def test_produit_altere_la_creation_TIENT_et_l_ecart_se_DIT(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _trahir(payload: dict[str, Any]) -> dict[str, Any]:
+            payload["name"] = str(payload["name"]).upper()  # normalise en douce
+            payload.pop("segment")  # perdu a la persistance
+            return payload
+
+        self._doubler_produits_avec(monkeypatch, _trahir)
+        entetes = await self._preparer_produits(client)
+        reponse = await client.post(
+            "/admin/entites/produits",
+            json=TestUSD2ProduitALUnite.VALIDE_CASH,
+            headers=entetes,
+        )
+        assert reponse.status_code == 201, (
+            "l'entite EXISTE — une divergence n'est jamais une erreur HTTP"
+        )
+        diff = reponse.json()["diff_relecture"]
+        assert diff["fidele"] is False
+        assert "name" in diff["divergences"]
+        assert diff["divergences"]["name"]["envoye"] != diff["divergences"]["name"]["relu"]
+        assert diff["absents_de_la_relecture"] == ["segment"]
+
+    async def test_depositaire_FRA199_currency_perdue_est_DITE(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """LE cas qui a motive le diff : depositary-service peut perdre
+        `currency` a la persistance (FRA-199) — avant, la fiche relue etait
+        rendue telle quelle et l'admin comparait a l'oeil."""
+        from app.routes import admin_entites
+
+        etat: dict[str, Any] = {"liste": []}
+
+        class _Depositaires:
+            async def chercher_par_nom(self, nom):  # type: ignore[no-untyped-def]
+                cible = nom.strip().lower()
+                return next(
+                    (d for d in etat["liste"] if str(d.get("name", "")).lower() == cible),
+                    None,
+                )
+
+            async def creer(self, nom, devise, company_id):  # type: ignore[no-untyped-def]
+                fiche = {"_id": "dep-1", "name": nom, "company_id": company_id}
+                etat["liste"].append(fiche)  # currency JAMAIS persistee (FRA-199)
+                return fiche
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        class _Companies:
+            async def obtenir_company(self, company_id):  # type: ignore[no-untyped-def]
+                return {"name": "DEMO_SARL Douala", "currency": "XAF"}
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(
+            admin_entites, "_client_depositaires_unite", lambda: _Depositaires()
+        )
+        monkeypatch.setattr(
+            admin_entites, "_client_companies_unite", lambda: _Companies()
+        )
+        await TestUSD3DepositaireALUnite._company_a_nous("cie-cm")
+        await _registre_vierge()
+        await database.get_database()["org_hierarchy"].delete_many({})
+        qid, _ = TestUSD3DepositaireALUnite._un_quartier("CM")
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/depositaires",
+            json={"quartier_id": qid, "company_id": "cie-cm"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 201, reponse.text
+        diff = reponse.json()["diff_relecture"]
+        assert diff["fidele"] is False
+        assert diff["absents_de_la_relecture"] == ["currency"]
+        assert diff["divergences"] == {}, "name et company_id, eux, sont fideles"
+
+    async def test_groupe_les_permissions_reordonnees_restent_FIDELES(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """L'ordre d'une liste appartient au serveur — son CONTENU a nous."""
+        from app.routes import admin_entites, admin_referentiels
+
+        etat: dict[str, Any] = {"groupes": []}
+
+        class _Users:
+            async def lister_permissions(self):  # type: ignore[no-untyped-def]
+                return ["CLIENT_CLIENT_ONBOARD", "USER_USER_CREATE"]
+
+            async def chercher_groupe(self, nom):  # type: ignore[no-untyped-def]
+                cible = nom.strip().lower()
+                for g in etat["groupes"]:
+                    if str(g.get("name", "")).strip().lower() == cible:
+                        return g
+                return None
+
+            async def creer_groupe(self, **kwargs):  # type: ignore[no-untyped-def]
+                groupe = {
+                    "_id": "g-diff-1",
+                    "name": kwargs["nom"],
+                    "description": kwargs["description"],
+                    "tag": kwargs["tag"].value,
+                    "company_id": kwargs["company_id"],
+                    # Le serveur rend la liste dans SON ordre — pas le notre.
+                    "permissions": list(reversed(kwargs["permissions"])),
+                }
+                etat["groupes"].append(groupe)
+                return groupe
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_entites, "_client_users", lambda: _Users())
+        monkeypatch.setattr(admin_referentiels, "_client_users", lambda: _Users())
+        await _registre_vierge()
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/groupes",
+            json={
+                "nom": "Auditeur Diff",
+                "description": "Banc du diff payload-relecture",
+                "tag": "STAFF",
+                "permissions": ["USER_USER_CREATE", "CLIENT_CLIENT_ONBOARD"],
+            },
+            headers=entetes,
+        )
+        assert reponse.status_code == 201, reponse.text
+        diff = reponse.json()["diff_relecture"]
+        assert diff["fidele"] is True, (
+            "permissions comparees en CONTENU : reordonner n'est pas trahir"
+        )
+
+    async def test_company_le_payload_capture_est_confronte_a_la_RELECTURE(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """L'executeur capture le payload CONTRACTUEL au moment de l'envoi
+        (rapport.payload_company) ; la route RELIT la plateforme et confronte
+        — ici le serveur a tronque le nom, et ca se DIT."""
+        from app.routes import admin_entites
+
+        ENVOYE = {
+            "name": "DEMO_Composee", "short_name": "DEMO_CMP",
+            "type": "MERCHANT", "industries": ["Retail Trade"],
+            "sectors": ["Commerce"], "currency": "XAF",
+        }
+
+        class _Companies:
+            async def chercher_par_short_name(self, court):  # type: ignore[no-untyped-def]
+                return {"_id": "cid-1", **ENVOYE, "name": "DEMO_Compose"}
+
+        class _Executeur:
+            def __init__(self, mode):
+                self.mode = mode
+                self._companies = _Companies()
+
+            def _telephone_du_pays(self, pays, index):
+                return "+237650009999"
+
+            async def creer_company(self, *, rapport, **kwargs):  # type: ignore[no-untyped-def]
+                rapport.companies_creees.append("DEMO_Composee")
+                rapport.admins_crees.append("admin@x.finzuu.com")
+                rapport.cascades_identity_verifiees += 1
+                rapport.payload_company = dict(ENVOYE)
+                return {"_id": "cid-1", "name": "DEMO_Composee"}
+
+            async def creer_licence(self, company_id, packages, debut, fin, rapport):  # type: ignore[no-untyped-def]
+                rapport.licences_creees.append(company_id)
+
+        monkeypatch.setattr(
+            admin_entites, "_executeur_organisation", lambda mode: _Executeur(mode)
+        )
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/entites/companies",
+            json={"type_company": "MERCHANT", "pays": "CM", "ville": "Douala"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 201, reponse.text
+        corps = reponse.json()
+        assert corps["fiche_relue"]["_id"] == "cid-1", "la preuve vient de la RELECTURE"
+        diff = corps["diff_relecture"]
+        assert diff["fidele"] is False
+        assert list(diff["divergences"]) == ["name"]
+        assert diff["divergences"]["name"] == {
+            "envoye": "DEMO_Composee",
+            "relu": "DEMO_Compose",
+        }

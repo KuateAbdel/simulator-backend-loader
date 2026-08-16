@@ -58,6 +58,7 @@ from app.services.catalogue import (
     ProduitCollecte,
     policy_collect,
 )
+from app.services.relecture import comparer_payload_relecture
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +313,13 @@ async def creer_produit(
     return {
         "product_id": str(identifiant),
         "fiche_relue": fiche,
+        # DIFF payload<->relecture (16/08) : la relecture prouvait l'EXISTENCE,
+        # le diff prouve la FIDELITE — champ envoye par champ envoye.
+        "diff_relecture": (
+            comparer_payload_relecture(payload, fiche)
+            if isinstance(fiche, dict)
+            else None
+        ),
         "marqueur": produit.marqueur,
         "note": "souscriptible au prochain run — Loader et plateforme coherents",
     }
@@ -526,13 +534,47 @@ async def creer_company_unite(
             )
         )
 
+    # DIFF payload<->relecture (16/08) — `fiche` est l'ECHO du POST ; la preuve
+    # de fidelite exige une RELECTURE de la plateforme, confrontee champ par
+    # champ au payload CONTRACTUEL capture par l'executeur au moment de
+    # l'envoi (rapport.payload_company — jamais reconstruit apres coup).
+    envoye = rapport.payload_company
+    fiche_relue: dict[str, Any] | None = None
+    diff: dict[str, Any] | None = None
+    if envoye:
+        try:
+            fiche_relue = await executeur._companies.chercher_par_short_name(
+                envoye["short_name"]
+            )
+        except ErreurService:
+            fiche_relue = None  # la creation a REUSSI — le diff, lui, se dit indisponible
+        if fiche_relue is not None:
+            diff = comparer_payload_relecture(envoye, fiche_relue)
+        else:
+            diff = {
+                "fidele": False,
+                "champs_compares": 0,
+                "divergences": {},
+                "absents_de_la_relecture": [],
+                "verdict": (
+                    "relecture INDISPONIBLE — la company creee n'a pas ete "
+                    f"retrouvee par short_name={envoye['short_name']!r}, "
+                    "a verifier a la main"
+                ),
+            }
+
     return {
         "fiche": fiche,
+        "fiche_relue": fiche_relue,
+        "diff_relecture": diff,
         "admins_crees": rapport.admins_crees,
         "cascade_owner_verifiee": rapport.cascades_identity_verifiees == 1,
         "licence_creee": licence_creee,
         "licence_detail": licence_detail,
-        "note": "sequence S3-03 executee + licence UC-07 — fiche relue du serveur",
+        "note": (
+            "sequence S3-03 executee + licence UC-07 — l'echo du POST dans "
+            "`fiche`, la preuve dans `fiche_relue` + `diff_relecture`"
+        ),
     }
 
 
@@ -677,6 +719,20 @@ async def creer_groupe(
             "tag": str(fiche.get("tag", "")),
             "permissions": len(fiche.get("permissions") or []),
         },
+        # DIFF payload<->relecture (16/08) : le corps POST exact (les memes
+        # champs que UserServiceClient.creer_groupe) confronte a la fiche
+        # relue — permissions comparees en CONTENU, l'ordre appartient au
+        # serveur.
+        "diff_relecture": comparer_payload_relecture(
+            {
+                "name": demande.nom,
+                "description": demande.description,
+                "tag": demande.tag,
+                "company_id": demande.company_id,
+                "permissions": sorted(set(demande.permissions)),
+            },
+            fiche,
+        ),
         "statut": "a_nous",
         "au_registre": True,
         "note": (
@@ -945,6 +1001,18 @@ async def creer_depositaire(
     return {
         "depositary_id": identifiant,
         "fiche_relue": fiche,
+        # DIFF payload<->relecture (16/08) : les 3 champs du corps POST
+        # {name, currency, company_id} confrontes a la fiche relue — c'est
+        # ICI que FRA-199 (currency perdue a la persistance) se DIT au lieu
+        # de se decouvrir a l'oeil.
+        "diff_relecture": comparer_payload_relecture(
+            {
+                "name": marqueur,
+                "currency": composition["devise"],
+                "company_id": demande.company_id,
+            },
+            fiche,
+        ),
         "composition": composition,
         "marqueur": marqueur,
         "statut": "a_nous",
