@@ -3584,3 +3584,81 @@ class TestEtatsLaBas:
         )
         assert reponse.status_code == 409
         assert "mesure 09/08" in reponse.json()["detail"]
+
+
+class TestVarianteApercu:
+    """16/08 — « regenerer une variante » : la reponse propre a « je veux
+    modifier le genere ». On n'edite pas la composition — on en tire une
+    AUTRE, coherente, et la MEME variante redonne la MEME fiche (CR-03)."""
+
+    async def test_variante_change_le_tirage_mais_reste_reproductible(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        appels = TestUSD1CompanyALUnite._doubler_executeur(monkeypatch)
+        entetes = await _session_complete(client)
+        base = dict(TestUSD1CompanyALUnite.DEMANDE)
+
+        for variante in (0, 1, 1):
+            reponse = await client.post(
+                "/admin/entites/companies/apercu",
+                json={**base, "variante": variante},
+                headers=entetes,
+            )
+            assert reponse.status_code == 200, reponse.text
+
+        v0, v1, v1bis = (a["patronyme"] for a in appels)
+        assert v0 != v1, "une variante differente tire un AUTRE patronyme"
+        assert v1 == v1bis, "la MEME variante redonne le MEME tirage (CR-03)"
+
+
+class TestScenariosNommes:
+    """16/08 — presets de configuration REJOUABLES. Appliquer passe par LE
+    chemin du PUT : gardes comprises, reponse RELUE."""
+
+    async def test_le_cycle_complet_sauver_appliquer_supprimer(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await database.get_database()["loader_configuration"].delete_many(
+            {"_id": "scenarios_admin"}
+        )
+        entetes = await _session_complete(client)
+
+        creation = await client.post(
+            "/admin/configuration/scenarios",
+            json={"nom": "Demo client 200", "demande": {"nb_clients": 200}},
+            headers=entetes,
+        )
+        assert creation.status_code == 201, creation.text
+        assert creation.json()["scenario"]["cree_par"] == EMAIL
+
+        # 409 homonyme — jamais d'ecrasement silencieux
+        assert (
+            await client.post(
+                "/admin/configuration/scenarios",
+                json={"nom": "Demo client 200", "demande": {"nb_clients": 300}},
+                headers=entetes,
+            )
+        ).status_code == 409
+
+        # Appliquer = le chemin du PUT : la vue RELUE porte la valeur
+        application = await client.post(
+            "/admin/configuration/scenarios/Demo client 200/appliquer",
+            headers=entetes,
+        )
+        assert application.status_code == 200, application.text
+        assert application.json()["nb_clients"]["valeur"] == 200
+
+        # Lister puis supprimer
+        liste = await client.get("/admin/configuration/scenarios", headers=entetes)
+        assert liste.json()["compte"] == 1
+        assert (
+            await client.delete(
+                "/admin/configuration/scenarios/Demo client 200", headers=entetes
+            )
+        ).status_code == 200
+        assert (
+            await client.post(
+                "/admin/configuration/scenarios/Demo client 200/appliquer",
+                headers=entetes,
+            )
+        ).status_code == 404

@@ -335,6 +335,12 @@ class CompanyDemande(BaseModel):
     #: Raison sociale imposee — sinon le Loader la compose (patronyme reel +
     #: forme + secteur), exactement comme dans un run.
     nom: str | None = Field(default=None, min_length=3, max_length=80)
+    #: « REGENERER UNE VARIANTE » (16/08) — la reponse propre au besoin
+    #: « je veux modifier le genere » : on n'edite pas la composition, on en
+    #: tire une AUTRE, tout aussi coherente. La variante entre dans l'ancre :
+    #: meme demande + meme variante = meme fiche (CR-03 tenu), variante
+    #: suivante = autre patronyme/telephone, memes regles.
+    variante: int = Field(default=0, ge=0, le=99)
 
 
 async def _resoudre_territoire(pays: str, ville: str) -> tuple[str, str, str | None]:
@@ -424,7 +430,10 @@ async def _composer_company(
     # a un redemarrage (la meme lecon que _graine_faker, CR-03).
     from hashlib import sha256
 
-    empreinte = f"{demande.pays}:{demande.ville}:{demande.type_company}:{demande.nom}"
+    empreinte = (
+        f"{demande.pays}:{demande.ville}:{demande.type_company}:{demande.nom}"
+        f":{demande.variante}"
+    )
     ancre = int(sha256(empreinte.encode()).hexdigest()[:8], 16)
 
     executeur = _executeur_organisation(mode)

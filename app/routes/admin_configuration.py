@@ -277,3 +277,106 @@ async def changer_etat_pays(
 
     meta = await depot.enregistrer(configuration, par=session.email)
     return _vue_resolue(configuration, meta)
+
+
+# ---------------------------------------------------------------------------
+# SCENARIOS NOMMES (16/08, recommandation validee par Yaniv) — des presets de
+# configuration REJOUABLES : « Demo client 200 », « Recette 2000 »... Un
+# scenario est UNE ConfigurationDemande nommee ; l'appliquer passe par le
+# MEME chemin que le PUT (gardes comprises) — jamais un chemin parallele.
+# ---------------------------------------------------------------------------
+
+_ID_SCENARIOS = "scenarios_admin"
+
+
+class ScenarioDemande(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nom: str = Field(min_length=3, max_length=60)
+    demande: ConfigurationDemande
+
+
+async def _scenarios() -> list[dict[str, Any]]:
+    from app.core.database import COLLECTION_LOADER_CONFIGURATION, get_collection
+
+    document = await get_collection(COLLECTION_LOADER_CONFIGURATION).find_one(
+        {"_id": _ID_SCENARIOS}
+    )
+    return list((document or {}).get("scenarios", []))
+
+
+@router.get("/scenarios")
+async def lister_scenarios(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    scenarios = await _scenarios()
+    return {
+        "scenarios": scenarios,
+        "compte": len(scenarios),
+        "note": (
+            "un scenario est une DEMANDE de configuration nommee — l'appliquer "
+            "passe par le meme chemin que le PUT, gardes comprises (EF-55, "
+            "bornes, quotas verrouilles)"
+        ),
+    }
+
+
+@router.post("/scenarios", status_code=201)
+async def sauver_scenario(
+    demande: ScenarioDemande,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Sauve un preset — 409 si le nom existe (remplacer = supprimer PUIS
+    sauver : jamais d'ecrasement silencieux)."""
+    from datetime import UTC, datetime
+
+    from app.core.database import COLLECTION_LOADER_CONFIGURATION, get_collection
+
+    nom = demande.nom.strip()
+    if any(s.get("nom") == nom for s in await _scenarios()):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"le scenario {nom!r} existe deja — le supprimer d'abord, "
+                "jamais d'ecrasement silencieux"
+            ),
+        )
+    fiche = {
+        "nom": nom,
+        "demande": demande.demande.model_dump(exclude_none=True),
+        "cree_par": session.email,
+        "cree_le": datetime.now(tz=UTC).isoformat(),
+    }
+    await get_collection(COLLECTION_LOADER_CONFIGURATION).update_one(
+        {"_id": _ID_SCENARIOS}, {"$push": {"scenarios": fiche}}, upsert=True
+    )
+    return {"scenario": fiche, "note": "applicable via POST /scenarios/{nom}/appliquer"}
+
+
+@router.delete("/scenarios/{nom}")
+async def supprimer_scenario(
+    nom: str,
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    from app.core.database import COLLECTION_LOADER_CONFIGURATION, get_collection
+
+    resultat = await get_collection(COLLECTION_LOADER_CONFIGURATION).update_one(
+        {"_id": _ID_SCENARIOS}, {"$pull": {"scenarios": {"nom": nom.strip()}}}
+    )
+    if not resultat.modified_count:
+        raise HTTPException(status_code=404, detail=f"scenario {nom!r} inconnu")
+    return {"supprime": nom.strip()}
+
+
+@router.post("/scenarios/{nom}/appliquer")
+async def appliquer_scenario(
+    nom: str,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Applique le preset PAR le chemin du PUT — les gardes valent (EF-55,
+    bornes, pays hors cibles, totaux) et la reponse est la vue RELUE."""
+    cible = next((s for s in await _scenarios() if s.get("nom") == nom.strip()), None)
+    if cible is None:
+        raise HTTPException(status_code=404, detail=f"scenario {nom!r} inconnu")
+    demande = ConfigurationDemande.model_validate(cible.get("demande") or {})
+    return await modifier_configuration(demande, session)
