@@ -301,6 +301,24 @@ suite complete — la CI l'a BLOQUE (CD skipped), correction, revert de
 doctrine documente. RESTE (recommandations validees par Yaniv, a livrer) :
 variante d'apercu regenerable, diff payload<->relecture, scenarios nommes.
 
+**16/08 (suite) — LES 3 RECOMMANDATIONS SONT LIVREES, bout en bout.**
+(1) Variante d'apercu + scenarios nommes : backend `d568300` (session
+precedente). (2) **DIFF PAYLOAD<->RELECTURE livre et DEPLOYE** (backend
+`6d61029`, CI verte + CD 45 s) : la relecture (FRA-218) prouvait
+l'EXISTENCE, le diff prouve la FIDELITE — `app/services/relecture.py`
+(chemins pointes, egalite de VALEUR 3==3.0, bool marque, listes en CONTENU),
+cable sur les 4 creations a l'unite ; company : payload CONTRACTUEL capture
+par l'executeur (`rapport.payload_company`, jamais reconstruit) + vraie
+RELECTURE ajoutee (la route rendait l'ECHO du POST) ; divergence = 201 qui
+DIT, jamais une erreur — FRA-199 (`currency` perdue) se lit dans la reponse.
+992 tests (+13), 2 mutations attrapees, la 3e a SURVECU et disait vrai
+(branche morte supprimee). (3) **FRONTEND v1.1.0** (`3b5e27d`) : le chantier
+non commite de la session precedente (variante 🎲, scenarios, DiffTable)
+repris et complete — VERDICT DU BACKEND (l'autorite) affiche sur les 4
+ecrans de creation, fiche RELUE rendue pour Company ; preuves : tsc strict,
+build vert, banc navigateur 7/7 sur API simulee au contrat (verdict
+infidele rendu, capture relue), CHANGELOG 1.1.0.
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |
