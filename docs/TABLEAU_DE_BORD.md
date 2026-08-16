@@ -275,6 +275,32 @@ github.com/KuateAbdel/simulator-frontend/releases/tag/v1.0.0.
 (La v1.0.0 du BACKEND reste liée à la recette CR-01→12 / 2000 clients en
 30 min — voir section C.)
 
+**16/08 — LE COCKPIT DEVIENT COMPLET (journee entiere, decisions Yaniv).**
+(1) UC-07 : US-D1 cree la LICENCE avec la company (trou ferme — le catalogue
+restait FERME) ; licences consultables/attribuables par company A NOUS
+(GET/POST .../licences, 409 deja licenciee, fenetre sim+30j). (2) US-D3
+REFONDU conception Yaniv : le depositaire nait d'un QUARTIER + company A
+NOUS — nom DEMO_Kiosque <quartier>, devise DERIVEE, coherence
+company<->quartier (422 INCOHERENCE nomme), quartier=UN kiosque (409),
+noeud d'arbre differe DIT. Ecran 2 champs, composition affichee.
+(3) Inventaire DEPOSITAIRES (4 statuts, registre = org_hierarchy UNION
+journal) + ETAT is_active visible et CHANGEABLE la-bas (PATCH status
+mesure, verite D-DEP-8 portee, etranger permis par decision et DIT,
+relecture prouvee) — l'invariant anti-fermeture REVISE (les noms mensongers
+restent interdits). (4) TELCOS la-bas : GET telcos-config (15 reels, etat,
+PORTEURS) + activer/desactiver derriere la garde des references inverses
+(409 mesure — scenario ca/CI du 09/08) ; verite INV-18 dite (la generation
+suit le classeur — exclusion des tirages = arbitrage separe A trancher).
+(5) DEVISES la-bas : porteurs affiches (XOF: ca·SN·BF·CI en direct !),
+« Tester la desactivation » rend le refus MESURE. (6) Apercu Company
+MODIFIABLE en place (4 champs saisis + Recomposer — prouve) ; les composes
+ne s'editent pas (fidelite au run, dit a l'ecran). (7) Base Mongo serveur
+REMISE A ZERO (demande Yaniv, sauvegarde gardee), mot de passe durable
+repose a l'identique. Lecon de discipline : un push est parti avant la
+suite complete — la CI l'a BLOQUE (CD skipped), correction, revert de
+doctrine documente. RESTE (recommandations validees par Yaniv, a livrer) :
+variante d'apercu regenerable, diff payload<->relecture, scenarios nommes.
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |
