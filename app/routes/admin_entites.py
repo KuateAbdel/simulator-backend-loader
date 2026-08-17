@@ -28,12 +28,12 @@ vaut pour une ecriture a l'unite autant que pour 2000.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
 from uuid import NAMESPACE_OID, UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.clients.base import ErreurService
 from app.clients.contracts import (
@@ -357,6 +357,38 @@ class CompanyDemande(BaseModel):
     #: deriver », pas « envoie du vide ».
     industries: list[str] | None = Field(default=None)
     sectors: list[str] | None = Field(default=None)
+    #: US-D1 EDITABLE (17/08) — le DIRIGEANT compose est ajustable dans
+    #: l'apercu. Tout champ absent reste celui, coherent, du Loader. Les
+    #: invariants restent tenus : `EmailStr` fige le format email et les
+    #: `Field` la taille des champs ; la coherence piece/age/id_number est
+    #: validee cote moteur (`_fusion_owner`) et rendue en 422 lisible.
+    owner: OwnerOverride | None = Field(default=None)
+
+
+class OwnerOverride(BaseModel):
+    """Les champs du dirigeant qu'un operateur peut EDITER dans l'apercu.
+
+    Fluidite SOUS invariants, jamais contre eux : `email` garde le FORMAT
+    (EmailStr), `id_number` la forme alphanumerique MAJUSCULE, et chaque champ
+    sa TAILLE. `None` = « garde le compose ». La coherence metier (piece non
+    expiree, porteur majeur) est verifiee a la fusion cote moteur.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    first_name: str | None = Field(default=None, min_length=1, max_length=60)
+    last_name: str | None = Field(default=None, min_length=1, max_length=60)
+    email: EmailStr | None = Field(default=None)
+    gender: Literal["MALE", "FEMALE"] | None = Field(default=None)
+    date_of_birth: date | None = Field(default=None)
+    id_number: str | None = Field(
+        default=None, min_length=6, max_length=20, pattern=r"^[A-Za-z0-9]+$"
+    )
+    id_expire_on: date | None = Field(default=None)
+    phone: str | None = Field(default=None, min_length=6, max_length=20)
+
+
+CompanyDemande.model_rebuild()
 
 
 async def _resoudre_territoire(pays: str, ville: str) -> tuple[str, str, str | None]:
@@ -430,10 +462,12 @@ async def _composer_company(
     et c'est creer_company() qui en tire les consequences (D-01). Rend AUSSI
     l'executeur : la confirmation enchaine la LICENCE (UC-07) avec lui."""
     from app.clients.contracts import CompanyType
+    from app.core.invariants import InvariantViole
     from app.services.generateur import patronyme
     from app.services.organisation_execution import (
         FORME_PAR_TYPE,
         SECTEURS_PAR_TYPE,
+        OwnerChoisi,
         RapportOrganisation,
     )
 
@@ -452,26 +486,48 @@ async def _composer_company(
     )
     ancre = int(sha256(empreinte.encode()).hexdigest()[:8], 16)
 
+    owner_choisi = (
+        OwnerChoisi(
+            first_name=demande.owner.first_name,
+            last_name=demande.owner.last_name,
+            email=demande.owner.email,
+            gender=demande.owner.gender,
+            date_of_birth=demande.owner.date_of_birth,
+            id_number=demande.owner.id_number,
+            id_expire_on=demande.owner.id_expire_on,
+            phone=demande.owner.phone,
+        )
+        if demande.owner is not None
+        else None
+    )
+
     executeur = _executeur_organisation(mode)
     rapport = RapportOrganisation(mode=mode)
-    fiche = await executeur.creer_company(
-        pays=demande.pays,
-        patronyme=patronyme(demande.pays, ancre),
-        forme_juridique=FORME_PAR_TYPE[type_company],
-        secteur=secteur,
-        type_company=type_company,
-        region=region,
-        ville=ville,
-        quartier=quartier,
-        telephone=executeur._telephone_du_pays(demande.pays, ancre % 90),
-        rapport=rapport,
-        est_imf=est_imf,
-        raison_imposee=demande.nom,
-        # US-D1 editable (17/08) : le choix de l'operateur dans les listes
-        # deroulantes du referentiel prime ; absent = derivation par type.
-        industries_choisies=demande.industries,
-        secteurs_choisis=demande.sectors,
-    )
+    try:
+        fiche = await executeur.creer_company(
+            pays=demande.pays,
+            patronyme=patronyme(demande.pays, ancre),
+            forme_juridique=FORME_PAR_TYPE[type_company],
+            secteur=secteur,
+            type_company=type_company,
+            region=region,
+            ville=ville,
+            quartier=quartier,
+            telephone=executeur._telephone_du_pays(demande.pays, ancre % 90),
+            rapport=rapport,
+            est_imf=est_imf,
+            raison_imposee=demande.nom,
+            # US-D1 editable (17/08) : le choix de l'operateur dans les listes
+            # deroulantes du referentiel prime ; absent = derivation par type.
+            industries_choisies=demande.industries,
+            secteurs_choisis=demande.sectors,
+            # Le dirigeant edite dans l'apercu — fusionne SOUS invariants.
+            owner_override=owner_choisi,
+        )
+    except InvariantViole as erreur:
+        # Un champ owner edite viole un invariant (piece expiree, mineur,
+        # id_number non conforme...) : refus 422 LISIBLE, jamais un 500 opaque.
+        raise HTTPException(status_code=422, detail=[str(erreur)]) from erreur
     return fiche, rapport, executeur
 
 

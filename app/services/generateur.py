@@ -352,6 +352,12 @@ class Generateur:
         # `run_id` ET sa fenetre.
         self._reference = reference or date.today()
 
+    @property
+    def reference(self) -> date:
+        """La date de reference du run (sim_end_date, sinon aujourd'hui) — celle
+        contre laquelle valider age et expiration d'une piece editee a la main."""
+        return self._reference
+
     # ----------------------------------------------------------------------
     # Unicite des noms — D-12
     # ----------------------------------------------------------------------

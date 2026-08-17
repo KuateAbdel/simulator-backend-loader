@@ -43,7 +43,7 @@ from __future__ import annotations
 import logging
 import random
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any, Final
 from uuid import UUID, uuid4
@@ -63,10 +63,16 @@ from app.core.cdc import (
     PAYS_CIBLES,
     PREFIXE_DONNEES,
 )
-from app.core.invariants import valider_devise_pays
+from app.core.invariants import (
+    valider_age,
+    valider_devise_pays,
+    valider_genre,
+    valider_id_number,
+    valider_piece_identite,
+)
 from app.models.enums import LenderType, RunMode, RunStatus
 from app.repositories import AuditTrailRepository, LendersRegistryRepository
-from app.services.generateur import Generateur
+from app.services.generateur import Generateur, IdentiteGeneree
 from app.services.generateur import patronyme as _patronyme_bouchon
 from app.services.geographie import ReferentielGeo
 from app.services.organisation import CompanyPorteuse, PlanOrganisation
@@ -102,6 +108,24 @@ ROLE_ADMIN_COMPANY: str = "Admin"
 # paralleles divergent toujours : celle-ci se serait enrichie sans l'autre.
 # L'alias conserve le nom local (« bouchon ») qui dit ce que c'est vraiment —
 # de la matiere Faker REJOUEE, en attendant son client.
+
+
+@dataclass(slots=True)
+class OwnerChoisi:
+    """US-D1 EDITABLE (17/08) — les champs du dirigeant que l'operateur a EDITES
+    dans l'apercu. Tout est optionnel : `None` = « garde le compose ». Ce n'est
+    pas de la rigidite, c'est de la fluidite SOUS invariants — la fusion valide
+    id_number (FRA-228), coherence piece/porteur (FRA-200/D-CLI-2), majorite et
+    genre ; le format email est tenu au contrat de la route (EmailStr)."""
+
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
+    gender: str | None = None
+    date_of_birth: date | None = None
+    id_number: str | None = None
+    id_expire_on: date | None = None
+    phone: str | None = None
 
 
 @dataclass(slots=True)
@@ -273,6 +297,41 @@ class ExecuteurOrganisation:
         # pays, sur un service sans `DELETE`.
         return valider_devise_pays(devise.code, pays, self._referentiel)
 
+    def _fusion_owner(self, owner: IdentiteGeneree, choix: OwnerChoisi) -> IdentiteGeneree:
+        """Applique les champs dirigeant EDITES par l'operateur, sous invariants.
+
+        Principe : tout peut changer SAUF ce que fige un invariant. On valide
+        AVANT de remplacer, contre la MEME reference que le moteur :
+          - piece non expiree et coherente avec la naissance (FRA-200/D-CLI-2) ;
+          - porteur majeur (age >= 18) ;
+          - id_number alphanumerique MAJUSCULE (FRA-228) — normalise ;
+          - genre normalise (MALE/FEMALE).
+        Un champ absent (`None`) garde la valeur composee. Le format email est
+        deja tenu au contrat de la route (EmailStr). Une violation leve
+        InvariantViole, que la route traduit en 422 lisible."""
+        naissance = choix.date_of_birth or owner.date_of_birth
+        expiration = choix.id_expire_on or owner.id_expire_on
+        reference = self._generateur.reference
+        valider_age(naissance, reference)
+        valider_piece_identite(naissance, expiration, reference)
+        numero = (
+            valider_id_number(choix.id_number)
+            if choix.id_number is not None
+            else owner.id_number
+        )
+        genre = valider_genre(choix.gender) if choix.gender is not None else owner.gender
+        return replace(
+            owner,
+            first_name=choix.first_name or owner.first_name,
+            last_name=choix.last_name or owner.last_name,
+            email=choix.email or owner.email,
+            phone=choix.phone or owner.phone,
+            gender=genre,
+            date_of_birth=naissance,
+            id_expire_on=expiration,
+            id_number=numero,
+        )
+
     # ----------------------------------------------------------------------
     # UC-07 — Companies et licences
     # ----------------------------------------------------------------------
@@ -300,6 +359,10 @@ class ExecuteurOrganisation:
         #: `None`/vide = derivation par type (le comportement du run, intact).
         industries_choisies: list[str] | None = None,
         secteurs_choisis: list[str] | None = None,
+        #: Override operateur des champs DIRIGEANT edites dans l'apercu
+        #: (date de naissance, email, id_number, expiration...). `None` = le
+        #: dirigeant reste celui, coherent, que le Loader a compose.
+        owner_override: OwnerChoisi | None = None,
     ) -> dict[str, Any] | None:
         """Cree une Company, sa licence et son Admin User.
 
@@ -367,6 +430,10 @@ class ExecuteurOrganisation:
             # regle que les clients, pas une population a deux vitesses.
             statique=self._statique,
         )
+        # US-D1 EDITABLE — le dirigeant compose peut etre AJUSTE par l'operateur,
+        # mais jamais hors des invariants : la fusion valide avant de remplacer.
+        if owner_override is not None:
+            owner = self._fusion_owner(owner, owner_override)
         devise = self._devise_du_pays(pays)
 
         # Le payload CONTRACTUEL qui part (ou partirait) — les champs
