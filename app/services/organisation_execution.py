@@ -295,6 +295,11 @@ class ExecuteurOrganisation:
         rapport: RapportOrganisation,
         est_imf: bool = False,
         raison_imposee: str | None = None,
+        #: Override operateur (US-D1 editable, 17/08) : industries/secteurs
+        #: CHOISIS dans le referentiel via les listes deroulantes de l'ecran.
+        #: `None`/vide = derivation par type (le comportement du run, intact).
+        industries_choisies: list[str] | None = None,
+        secteurs_choisis: list[str] | None = None,
     ) -> dict[str, Any] | None:
         """Cree une Company, sa licence et son Admin User.
 
@@ -320,9 +325,14 @@ class ExecuteurOrganisation:
             logger.info("Company %s deja presente, reutilisee", court)
             return existante
 
-        secteurs, industries = secteurs_et_industrie(
+        secteurs_defaut, industries_defaut = secteurs_et_industrie(
             type_company, ancre=court, statique=self._statique, connexes_sup=self._connexes_sup
         )
+        # Le choix de l'operateur PRIME sur la derivation par type (US-D1
+        # editable) — il a coche dans le referentiel reel ; on l'honore. Sinon
+        # (run, ou aucun choix) on retombe sur la derivation, inchangee.
+        secteurs = secteurs_choisis if secteurs_choisis else secteurs_defaut
+        industries = industries_choisies if industries_choisies else industries_defaut
         ville_ref = next((v for v in self._referentiel.villes.values() if v.name == ville), None)
         adresse = self._generateur.adresse(
             quartier,

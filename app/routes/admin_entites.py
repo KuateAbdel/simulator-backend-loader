@@ -349,6 +349,14 @@ class CompanyDemande(BaseModel):
     #: meme demande + meme variante = meme fiche (CR-03 tenu), variante
     #: suivante = autre patronyme/telephone, memes regles.
     variante: int = Field(default=0, ge=0, le=99)
+    #: US-D1 EDITABLE (17/08) — industries/secteurs CHOISIS par l'operateur
+    #: dans les listes deroulantes du referentiel (catalogue-statique). Vide
+    #: ou absent = derivation par type, le comportement du run (zero
+    #: regression). Le client `creer_company` refuse une liste vide
+    #: explicite (INV-CPY-03/04) : ici None signifie « laisse le Loader
+    #: deriver », pas « envoie du vide ».
+    industries: list[str] | None = Field(default=None)
+    sectors: list[str] | None = Field(default=None)
 
 
 async def _resoudre_territoire(pays: str, ville: str) -> tuple[str, str, str | None]:
@@ -459,6 +467,10 @@ async def _composer_company(
         rapport=rapport,
         est_imf=est_imf,
         raison_imposee=demande.nom,
+        # US-D1 editable (17/08) : le choix de l'operateur dans les listes
+        # deroulantes du referentiel prime ; absent = derivation par type.
+        industries_choisies=demande.industries,
+        secteurs_choisis=demande.sectors,
     )
     return fiche, rapport, executeur
 
