@@ -172,11 +172,27 @@ async def classer_produits(plateforme: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def registre_companies() -> set[str]:
-    """Les company_id A NOUS : toute company creee par le Loader porte au
-    moins un role dans `lenders_registry` (EF-12) — y compris celles creees
-    a l'unite par l'admin (US-D1 rejoue la sequence S3-03)."""
+    """Les company_id A NOUS — l'UNION de deux memoires, jamais l'une sans
+    l'autre, exactement comme produits et depositaires :
+
+      - le JOURNAL (entity_type="Company") : TOUTE company creee par le Loader
+        y ecrit son CREATE, run OU unite (organisation_execution `creer_company`,
+        `journaliser(entity_type="Company", action="CREATE", entity_id=...)`) ;
+      - `lenders_registry` (EF-12) : la company qui porte un role de Lender.
+
+    Correctif 17/08 (defaut de conception signale par le boss) : ce registre
+    etait le SEUL des quatre a ignorer le journal — il deduisait « a nous » du
+    rôle de prêteur, pas de la creation. Une company creee mais SANS role de
+    Lender (MERCHANT, FONDATION, ou lender dont le rôle n'a pas ete pose)
+    n'existait nulle part ici et tombait `etranger`/`marque_mais_inconnu`
+    alors qu'on venait de la creer. Le journal la rend `a_nous` au meme titre
+    qu'un run : une action manuelle est une donnee du Loader, pas un etranger."""
+    crees, supprimes = await _registre_journal("Company", "company_id")
+    ids = {cid for cid in crees if cid not in supprimes}
     curseur = get_collection(COLLECTION_LENDERS_REGISTRY).find({}, {"company_id": 1})
-    return {str(document.get("company_id")) async for document in curseur}
+    async for document in curseur:
+        ids.add(str(document.get("company_id")))
+    return ids
 
 
 async def classer_companies(plateforme: list[dict[str, Any]]) -> dict[str, Any]:
