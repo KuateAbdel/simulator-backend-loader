@@ -51,19 +51,13 @@ class SurcoucheRepository:
         surcouche = SurcoucheReferentiel(
             regions={i: Region(**r) for i, r in (document.get("regions") or {}).items()},
             villes={i: City(**v) for i, v in (document.get("villes") or {}).items()},
-            quartiers={
-                i: District(**q) for i, q in (document.get("quartiers") or {}).items()
-            },
+            quartiers={i: District(**q) for i, q in (document.get("quartiers") or {}).items()},
             telcos={i: Telco(**t) for i, t in (document.get("telcos") or {}).items()},
-            secteurs={
-                nom: tuple(inds) for nom, inds in (document.get("secteurs") or {}).items()
-            },
+            secteurs={nom: tuple(inds) for nom, inds in (document.get("secteurs") or {}).items()},
             industries_ajoutees=list(document.get("industries_ajoutees") or []),
             formes_juridiques=list(document.get("formes_juridiques") or []),
             fonctions_dirigeant=list(document.get("fonctions_dirigeant") or []),
-            professions={
-                g: list(ps) for g, ps in (document.get("professions") or {}).items()
-            },
+            professions={g: list(ps) for g, ps in (document.get("professions") or {}).items()},
             journal=list(document.get("journal") or []),
         )
         return surcouche, {
@@ -72,9 +66,7 @@ class SurcoucheRepository:
             "modifie_le": document.get("modifie_le"),
         }
 
-    async def enregistrer(
-        self, surcouche: SurcoucheReferentiel, *, par: str
-    ) -> dict[str, Any]:
+    async def enregistrer(self, surcouche: SurcoucheReferentiel, *, par: str) -> dict[str, Any]:
         maintenant = datetime.now(tz=UTC).isoformat()
         await self.collection.update_one(
             {"_id": _ID_SINGLETON},
@@ -84,9 +76,7 @@ class SurcoucheRepository:
                     "villes": {i: asdict(v) for i, v in surcouche.villes.items()},
                     "quartiers": {i: asdict(q) for i, q in surcouche.quartiers.items()},
                     "telcos": {i: asdict(t) for i, t in surcouche.telcos.items()},
-                    "secteurs": {
-                        nom: list(inds) for nom, inds in surcouche.secteurs.items()
-                    },
+                    "secteurs": {nom: list(inds) for nom, inds in surcouche.secteurs.items()},
                     "industries_ajoutees": list(surcouche.industries_ajoutees),
                     "formes_juridiques": list(surcouche.formes_juridiques),
                     "fonctions_dirigeant": [dict(d) for d in surcouche.fonctions_dirigeant],

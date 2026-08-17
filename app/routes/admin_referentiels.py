@@ -20,6 +20,7 @@ le premier appel paie la lecture, les suivants servent la memoire.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
@@ -35,7 +36,7 @@ from app.routes.dependances import (
 )
 from app.services.geographie import ReferentielGeo, charger_referentiel
 from app.services.referentiel_statique import ReferentielStatique, charger_statique
-from app.services.surcouche_referentiel import AjoutRefuse
+from app.services.surcouche_referentiel import AjoutRefuse, SurcoucheReferentiel
 
 router = APIRouter(prefix="/admin/referentiels", tags=["admin — referentiels"])
 
@@ -341,6 +342,7 @@ async def ajouter_telco(
     # non rattache n'appartient a aucun pays, les deux gestes vont ensemble.
     admin = _config_admin()
     try:
+
         async def _envoi() -> Any:
             fiche_telco, _creee = await admin.creer_telco_si_absent(
                 telco.network_name, telco.regex_msisdn
@@ -551,7 +553,9 @@ async def retirer_industrie(
 # --- US-B5+ : ajout/retrait des autres dimensions du catalogue --------------
 
 
-async def _appliquer_surcouche(action, *, par: str) -> dict[str, Any]:
+async def _appliquer_surcouche(
+    action: Callable[[SurcoucheReferentiel], Any], *, par: str
+) -> dict[str, Any]:
     """Petit rite commun : charger, agir, persister, relire. `action(surcouche)`
     mute la surcouche et lève `AjoutRefuse` si l'invariant casse."""
     await refuser_si_run_en_cours()
@@ -563,7 +567,10 @@ async def _appliquer_surcouche(action, *, par: str) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(refus)) from refus
     meta = await depot.enregistrer(surcouche, par=par)
     relue, _ = await depot.charger()
-    return {"resultat": resultat, "surcouche": {"resume": relue.resume(), "version": meta["version"]}}
+    return {
+        "resultat": resultat,
+        "surcouche": {"resume": relue.resume(), "version": meta["version"]},
+    }
 
 
 class FormeDemande(BaseModel):
@@ -572,13 +579,19 @@ class FormeDemande(BaseModel):
 
 
 @router.post("/formes", status_code=201)
-async def ajouter_forme(demande: FormeDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
+async def ajouter_forme(
+    demande: FormeDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]
+) -> dict[str, Any]:
     """`US-B5+` — une forme juridique (le plus simple : un label unique)."""
-    return await _appliquer_surcouche(lambda s: s.ajouter_forme(_statique(), label=demande.label), par=session.email)
+    return await _appliquer_surcouche(
+        lambda s: s.ajouter_forme(_statique(), label=demande.label), par=session.email
+    )
 
 
 @router.delete("/formes/{label}")
-async def retirer_forme(label: str, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
+async def retirer_forme(
+    label: str, session: Annotated[SessionAdmin, Depends(admin_complet)]
+) -> dict[str, Any]:
     return await _appliquer_surcouche(lambda s: s.retirer_forme(label=label), par=session.email)
 
 
@@ -591,18 +604,26 @@ class DirigeantDemande(BaseModel):
 
 
 @router.post("/dirigeants", status_code=201)
-async def ajouter_dirigeant(demande: DirigeantDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
+async def ajouter_dirigeant(
+    demande: DirigeantDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]
+) -> dict[str, Any]:
     """`US-B5+` — une fonction dirigeant : rang unique + libellés FR/EN."""
     return await _appliquer_surcouche(
         lambda s: s.ajouter_dirigeant(
-            _statique(), rang=demande.rang, francais=demande.francais, anglais=demande.anglais, abreviation=demande.abreviation
+            _statique(),
+            rang=demande.rang,
+            francais=demande.francais,
+            anglais=demande.anglais,
+            abreviation=demande.abreviation,
         ),
         par=session.email,
     )
 
 
 @router.delete("/dirigeants/{rang}")
-async def retirer_dirigeant(rang: int, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
+async def retirer_dirigeant(
+    rang: int, session: Annotated[SessionAdmin, Depends(admin_complet)]
+) -> dict[str, Any]:
     return await _appliquer_surcouche(lambda s: s.retirer_dirigeant(rang=rang), par=session.email)
 
 
@@ -613,16 +634,23 @@ class ProfessionDemande(BaseModel):
 
 
 @router.post("/professions", status_code=201)
-async def ajouter_profession(demande: ProfessionDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
+async def ajouter_profession(
+    demande: ProfessionDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]
+) -> dict[str, Any]:
     """`US-B5+` — une profession, rattachée à un groupe métier EXISTANT."""
     return await _appliquer_surcouche(
-        lambda s: s.ajouter_profession(_statique(), groupe=demande.groupe, label=demande.label), par=session.email
+        lambda s: s.ajouter_profession(_statique(), groupe=demande.groupe, label=demande.label),
+        par=session.email,
     )
 
 
 @router.delete("/professions/{label}")
-async def retirer_profession(label: str, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
-    return await _appliquer_surcouche(lambda s: s.retirer_profession(label=label), par=session.email)
+async def retirer_profession(
+    label: str, session: Annotated[SessionAdmin, Depends(admin_complet)]
+) -> dict[str, Any]:
+    return await _appliquer_surcouche(
+        lambda s: s.retirer_profession(label=label), par=session.email
+    )
 
 
 @router.get("/produits-catalogue")
@@ -1188,9 +1216,7 @@ async def changer_etat_telco(
                 status_code=404, detail=f"operateur {telco_id} inconnu de config-service"
             )
         nom = str(cible.get("network_name") or cible.get("name") or "")
-        porteurs = (await _porteurs_par_ressource(lecture, "telcos")).get(
-            str(telco_id), []
-        )
+        porteurs = (await _porteurs_par_ressource(lecture, "telcos")).get(str(telco_id), [])
 
         audit = AuditTrailRepository()
         async with audit.intention(

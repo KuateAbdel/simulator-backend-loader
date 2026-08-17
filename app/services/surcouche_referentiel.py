@@ -405,16 +405,13 @@ class SurcoucheReferentiel:
         """
         code = str(pays).strip().upper()
         if base.pays(code) is None:
-            raise AjoutRefuse(
-                f"telco {network_name!r} : pays {code!r} hors des cibles — EF-05."
-            )
+            raise AjoutRefuse(f"telco {network_name!r} : pays {code!r} hors des cibles — EF-05.")
         nom = str(network_name).strip()
         court = str(short_name).strip()
         if not nom or not court:
             raise AjoutRefuse("telco sans nom ou sans code court — refuse")
         existants = [
-            t for t in (*base.telcos.values(), *self.telcos.values())
-            if t.country_iso2 == code
+            t for t in (*base.telcos.values(), *self.telcos.values()) if t.country_iso2 == code
         ]
         # Collision CROISEE comprise : un nouveau nom egal au CODE d'un
         # existant (ou l'inverse) est aussi ambigu — « MTN CM » est le code de
@@ -442,9 +439,7 @@ class SurcoucheReferentiel:
             )
 
         if not 0 < part_marche <= 100:
-            raise AjoutRefuse(
-                f"telco {nom!r} : part de marche {part_marche} hors de ]0, 100]"
-            )
+            raise AjoutRefuse(f"telco {nom!r} : part de marche {part_marche} hors de ]0, 100]")
         somme = sum(t.part_marche for t in existants)
         if somme + part_marche > 100:
             raise AjoutRefuse(
