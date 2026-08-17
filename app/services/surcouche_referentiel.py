@@ -96,6 +96,11 @@ class SurcoucheReferentiel:
     #: Un secteur ne se rattache qu'a des industries EXISTANTES (les 6) — on
     #: n'ouvre pas une 7e industrie par la porte d'un secteur. label -> industries.
     secteurs: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: `US-B5+` — LIAISON GENERATIVE d'un secteur ajoute : les types d'entreprise
+    #: (CompanyType) pour lesquels il est un secteur connexe admissible. C'est ce
+    #: qui le fait TIRER au run (pas seulement s'afficher). Metier, declare a
+    #: l'ajout, jamais calcule. label -> (types d'entreprise).
+    secteurs_types: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: `US-B5+` — les industries ajoutees par le Super-Admin, par-dessus les 6 du
     #: classeur. Le niveau HAUT de la taxonomie : rare, stable, mais possible.
     industries_ajoutees: list[str] = field(default_factory=list)
@@ -199,6 +204,7 @@ class SurcoucheReferentiel:
         *,
         label: str,
         industries: list[str],
+        types: list[str] | None = None,
     ) -> tuple[str, tuple[str, ...]]:
         """`US-B5+` — un secteur d'activite, avec ses invariants.
 
@@ -240,8 +246,22 @@ class SurcoucheReferentiel:
             )
         rattache = tuple(sorted(propres))
         self.secteurs[libelle] = rattache
+        if types:
+            propres_types = tuple(dict.fromkeys(t.strip() for t in types if t.strip()))
+            if propres_types:
+                self.secteurs_types[libelle] = propres_types
         self.journal.append(f"secteur {libelle!r} ajoute ({', '.join(rattache)})")
         return libelle, rattache
+
+    def connexes_par_type(self) -> dict[str, tuple[str, ...]]:
+        """Inverse de `secteurs_types` : type d'entreprise -> secteurs ajoutes
+        qui lui sont declares connexes. C'est ce que le generateur fusionne dans
+        `SECTEURS_PAR_TYPE` pour que ces secteurs soient reellement tires."""
+        par_type: dict[str, list[str]] = {}
+        for secteur, types in self.secteurs_types.items():
+            for t in types:
+                par_type.setdefault(t, []).append(secteur)
+        return {t: tuple(sorted(secs)) for t, secs in par_type.items()}
 
     def ajouter_industrie(self, base_statique: Any, *, label: str) -> str:
         """`US-B5+` — une industrie (le niveau HAUT). Rare, mais possible.
@@ -271,6 +291,7 @@ class SurcoucheReferentiel:
                 "le classeur est immuable, rien a retirer."
             )
         del self.secteurs[libelle]
+        self.secteurs_types.pop(libelle, None)
         self.journal.append(f"secteur {libelle!r} retire")
 
     def retirer_industrie(self, *, label: str) -> None:
@@ -610,6 +631,7 @@ class SurcoucheReferentiel:
             "quartiers": {i: q.name for i, q in sorted(self.quartiers.items())},
             "telcos": {i: t.network_name for i, t in sorted(self.telcos.items())},
             "secteurs": {nom: list(inds) for nom, inds in sorted(self.secteurs.items())},
+            "secteurs_types": {nom: list(ts) for nom, ts in sorted(self.secteurs_types.items())},
             "industries_ajoutees": sorted(self.industries_ajoutees),
             "formes_juridiques": sorted(self.formes_juridiques),
             "fonctions_dirigeant": sorted(self.fonctions_dirigeant, key=lambda d: d["rang"]),

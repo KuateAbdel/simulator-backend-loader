@@ -180,3 +180,71 @@ class TestTracabilite:
 
     def test_une_surcouche_vide_le_dit(self) -> None:
         assert "aucun ajout" in SurcoucheReferentiel().resume()
+
+
+class TestSurcoucheCatalogueGenerative:
+    """`US-B5+` — un secteur ajoute doit COMPTER au run, pas seulement s'afficher.
+
+    On prouve la verticale : le referentiel effectif resout le secteur ajoute
+    (la structure ne casse plus), et un secteur DECLARE connexe pour un type
+    d'entreprise est reellement tire par le generateur.
+    """
+
+    def test_referentiel_effectif_resout_le_secteur_ajoute_sans_toucher_la_base(self) -> None:
+        from app.services.referentiel_statique import charger_statique, referentiel_effectif
+
+        base = charger_statique()
+        eff = referentiel_effectif(
+            base, secteurs_ajoutes={"GreenFintech": ("Finance & Insurance",)}
+        )
+        # la base reste intacte (frozen) — l'immuabilite porte sur le classeur
+        assert "GreenFintech" not in base.secteurs
+        assert len(base.secteurs) == 112
+        # l'effectif la connait, et industrie_du_secteur NE LEVE PLUS
+        assert len(eff.secteurs) == 113
+        assert eff.industrie_du_secteur("GreenFintech") == "Finance & Insurance"
+
+    def test_un_secteur_declare_connexe_est_reellement_tire(self) -> None:
+        from app.clients.contracts import CompanyType
+        from app.services.organisation_execution import secteurs_et_industrie
+        from app.services.referentiel_statique import charger_statique, referentiel_effectif
+
+        eff = referentiel_effectif(
+            charger_statique(), secteurs_ajoutes={"GreenFintech": ("Finance & Insurance",)}
+        )
+        connexes_sup = {CompanyType.IMF: ("GreenFintech",)}
+
+        # sans binding : le secteur ajoute n'est jamais tire
+        sans = {
+            s for i in range(80) for s in secteurs_et_industrie(CompanyType.IMF, f"c{i}", eff)[0]
+        }
+        assert "GreenFintech" not in sans
+
+        # avec binding : il apparait dans des Companies generees, industrie derivee
+        avec = [
+            secteurs_et_industrie(CompanyType.IMF, f"c{i}", eff, connexes_sup) for i in range(80)
+        ]
+        porteuses = [s for s, _ in avec if "GreenFintech" in s]
+        assert porteuses, "le secteur declare connexe doit etre tire au moins une fois"
+        # l'industrie reste celle du secteur PRINCIPAL (MicroFinance -> Finance)
+        _, industries = avec[0]
+        assert industries == ["Finance & Insurance"]
+
+    def test_binding_persiste_et_s_inverse_par_type(self) -> None:
+        from types import SimpleNamespace
+
+        base = SurcoucheReferentiel()
+        faux = SimpleNamespace(
+            secteurs={"MicroFinance": ("Finance & Insurance",)},
+            industries={1: "Finance & Insurance"},
+        )
+        base.ajouter_secteur(
+            faux, label="GreenFintech", industries=["Finance & Insurance"], types=["IMF", "BANK"]
+        )
+        assert base.secteurs_types["GreenFintech"] == ("IMF", "BANK")
+        par_type = base.connexes_par_type()
+        assert par_type["IMF"] == ("GreenFintech",)
+        assert par_type["BANK"] == ("GreenFintech",)
+        # le retrait nettoie AUSSI la liaison
+        base.retirer_secteur(label="GreenFintech")
+        assert "GreenFintech" not in base.secteurs_types

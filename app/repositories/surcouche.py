@@ -54,6 +54,9 @@ class SurcoucheRepository:
             quartiers={i: District(**q) for i, q in (document.get("quartiers") or {}).items()},
             telcos={i: Telco(**t) for i, t in (document.get("telcos") or {}).items()},
             secteurs={nom: tuple(inds) for nom, inds in (document.get("secteurs") or {}).items()},
+            secteurs_types={
+                nom: tuple(ts) for nom, ts in (document.get("secteurs_types") or {}).items()
+            },
             industries_ajoutees=list(document.get("industries_ajoutees") or []),
             formes_juridiques=list(document.get("formes_juridiques") or []),
             fonctions_dirigeant=list(document.get("fonctions_dirigeant") or []),
@@ -77,6 +80,9 @@ class SurcoucheRepository:
                     "quartiers": {i: asdict(q) for i, q in surcouche.quartiers.items()},
                     "telcos": {i: asdict(t) for i, t in surcouche.telcos.items()},
                     "secteurs": {nom: list(inds) for nom, inds in surcouche.secteurs.items()},
+                    "secteurs_types": {
+                        nom: list(ts) for nom, ts in surcouche.secteurs_types.items()
+                    },
                     "industries_ajoutees": list(surcouche.industries_ajoutees),
                     "formes_juridiques": list(surcouche.formes_juridiques),
                     "fonctions_dirigeant": [dict(d) for d in surcouche.fonctions_dirigeant],

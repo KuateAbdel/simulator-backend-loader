@@ -19,7 +19,6 @@ une ville ajoutee par l'API participe au run suivant, exactement comme
 l'ecran l'annonce.
 """
 
-
 from __future__ import annotations
 
 import logging
@@ -64,7 +63,7 @@ from app.services.orchestrateur import Etape, Orchestrateur, RapportEtape, Trava
 from app.services.organisation import CompanyPorteuse
 from app.services.organisation_execution import ExecuteurOrganisation
 from app.services.recette import ControleRecette
-from app.services.referentiel_statique import charger_statique
+from app.services.referentiel_statique import charger_statique, referentiel_effectif
 from app.services.roles_execution import ExecuteurRoles
 from app.services.staff_execution import ExecuteurStaff
 
@@ -148,6 +147,17 @@ async def executer(
     if not surcouche.vide:
         referentiel = surcouche.appliquer(referentiel)
         sortie(surcouche.resume())
+    # `US-B5+` — le referentiel EFFECTIF : la base FUSIONNEE avec les secteurs et
+    # industries ajoutes. C'est LUI que le generateur consomme (plus la base
+    # seule) — sinon un secteur ajoute reste invisible au run et
+    # `industrie_du_secteur` leverait dessus. Les secteurs DECLARES connexes pour
+    # un type d'entreprise entrent dans le tirage (`connexes_sup`).
+    statique = referentiel_effectif(
+        statique,
+        secteurs_ajoutes=dict(surcouche.secteurs),
+        industries_ajoutees=list(surcouche.industries_ajoutees),
+    )
+    connexes_sup = surcouche.connexes_par_type()
 
     # `ENF-16` — fenetre de 180 jours, calculee ICI : elle fait partie de ce que
     # le run FIGE, et elle est l'ancre temporelle du generateur (`ENF-15`).
@@ -260,6 +270,7 @@ async def executer(
         account_client=comptes,
         registre_lenders=registre,
         audit=audit,
+        connexes_sup=connexes_sup,
     )
     ex_cat = ExecuteurCatalogue(
         run_id=run_id,
@@ -321,9 +332,7 @@ async def executer(
             for produit in rapport.souscriptibles:
                 if produit.type_produit is not ProductType.COLLECT:
                     continue
-                produits_par_company.setdefault(porteuse.company_id, set()).add(
-                    produit.product_id
-                )
+                produits_par_company.setdefault(porteuse.company_id, set()).add(produit.product_id)
                 if mode is RunMode.REAL:
                     await hierarchie.ajouter_produit(
                         run_id=run_id,
@@ -460,8 +469,14 @@ async def executer(
             await depot_runs.attacher_mesures(run_id, mesures)
     finally:
         for client in (
-            users, companies, comptes, produits_client, depositaires, identites,
-            clients_finaux, faker,
+            users,
+            companies,
+            comptes,
+            produits_client,
+            depositaires,
+            identites,
+            clients_finaux,
+            faker,
         ):
             await client.fermer()
         if gerer_connexion:
@@ -629,5 +644,3 @@ async def _reconcilier_faker(ledger: FakerLedgerRepository, run_id: UUID) -> str
         "l'entite est irreversible et son origine Faker n'est pas tracee."
     )
     return "\n".join(lignes)
-
-

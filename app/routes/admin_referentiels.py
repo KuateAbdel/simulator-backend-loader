@@ -443,6 +443,10 @@ class SecteurDemande(BaseModel):
 
     label: str = Field(min_length=2, max_length=60)
     industries: list[str] = Field(min_length=1)
+    #: Liaison generative : types d'entreprise pour lesquels ce secteur est un
+    #: connexe admissible. Vide = le secteur existe au referentiel mais n'est
+    #: (encore) tire par aucun type au run.
+    types: list[str] = Field(default_factory=list)
 
 
 @router.post("/secteurs", status_code=201)
@@ -469,7 +473,7 @@ async def ajouter_secteur(
     surcouche, _ = await depot.charger()
     try:
         label, _rattache = surcouche.ajouter_secteur(
-            _statique(), label=demande.label, industries=demande.industries
+            _statique(), label=demande.label, industries=demande.industries, types=demande.types
         )
     except AjoutRefuse as refus:
         raise HTTPException(status_code=422, detail=str(refus)) from refus

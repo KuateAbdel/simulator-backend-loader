@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import logging
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Final
@@ -203,11 +203,16 @@ class ExecuteurOrganisation:
         account_client: AccountServiceClient,
         registre_lenders: LendersRegistryRepository,
         audit: AuditTrailRepository,
+        #: `US-B5+` — secteurs ajoutes DECLARES connexes par type d'entreprise.
+        #: Fusionnes dans le tirage : c'est ce qui fait qu'un secteur de surcouche
+        #: est reellement porte par des Companies generees, pas seulement affiche.
+        connexes_sup: Mapping[str, tuple[str, ...]] | None = None,
     ) -> None:
         self.run_id = run_id
         self.mode = mode
         self._referentiel = referentiel
         self._statique = statique
+        self._connexes_sup = connexes_sup or {}
         self._generateur = generateur
         self._companies = company_client
         self._users = user_client
@@ -316,7 +321,7 @@ class ExecuteurOrganisation:
             return existante
 
         secteurs, industries = secteurs_et_industrie(
-            type_company, ancre=court, statique=self._statique
+            type_company, ancre=court, statique=self._statique, connexes_sup=self._connexes_sup
         )
         ville_ref = next((v for v in self._referentiel.villes.values() if v.name == ville), None)
         adresse = self._generateur.adresse(
@@ -967,7 +972,10 @@ SECTEURS_MAX_PAR_COMPANY: Final = 3
 
 
 def secteurs_et_industrie(
-    type_company: CompanyType, ancre: str, statique: ReferentielStatique
+    type_company: CompanyType,
+    ancre: str,
+    statique: ReferentielStatique,
+    connexes_sup: Mapping[str, tuple[str, ...]] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Les `sectors` et `industries` d'une Company. `UC-07`, `INV-CPY-03/04`.
 
@@ -995,6 +1003,13 @@ def secteurs_et_industrie(
     Ancre au CLIENT — ici a la Company — jamais au run (`CR-03`).
     """
     principal, connexes = SECTEURS_PAR_TYPE[type_company]
+    # Les connexes de la SURCOUCHE (US-B5+) : un secteur ajoute, DECLARE
+    # applicable a ce type d'entreprise, entre dans le tirage. C'est ce qui le
+    # fait exister AU RUN, pas seulement a l'ecran. La connaissance reste METIER
+    # (declaree a l'ajout), jamais calculee par industrie — l'auto produit des
+    # absurdites (mesure du 12/08).
+    if connexes_sup and type_company in connexes_sup:
+        connexes = (*connexes, *connexes_sup[type_company])
     industrie = statique.industrie_du_secteur(principal)
     alea = random.Random(f"secteurs:{ancre}")  # noqa: S311
     combien = 1 + alea.randrange(min(SECTEURS_MAX_PAR_COMPANY, len(connexes) + 1))
@@ -1002,9 +1017,7 @@ def secteurs_et_industrie(
     return secteurs, [industrie]
 
 
-def _fonction_du_dirigeant_pour(
-    ancre: str, est_imf: bool, statique: ReferentielStatique
-) -> str:
+def _fonction_du_dirigeant_pour(ancre: str, est_imf: bool, statique: ReferentielStatique) -> str:
     """`SD-4` — la fonction du dirigeant, parmi les 20 du fichier de JJB.
 
     L'IMF racine porte la PREMIERE — « Directeur General / President-Directeur
@@ -1048,9 +1061,7 @@ def _profil_company(est_imf: bool, index: int) -> tuple[CompanyType, str, str]:
         return CompanyType.IMF, FORME_PAR_TYPE[CompanyType.IMF], "MicroFinance"
     # Le secteur rendu ici est le PRINCIPAL — il sert a `raison_sociale()`. Les
     # secteurs complets et l'industrie viennent de `secteurs_et_industrie()`.
-    type_company = (CompanyType.MERCHANT, CompanyType.FONDATION, CompanyType.BANK)[
-        index % 3
-    ]
+    type_company = (CompanyType.MERCHANT, CompanyType.FONDATION, CompanyType.BANK)[index % 3]
     return (
         type_company,
         FORME_PAR_TYPE[type_company],

@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -215,9 +215,7 @@ class ReferentielStatique:
     def secteurs_de_l_industrie(self, industrie: str) -> tuple[str, ...]:
         """Tous les secteurs d'une industrie, tries. Sert a verifier qu'un
         secteur connexe declare partage bien l'industrie de son principal."""
-        return tuple(
-            sorted(s for s, inds in self.secteurs.items() if industrie in inds)
-        )
+        return tuple(sorted(s for s, inds in self.secteurs.items() if industrie in inds))
 
     def groupe_de_la_profession(self, profession: str) -> GroupeProfessions:
         cle = self.professions.get(profession)
@@ -313,9 +311,7 @@ def _charger_secteurs(
 
 def _charger_occupations(
     dossier: Path,
-) -> tuple[
-    dict[str, GroupeProfessions], dict[str, str], dict[str, ProfilRevenu], dict[str, str]
-]:
+) -> tuple[dict[str, GroupeProfessions], dict[str, str], dict[str, ProfilRevenu], dict[str, str]]:
     brut = _lire_json(dossier / FICHIER_OCCUPATIONS)
 
     profils = {
@@ -366,9 +362,7 @@ def _charger_occupations(
 
 def _charger_pays(dossier: Path) -> dict[str, str]:
     lignes = _lire_csv(dossier / FICHIER_PAYS)
-    return {
-        str(ligne["Country_EN"]).strip(): str(ligne["Pays_FR"]).strip() for ligne in lignes
-    }
+    return {str(ligne["Country_EN"]).strip(): str(ligne["Pays_FR"]).strip() for ligne in lignes}
 
 
 def _charger_fonctions(dossier: Path) -> tuple[FonctionDirigeant, ...]:
@@ -470,3 +464,37 @@ def _valider(r: ReferentielStatique) -> None:
             "minItems=1 du serveur sans rien signifier — c'est un doublon de "
             "defaut, pas une valeur."
         )
+
+
+def referentiel_effectif(
+    base: ReferentielStatique,
+    *,
+    secteurs_ajoutes: dict[str, tuple[str, ...]] | None = None,
+    industries_ajoutees: list[str] | None = None,
+) -> ReferentielStatique:
+    """Le referentiel EFFECTIF qu'un run consomme : la base (classeur immuable)
+    FUSIONNEE avec les ajouts de la surcouche.
+
+    C'est LUI, pas la base seule, qui doit nourrir le generateur ET l'ecran.
+    Sans cette fusion, un secteur ajoute est un mensonge a l'ecran : le run lit
+    `charger_statique()` (la base), donc ne le voit jamais, et
+    `industrie_du_secteur()` LEVE dessus. Ici, l'industrie d'un secteur ajoute se
+    resout naturellement (il est dans `secteurs`), et la structure ne casse plus.
+
+    L'immuabilite porte sur le FICHIER de JJB, pas sur le referentiel de run : ce
+    dernier est COMPOSE. L'original reste intact (frozen) — on rend une copie.
+    """
+    secteurs_ajoutes = secteurs_ajoutes or {}
+    industries_ajoutees = industries_ajoutees or []
+    if not secteurs_ajoutes and not industries_ajoutees:
+        return base
+    secteurs = {**base.secteurs, **{s: tuple(i) for s, i in secteurs_ajoutes.items()}}
+    industries = dict(base.industries)
+    connues = set(industries.values())
+    prochain = (max(industries) + 1) if industries else 1
+    for label in industries_ajoutees:
+        if label not in connues:
+            industries[prochain] = label
+            connues.add(label)
+            prochain += 1
+    return replace(base, secteurs=secteurs, industries=industries)
