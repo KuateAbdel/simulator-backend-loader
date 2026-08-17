@@ -382,6 +382,29 @@ async def catalogue_statique(
     les tests du chargeur verifient ; ils sont AUSSI dans la reponse, pour que
     l'ecran puisse les afficher et que la recette puisse les comparer."""
     statique = _statique()
+    surcouche, _meta = await SurcoucheRepository().charger()
+    # Base immuable (le classeur) + secteurs ajoutes par le Super-Admin
+    # (surcouche, reversible). Les industries restent 6 : un secteur ajoute
+    # ne peut se rattacher qu'a une industrie EXISTANTE.
+    industries = list(statique.industries.values()) + list(surcouche.industries_ajoutees)
+    secteurs = {nom: list(inds) for nom, inds in statique.secteurs.items()}
+    for label, inds in surcouche.secteurs.items():
+        secteurs[label] = list(inds)
+    formes = list(statique.formes_juridiques) + list(surcouche.formes_juridiques)
+    professions_surcouche = sorted(p for ps in surcouche.professions.values() for p in ps)
+    groupes = {
+        nom: {
+            "profil_defaut": groupe.profil_defaut,
+            "professions": list(groupe.professions) + list(surcouche.professions.get(nom, [])),
+            "variants": groupe.variants,
+        }
+        for nom, groupe in statique.groupes.items()
+    }
+    dirigeants = [
+        {"rang": f.rang, "francais": f.francais, "anglais": f.anglais, "abreviation": f.abreviation}
+        for f in statique.fonctions_dirigeant
+    ] + [dict(d) for d in surcouche.fonctions_dirigeant]
+    dirigeants.sort(key=lambda d: d["rang"])
     return {
         "comptes": {
             "industries": len(statique.industries),
@@ -393,27 +416,264 @@ async def catalogue_statique(
             "pays": len(statique.pays),
             "fonctions_dirigeant": len(statique.fonctions_dirigeant),
         },
-        "industries": statique.industries,
-        "secteurs": {nom: list(inds) for nom, inds in statique.secteurs.items()},
-        "formes_juridiques": list(statique.formes_juridiques),
-        "groupes": {
-            nom: {
-                "profil_defaut": groupe.profil_defaut,
-                "professions": list(groupe.professions),
-                "variants": groupe.variants,
-            }
-            for nom, groupe in statique.groupes.items()
-        },
+        "industries": industries,
+        "industries_surcouche": sorted(surcouche.industries_ajoutees),
+        "secteurs": secteurs,
+        "secteurs_surcouche": sorted(surcouche.secteurs.keys()),
+        "formes_juridiques": formes,
+        "formes_surcouche": sorted(surcouche.formes_juridiques),
+        "groupes": groupes,
+        "professions_surcouche": professions_surcouche,
         "profils_revenu": {
             nom: {"mu": p.mu, "sigma": p.sigma, "definition": p.definition}
             for nom, p in statique.profils_revenu.items()
         },
         "pays": statique.pays,
-        "fonctions_dirigeant": [
-            {"rang": f.rang, "francais": f.francais, "anglais": f.anglais,
-             "abreviation": f.abreviation}
-            for f in statique.fonctions_dirigeant
-        ],
+        "fonctions_dirigeant": dirigeants,
+        "dirigeants_surcouche": sorted(d["rang"] for d in surcouche.fonctions_dirigeant),
+    }
+
+
+class SecteurDemande(BaseModel):
+    """`US-B5+` — l'ajout d'un secteur d'activite par le Super-Admin."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=2, max_length=60)
+    industries: list[str] = Field(min_length=1)
+
+
+@router.post("/secteurs", status_code=201)
+async def ajouter_secteur(
+    demande: SecteurDemande,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`US-B5+` — un secteur d'activite, SANS toucher au classeur.
+
+    Meme rite que la ville (`US-B4`) : on valide chez nous (label unique cote
+    classeur ET surcouche, chaque industrie de rattachement doit exister parmi
+    les 6), on persiste dans la surcouche reversible, puis on RELIT depuis la
+    base — la reponse est le secteur tel que le prochain run le verra.
+
+    Le referentiel industries/secteurs est PROPRE au Loader : config-service
+    n'en porte pas (recon 14/08). Aucun aller vers un service tiers, donc.
+
+    Verrou `EF-55` : pas d'ajout pendant un run — le referentiel changerait
+    sous l'empreinte D-10 en cours.
+    """
+    await refuser_si_run_en_cours()
+
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    try:
+        label, _rattache = surcouche.ajouter_secteur(
+            _statique(), label=demande.label, industries=demande.industries
+        )
+    except AjoutRefuse as refus:
+        raise HTTPException(status_code=422, detail=str(refus)) from refus
+
+    meta = await depot.enregistrer(surcouche, par=session.email)
+
+    # RELECTURE — CFG-06 : ce qui est rendu vient de la BASE, pas de la demande.
+    relue, _ = await depot.charger()
+    return {
+        "secteur": {"label": label, "industries": list(relue.secteurs[label])},
+        "surcouche": {"resume": relue.resume(), "version": meta["version"]},
+    }
+
+
+class IndustrieDemande(BaseModel):
+    """`US-B5+` — l'ajout d'une industrie (le niveau haut de la taxonomie)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=2, max_length=60)
+
+
+@router.post("/industries", status_code=201)
+async def ajouter_industrie(
+    demande: IndustrieDemande,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`US-B5+` — une industrie, SANS toucher au classeur. Le niveau haut est
+    stable par nature : on l'ouvre avec prudence (label unique), la base des 6
+    reste immuable et l'ajout vit dans la surcouche réversible."""
+    await refuser_si_run_en_cours()
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    try:
+        label = surcouche.ajouter_industrie(_statique(), label=demande.label)
+    except AjoutRefuse as refus:
+        raise HTTPException(status_code=422, detail=str(refus)) from refus
+    meta = await depot.enregistrer(surcouche, par=session.email)
+    relue, _ = await depot.charger()
+    return {"industrie": label, "surcouche": {"resume": relue.resume(), "version": meta["version"]}}
+
+
+@router.delete("/secteurs/{label}")
+async def retirer_secteur(
+    label: str,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Retire un secteur AJOUTE (surcouche) — la réversibilité promise. Le
+    classeur des 112 est intouchable : seul un ajout peut être retiré."""
+    await refuser_si_run_en_cours()
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    try:
+        surcouche.retirer_secteur(label=label)
+    except AjoutRefuse as refus:
+        raise HTTPException(status_code=404, detail=str(refus)) from refus
+    meta = await depot.enregistrer(surcouche, par=session.email)
+    relue, _ = await depot.charger()
+    return {"retire": label, "surcouche": {"resume": relue.resume(), "version": meta["version"]}}
+
+
+@router.delete("/industries/{label}")
+async def retirer_industrie(
+    label: str,
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Retire une industrie AJOUTÉE (surcouche). Refuse (409) tant qu'un secteur
+    y est rattaché — garde anti-orphelin. Les 6 du classeur sont intouchables."""
+    await refuser_si_run_en_cours()
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    try:
+        surcouche.retirer_industrie(label=label)
+    except AjoutRefuse as refus:
+        raise HTTPException(status_code=409, detail=str(refus)) from refus
+    meta = await depot.enregistrer(surcouche, par=session.email)
+    relue, _ = await depot.charger()
+    return {"retire": label, "surcouche": {"resume": relue.resume(), "version": meta["version"]}}
+
+
+# --- US-B5+ : ajout/retrait des autres dimensions du catalogue --------------
+
+
+async def _appliquer_surcouche(action, *, par: str) -> dict[str, Any]:
+    """Petit rite commun : charger, agir, persister, relire. `action(surcouche)`
+    mute la surcouche et lève `AjoutRefuse` si l'invariant casse."""
+    await refuser_si_run_en_cours()
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    try:
+        resultat = action(surcouche)
+    except AjoutRefuse as refus:
+        raise HTTPException(status_code=422, detail=str(refus)) from refus
+    meta = await depot.enregistrer(surcouche, par=par)
+    relue, _ = await depot.charger()
+    return {"resultat": resultat, "surcouche": {"resume": relue.resume(), "version": meta["version"]}}
+
+
+class FormeDemande(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str = Field(min_length=1, max_length=40)
+
+
+@router.post("/formes", status_code=201)
+async def ajouter_forme(demande: FormeDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
+    """`US-B5+` — une forme juridique (le plus simple : un label unique)."""
+    return await _appliquer_surcouche(lambda s: s.ajouter_forme(_statique(), label=demande.label), par=session.email)
+
+
+@router.delete("/formes/{label}")
+async def retirer_forme(label: str, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
+    return await _appliquer_surcouche(lambda s: s.retirer_forme(label=label), par=session.email)
+
+
+class DirigeantDemande(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rang: int = Field(ge=1, le=999)
+    francais: str = Field(min_length=2, max_length=60)
+    anglais: str = Field(min_length=2, max_length=60)
+    abreviation: str = Field(default="", max_length=20)
+
+
+@router.post("/dirigeants", status_code=201)
+async def ajouter_dirigeant(demande: DirigeantDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
+    """`US-B5+` — une fonction dirigeant : rang unique + libellés FR/EN."""
+    return await _appliquer_surcouche(
+        lambda s: s.ajouter_dirigeant(
+            _statique(), rang=demande.rang, francais=demande.francais, anglais=demande.anglais, abreviation=demande.abreviation
+        ),
+        par=session.email,
+    )
+
+
+@router.delete("/dirigeants/{rang}")
+async def retirer_dirigeant(rang: int, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
+    return await _appliquer_surcouche(lambda s: s.retirer_dirigeant(rang=rang), par=session.email)
+
+
+class ProfessionDemande(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    groupe: str = Field(min_length=2, max_length=120)
+    label: str = Field(min_length=2, max_length=80)
+
+
+@router.post("/professions", status_code=201)
+async def ajouter_profession(demande: ProfessionDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
+    """`US-B5+` — une profession, rattachée à un groupe métier EXISTANT."""
+    return await _appliquer_surcouche(
+        lambda s: s.ajouter_profession(_statique(), groupe=demande.groupe, label=demande.label), par=session.email
+    )
+
+
+@router.delete("/professions/{label}")
+async def retirer_profession(label: str, session: Annotated[SessionAdmin, Depends(admin_complet)]) -> dict[str, Any]:
+    return await _appliquer_surcouche(lambda s: s.retirer_profession(label=label), par=session.email)
+
+
+@router.get("/produits-catalogue")
+async def produits_catalogue(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Le catalogue PRODUITS du Loader (`catalogue.py`, UC-11) — l'offre a
+    laquelle une entite souscrit, en lecture.
+
+    Deux logiques distinctes :
+    - **LENDING** (Annexe E, `loan_json.json`) : chaque produit de credit se
+      decline en INDIVIDUAL et/ou CORPORATE (`D-PRD-4`), sous des noms distincts.
+    - **COLLECT** (`CATALOGUE_COLLECT`) : produits d'epargne, deja categorises.
+
+    Rendu tel que le generateur les creerait — les comptes 6 (lending) et
+    len(COLLECT) sont ceux du chargeur, jamais un echo d'ecran.
+    """
+    from app.services.catalogue import (
+        CATALOGUE_COLLECT,
+        charger_loan_json,
+        nom_lending,
+    )
+    from app.services.pilotage import LOAN_JSON
+
+    lending: list[dict[str, Any]] = []
+    for produit in charger_loan_json(LOAN_JSON):
+        for categorie in produit.categories_cibles:
+            lending.append(
+                {
+                    "nom": nom_lending(produit, categorie),
+                    "type": "LENDING",
+                    "categorie": categorie.value,
+                    "duree_jours": produit.duree_jours,
+                    "montant_min": produit.montant_min,
+                    "montant_max": produit.montant_max,
+                }
+            )
+    collect = [
+        {
+            "nom": p.nom,
+            "type": "COLLECT",
+            "categorie": p.categorie.value,
+            "policy_type": p.policy_type.value,
+            "code": p.code,
+        }
+        for p in CATALOGUE_COLLECT
+    ]
+    return {
+        "lending": lending,
+        "collect": collect,
+        "comptes": {"lending": len(lending), "collect": len(collect)},
     }
 
 

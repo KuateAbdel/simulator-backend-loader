@@ -91,6 +91,20 @@ class SurcoucheReferentiel:
     #: doctrine que les villes : le classeur est immuable, la surcouche est
     #: reversible, et chaque ajout passe les invariants AVANT d'exister.
     telcos: dict[str, Telco] = field(default_factory=dict)
+    #: `US-B5+` — les secteurs d'activite ajoutes par le Super-Admin, par-dessus
+    #: les 112 du classeur. Meme doctrine : base immuable, surcouche reversible.
+    #: Un secteur ne se rattache qu'a des industries EXISTANTES (les 6) — on
+    #: n'ouvre pas une 7e industrie par la porte d'un secteur. label -> industries.
+    secteurs: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: `US-B5+` — les industries ajoutees par le Super-Admin, par-dessus les 6 du
+    #: classeur. Le niveau HAUT de la taxonomie : rare, stable, mais possible.
+    industries_ajoutees: list[str] = field(default_factory=list)
+    #: `US-B5+` — formes juridiques ajoutees (labels). Simple : un label unique.
+    formes_juridiques: list[str] = field(default_factory=list)
+    #: `US-B5+` — fonctions dirigeant ajoutees : {rang, francais, anglais, abreviation}.
+    fonctions_dirigeant: list[dict[str, Any]] = field(default_factory=list)
+    #: `US-B5+` — professions ajoutees, PAR groupe metier existant : groupe -> [professions].
+    professions: dict[str, list[str]] = field(default_factory=dict)
     #: Journal des ajouts, dans l'ordre — c'est ce que le tableau de bord montre.
     journal: list[str] = field(default_factory=list)
 
@@ -178,6 +192,187 @@ class SurcoucheReferentiel:
         self.villes[ville.city_id] = ville
         self.journal.append(f"ville {libelle!r} ajoutee a {region_id} ({ville.city_id})")
         return ville
+
+    def ajouter_secteur(
+        self,
+        base_statique: Any,
+        *,
+        label: str,
+        industries: list[str],
+    ) -> tuple[str, tuple[str, ...]]:
+        """`US-B5+` — un secteur d'activite, avec ses invariants.
+
+        DEUX INVARIANTS, la meme doctrine que les telcos et les villes :
+
+        1. Le label est NON VIDE et UNIQUE — classeur (112) ET surcouche. Un
+           doublon rendrait `industrie_du_secteur` ambigu : deux industries
+           principales possibles pour un meme nom.
+        2. Au moins une industrie, et CHAQUE industrie doit EXISTER dans le
+           classeur (les 6). On n'invente pas une 7e industrie par la porte
+           d'un secteur — la relation n:n reste fermee sur les 6 industries.
+
+        Le rattachement est trie : l'industrie principale (premiere par ordre
+        alphabetique) est ainsi deterministe, comme cote generateur.
+        """
+        libelle = str(label).strip()
+        if not libelle:
+            raise AjoutRefuse("secteur sans nom — refuse")
+        connus = set(base_statique.secteurs) | set(self.secteurs)
+        if libelle in connus:
+            raise AjoutRefuse(
+                f"secteur {libelle!r} existe deja (classeur ou surcouche) — "
+                "un nom de secteur est unique."
+            )
+        valides = set(base_statique.industries.values()) | set(self.industries_ajoutees)
+        propres: list[str] = []
+        for ind in industries:
+            nom = str(ind).strip()
+            if nom not in valides:
+                raise AjoutRefuse(
+                    f"industrie {nom!r} inconnue — un secteur ne se rattache qu'aux "
+                    f"industries du classeur : {sorted(valides)}."
+                )
+            if nom not in propres:
+                propres.append(nom)
+        if not propres:
+            raise AjoutRefuse(
+                f"secteur {libelle!r} : au moins une industrie de rattachement est requise."
+            )
+        rattache = tuple(sorted(propres))
+        self.secteurs[libelle] = rattache
+        self.journal.append(f"secteur {libelle!r} ajoute ({', '.join(rattache)})")
+        return libelle, rattache
+
+    def ajouter_industrie(self, base_statique: Any, *, label: str) -> str:
+        """`US-B5+` — une industrie (le niveau HAUT). Rare, mais possible.
+
+        Un seul invariant : label NON VIDE et UNIQUE — classeur (6) ET surcouche.
+        Le niveau haut d'une taxonomie (GICS/ICB) est stable ; on l'ouvre donc
+        avec prudence, mais la base reste immuable et l'ajout est reversible.
+        """
+        libelle = str(label).strip()
+        if not libelle:
+            raise AjoutRefuse("industrie sans nom — refuse")
+        connues = set(base_statique.industries.values()) | set(self.industries_ajoutees)
+        if libelle in connues:
+            raise AjoutRefuse(f"industrie {libelle!r} existe deja — un nom d'industrie est unique.")
+        self.industries_ajoutees.append(libelle)
+        self.journal.append(f"industrie {libelle!r} ajoutee")
+        return libelle
+
+    def retirer_secteur(self, *, label: str) -> None:
+        """Retire un secteur AJOUTE (surcouche). Le classeur est intouchable :
+        seul un ajout de la surcouche peut etre retire — c'est la reversibilite
+        promise (le classeur des 112 n'est jamais amputable)."""
+        libelle = str(label).strip()
+        if libelle not in self.secteurs:
+            raise AjoutRefuse(
+                f"secteur {libelle!r} n'est pas un ajout de la surcouche — "
+                "le classeur est immuable, rien a retirer."
+            )
+        del self.secteurs[libelle]
+        self.journal.append(f"secteur {libelle!r} retire")
+
+    def retirer_industrie(self, *, label: str) -> None:
+        """Retire une industrie AJOUTEE (surcouche). Les 6 du classeur sont
+        immuables. GARDE anti-orphelin : on refuse tant qu'un secteur (ajoute)
+        s'y rattache — sinon `industrie_du_secteur` pointerait vers le vide."""
+        libelle = str(label).strip()
+        if libelle not in self.industries_ajoutees:
+            raise AjoutRefuse(
+                f"industrie {libelle!r} n'est pas un ajout de la surcouche — "
+                "les 6 industries du classeur sont immuables."
+            )
+        rattaches = sorted(s for s, inds in self.secteurs.items() if libelle in inds)
+        if rattaches:
+            raise AjoutRefuse(
+                f"industrie {libelle!r} porte encore {len(rattaches)} secteur(s) "
+                f"({', '.join(rattaches)}) — retirez-les d'abord."
+            )
+        self.industries_ajoutees.remove(libelle)
+        self.journal.append(f"industrie {libelle!r} retiree")
+
+    # -- Formes juridiques (le plus simple : un label unique) ---------------
+
+    def ajouter_forme(self, base_statique: Any, *, label: str) -> str:
+        libelle = str(label).strip()
+        if not libelle:
+            raise AjoutRefuse("forme juridique sans nom — refuse")
+        connues = set(base_statique.formes_juridiques) | set(self.formes_juridiques)
+        if libelle in connues:
+            raise AjoutRefuse(f"forme juridique {libelle!r} existe deja.")
+        self.formes_juridiques.append(libelle)
+        self.journal.append(f"forme juridique {libelle!r} ajoutee")
+        return libelle
+
+    def retirer_forme(self, *, label: str) -> None:
+        libelle = str(label).strip()
+        if libelle not in self.formes_juridiques:
+            raise AjoutRefuse(f"forme juridique {libelle!r} n'est pas un ajout de la surcouche.")
+        self.formes_juridiques.remove(libelle)
+        self.journal.append(f"forme juridique {libelle!r} retiree")
+
+    # -- Fonctions dirigeant ({rang, fr, en, abreviation}) ------------------
+
+    def ajouter_dirigeant(
+        self, base_statique: Any, *, rang: int, francais: str, anglais: str, abreviation: str
+    ) -> dict[str, Any]:
+        fr = str(francais).strip()
+        en = str(anglais).strip()
+        abr = str(abreviation).strip()
+        if not fr or not en:
+            raise AjoutRefuse("fonction dirigeant : libelles FR et EN requis.")
+        rangs = {f.rang for f in base_statique.fonctions_dirigeant} | {
+            d["rang"] for d in self.fonctions_dirigeant
+        }
+        if rang in rangs:
+            raise AjoutRefuse(f"rang {rang} deja utilise — un rang de dirigeant est unique.")
+        noms = {f.francais for f in base_statique.fonctions_dirigeant} | {
+            d["francais"] for d in self.fonctions_dirigeant
+        }
+        if fr in noms:
+            raise AjoutRefuse(f"fonction dirigeant {fr!r} existe deja.")
+        fonction = {"rang": rang, "francais": fr, "anglais": en, "abreviation": abr}
+        self.fonctions_dirigeant.append(fonction)
+        self.journal.append(f"dirigeant {fr!r} (rang {rang}) ajoute")
+        return fonction
+
+    def retirer_dirigeant(self, *, rang: int) -> None:
+        avant = len(self.fonctions_dirigeant)
+        self.fonctions_dirigeant = [d for d in self.fonctions_dirigeant if d["rang"] != rang]
+        if len(self.fonctions_dirigeant) == avant:
+            raise AjoutRefuse(f"aucun dirigeant de rang {rang} dans la surcouche.")
+        self.journal.append(f"dirigeant rang {rang} retire")
+
+    # -- Professions (rattachees a un groupe metier EXISTANT) ---------------
+
+    def ajouter_profession(self, base_statique: Any, *, groupe: str, label: str) -> tuple[str, str]:
+        grp = str(groupe).strip()
+        libelle = str(label).strip()
+        if grp not in base_statique.groupes:
+            raise AjoutRefuse(
+                f"groupe metier {grp!r} inconnu — une profession se rattache a un groupe existant."
+            )
+        if not libelle:
+            raise AjoutRefuse("profession sans nom — refuse")
+        connues = set(base_statique.professions) | {
+            p for ps in self.professions.values() for p in ps
+        }
+        if libelle in connues:
+            raise AjoutRefuse(f"profession {libelle!r} existe deja.")
+        self.professions.setdefault(grp, []).append(libelle)
+        self.journal.append(f"profession {libelle!r} ajoutee a {grp!r}")
+        return grp, libelle
+
+    def retirer_profession(self, *, label: str) -> None:
+        for grp, ps in list(self.professions.items()):
+            if label in ps:
+                ps.remove(label)
+                if not ps:
+                    del self.professions[grp]
+                self.journal.append(f"profession {label!r} retiree")
+                return
+        raise AjoutRefuse(f"profession {label!r} n'est pas un ajout de la surcouche.")
 
     def ajouter_telco(
         self,
@@ -396,7 +591,17 @@ class SurcoucheReferentiel:
 
     @property
     def vide(self) -> bool:
-        return not (self.regions or self.villes or self.quartiers or self.telcos)
+        return not (
+            self.regions
+            or self.villes
+            or self.quartiers
+            or self.telcos
+            or self.secteurs
+            or self.industries_ajoutees
+            or self.formes_juridiques
+            or self.fonctions_dirigeant
+            or self.professions
+        )
 
     def ajouts(self) -> dict[str, Any]:
         """Forme serialisable — a joindre a l'empreinte du run (`ENF-15`).
@@ -409,6 +614,11 @@ class SurcoucheReferentiel:
             "villes": {i: v.name for i, v in sorted(self.villes.items())},
             "quartiers": {i: q.name for i, q in sorted(self.quartiers.items())},
             "telcos": {i: t.network_name for i, t in sorted(self.telcos.items())},
+            "secteurs": {nom: list(inds) for nom, inds in sorted(self.secteurs.items())},
+            "industries_ajoutees": sorted(self.industries_ajoutees),
+            "formes_juridiques": sorted(self.formes_juridiques),
+            "fonctions_dirigeant": sorted(self.fonctions_dirigeant, key=lambda d: d["rang"]),
+            "professions": {g: sorted(ps) for g, ps in sorted(self.professions.items())},
             "journal": list(self.journal),
         }
 

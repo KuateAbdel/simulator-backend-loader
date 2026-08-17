@@ -55,6 +55,15 @@ class SurcoucheRepository:
                 i: District(**q) for i, q in (document.get("quartiers") or {}).items()
             },
             telcos={i: Telco(**t) for i, t in (document.get("telcos") or {}).items()},
+            secteurs={
+                nom: tuple(inds) for nom, inds in (document.get("secteurs") or {}).items()
+            },
+            industries_ajoutees=list(document.get("industries_ajoutees") or []),
+            formes_juridiques=list(document.get("formes_juridiques") or []),
+            fonctions_dirigeant=list(document.get("fonctions_dirigeant") or []),
+            professions={
+                g: list(ps) for g, ps in (document.get("professions") or {}).items()
+            },
             journal=list(document.get("journal") or []),
         )
         return surcouche, {
@@ -75,6 +84,13 @@ class SurcoucheRepository:
                     "villes": {i: asdict(v) for i, v in surcouche.villes.items()},
                     "quartiers": {i: asdict(q) for i, q in surcouche.quartiers.items()},
                     "telcos": {i: asdict(t) for i, t in surcouche.telcos.items()},
+                    "secteurs": {
+                        nom: list(inds) for nom, inds in surcouche.secteurs.items()
+                    },
+                    "industries_ajoutees": list(surcouche.industries_ajoutees),
+                    "formes_juridiques": list(surcouche.formes_juridiques),
+                    "fonctions_dirigeant": [dict(d) for d in surcouche.fonctions_dirigeant],
+                    "professions": {g: list(ps) for g, ps in surcouche.professions.items()},
                     "journal": list(surcouche.journal),
                     "modifie_par": par,
                     "modifie_le": maintenant,
