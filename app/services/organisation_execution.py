@@ -300,20 +300,26 @@ class ExecuteurOrganisation:
     def _fusion_owner(self, owner: IdentiteGeneree, choix: OwnerChoisi) -> IdentiteGeneree:
         """Applique les champs dirigeant EDITES par l'operateur, sous invariants.
 
-        Principe : tout peut changer SAUF ce que fige un invariant. On valide
-        AVANT de remplacer, contre la MEME reference que le moteur :
-          - piece non expiree et coherente avec la naissance (FRA-200/D-CLI-2) ;
-          - porteur majeur (age >= 18) ;
-          - id_number alphanumerique MAJUSCULE (FRA-228) — normalise ;
-          - genre normalise (MALE/FEMALE).
-        Un champ absent (`None`) garde la valeur composee. Le format email est
-        deja tenu au contrat de la route (EmailStr). Une violation leve
-        InvariantViole, que la route traduit en 422 lisible."""
+        Principe : tout peut changer SAUF ce que fige un invariant. On ne valide
+        QUE ce que l'operateur a EDITE — la composition, elle, est deja de
+        confiance (le Loader la produit ; son `id_expire_on` est un tirage que
+        notre invariant strict « emise a la majorite » n'a jamais eu vocation a
+        re-litiger). Contre la MEME reference que le moteur :
+          - naissance editee -> porteur majeur (age >= 18) ;
+          - naissance OU expiration editee -> piece non expiree et coherente
+            avec la naissance (FRA-200/D-CLI-2), car les deux forment une paire ;
+          - id_number edite -> alphanumerique MAJUSCULE (FRA-228), normalise ;
+          - genre edite -> normalise (MALE/FEMALE).
+        Un champ absent (`None`) garde la valeur composee, sans revalidation. Le
+        format email est tenu au contrat de la route (EmailStr). Une violation
+        leve InvariantViole, que la route traduit en 422 lisible."""
         naissance = choix.date_of_birth or owner.date_of_birth
         expiration = choix.id_expire_on or owner.id_expire_on
         reference = self._generateur.reference
-        valider_age(naissance, reference)
-        valider_piece_identite(naissance, expiration, reference)
+        if choix.date_of_birth is not None:
+            valider_age(naissance, reference)
+        if choix.date_of_birth is not None or choix.id_expire_on is not None:
+            valider_piece_identite(naissance, expiration, reference)
         numero = (
             valider_id_number(choix.id_number)
             if choix.id_number is not None

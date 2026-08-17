@@ -11,7 +11,7 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from uuid import uuid4
+from uuid import UUID
 
 import pytest
 
@@ -24,11 +24,14 @@ from app.services.referentiel_statique import charger_statique
 REFERENTIEL = charger_referentiel(Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx"))
 STATIQUE = charger_statique()
 REFERENCE = date(2026, 8, 17)
+#: run_id FIXE — le dirigeant compose (donc son id_expire_on, tire sur l'alea du
+#: run) doit etre REPRODUCTIBLE, sinon le test devient flaky d'un CI a l'autre.
+RUN = UUID("11111111-2222-3333-4444-555555555555")
 
 
 def _owner() -> Any:
     """Un dirigeant compose, coherent, comme le Loader le produit."""
-    return Generateur(uuid4(), reference=REFERENCE).identite(
+    return Generateur(RUN, reference=REFERENCE).identite(
         first_name="Salif",
         last_name="Tamadou",
         gender="MALE",
@@ -48,7 +51,7 @@ def _owner() -> Any:
 def _fusion(owner: Any, choix: OwnerChoisi) -> Any:
     """`_fusion_owner` ne touche que `self._generateur.reference` — un stub
     porteur du generateur suffit a l'exercer sans monter tout l'executeur."""
-    gen = Generateur(uuid4(), reference=REFERENCE)
+    gen = Generateur(RUN, reference=REFERENCE)
     stub = SimpleNamespace(_generateur=gen)
     return ExecuteurOrganisation._fusion_owner(stub, owner, choix)  # type: ignore[arg-type]
 
