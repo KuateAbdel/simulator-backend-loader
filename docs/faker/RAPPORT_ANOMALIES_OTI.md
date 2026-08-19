@@ -70,6 +70,14 @@ un endpoint de scoring ne rend pas une erreur — il **pend**.
 ```
 GET /v1/faker/real-scoring-payload/CM-IND-572544   -> TIMEOUT (12 s, 0 octet)
 ```
+**Précision décisive (exécution du 19/08 soir)** : le blocage est **spécifique au
+pattern « famille A »** (`CM-IND-…`). Tout autre identifiant invalide rend un **404
+rapide (~0,6 s)** — testé : malformés (`xyz`, `123`, `%20`) et bien formés mais
+inexistants (`RC-CM-IND-INEXISTANT`). Le hang n'est donc PAS déclenché par « un
+mauvais id » en général, mais uniquement par un id de forme famille-A soumis à un
+endpoint de scoring — piste probable : un routage qui tente de résoudre l'id
+« simple » comme s'il était scoré, et pend.
+
 **Attendu à confirmer** : un identifiant invalide/hors-population doit rendre un
 **4xx borné**, jamais un timeout (risque de déni de service pour un consommateur).
 
