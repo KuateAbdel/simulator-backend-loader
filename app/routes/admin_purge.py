@@ -39,7 +39,7 @@ from app.repositories.audit_trail import AuditTrailRepository
 from app.routes.admin_entites import RUN_ADMIN
 from app.routes.dependances import (
     SessionAdmin,
-    admin_complet,
+    exige_super_admin,
     refuser_si_run_en_cours,
 )
 from app.services.inventaire import STATUT_A_NOUS, classer_groupes, uuid_stable
@@ -118,7 +118,7 @@ async def _residus_marques() -> dict[str, Any]:
 
 @router.post("/preparer")
 async def preparer(
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_super_admin)],
 ) -> dict[str, Any]:
     """`US-F1` — l'inventaire, AUCUNE ecriture.
 
@@ -156,7 +156,7 @@ class ConfirmationPurge(BaseModel):
 @router.post("/confirmer")
 async def confirmer(
     demande: ConfirmationPurge,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_super_admin)],
 ) -> dict[str, Any]:
     """`US-F2` — l'execution : seuls NOS groupes (registre) sont supprimes, chaque
     suppression journalisee sous RUN_ADMIN. Le rapport final redit les

@@ -32,6 +32,8 @@ from app.routes.admin_entites import RUN_ADMIN
 from app.routes.dependances import (
     SessionAdmin,
     admin_complet,
+    exige_admin,
+    exige_super_admin,
     refuser_si_run_en_cours,
 )
 from app.services.inventaire import (
@@ -90,7 +92,7 @@ async def groupes(
 @router.delete("/groupes/{groupe_id}")
 async def supprimer_groupe(
     groupe_id: Annotated[str, Path(min_length=1, max_length=64)],
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_super_admin)],
 ) -> dict[str, Any]:
     """Suppression INDIVIDUELLE d'un de NOS groupes — la seule action.
 
@@ -254,7 +256,7 @@ class DemandeAdoption(BaseModel):
 @router.post("/groupes/adoption")
 async def adopter_groupes(
     demande: DemandeAdoption,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Adopte au registre des groupes DEJA presents sur user-service.
 
@@ -329,7 +331,7 @@ class EtatDepositaireDemande(BaseModel):
 async def changer_etat_depositaire(
     depositaire_id: Annotated[str, Path(min_length=1, max_length=64)],
     demande: EtatDepositaireDemande,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Active/desactive un depositaire LA-BAS — avec la verite D-DEP-8.
 

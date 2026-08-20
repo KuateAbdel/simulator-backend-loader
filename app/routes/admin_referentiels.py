@@ -32,6 +32,7 @@ from app.repositories.surcouche import SurcoucheRepository
 from app.routes.dependances import (
     SessionAdmin,
     admin_complet,
+    exige_admin,
     refuser_si_run_en_cours,
 )
 from app.services.geographie import ReferentielGeo, charger_referentiel
@@ -192,7 +193,7 @@ class VilleDemande(BaseModel):
 @router.post("/villes", status_code=201)
 async def ajouter_ville(
     demande: VilleDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-B4` — l'ajout d'une ville, SANS toucher au classeur (CFG-03/05).
 
@@ -308,7 +309,7 @@ class TelcoDemande(BaseModel):
 @router.post("/telcos", status_code=201)
 async def ajouter_telco(
     demande: TelcoDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-B7` — l'ajout d'un operateur, sans toucher au classeur.
 
@@ -452,7 +453,7 @@ class SecteurDemande(BaseModel):
 @router.post("/secteurs", status_code=201)
 async def ajouter_secteur(
     demande: SecteurDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-B5+` — un secteur d'activite, SANS toucher au classeur.
 
@@ -499,7 +500,7 @@ class IndustrieDemande(BaseModel):
 @router.post("/industries", status_code=201)
 async def ajouter_industrie(
     demande: IndustrieDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-B5+` — une industrie, SANS toucher au classeur. Le niveau haut est
     stable par nature : on l'ouvre avec prudence (label unique), la base des 6
@@ -519,7 +520,7 @@ async def ajouter_industrie(
 @router.delete("/secteurs/{label}")
 async def retirer_secteur(
     label: str,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Retire un secteur AJOUTE (surcouche) — la réversibilité promise. Le
     classeur des 112 est intouchable : seul un ajout peut être retiré."""
@@ -538,7 +539,7 @@ async def retirer_secteur(
 @router.delete("/industries/{label}")
 async def retirer_industrie(
     label: str,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Retire une industrie AJOUTÉE (surcouche). Refuse (409) tant qu'un secteur
     y est rattaché — garde anti-orphelin. Les 6 du classeur sont intouchables."""
@@ -584,7 +585,7 @@ class FormeDemande(BaseModel):
 
 @router.post("/formes", status_code=201)
 async def ajouter_forme(
-    demande: FormeDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]
+    demande: FormeDemande, session: Annotated[SessionAdmin, Depends(exige_admin)]
 ) -> dict[str, Any]:
     """`US-B5+` — une forme juridique (le plus simple : un label unique)."""
     return await _appliquer_surcouche(
@@ -594,7 +595,7 @@ async def ajouter_forme(
 
 @router.delete("/formes/{label}")
 async def retirer_forme(
-    label: str, session: Annotated[SessionAdmin, Depends(admin_complet)]
+    label: str, session: Annotated[SessionAdmin, Depends(exige_admin)]
 ) -> dict[str, Any]:
     return await _appliquer_surcouche(lambda s: s.retirer_forme(label=label), par=session.email)
 
@@ -609,7 +610,7 @@ class DirigeantDemande(BaseModel):
 
 @router.post("/dirigeants", status_code=201)
 async def ajouter_dirigeant(
-    demande: DirigeantDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]
+    demande: DirigeantDemande, session: Annotated[SessionAdmin, Depends(exige_admin)]
 ) -> dict[str, Any]:
     """`US-B5+` — une fonction dirigeant : rang unique + libellés FR/EN."""
     return await _appliquer_surcouche(
@@ -626,7 +627,7 @@ async def ajouter_dirigeant(
 
 @router.delete("/dirigeants/{rang}")
 async def retirer_dirigeant(
-    rang: int, session: Annotated[SessionAdmin, Depends(admin_complet)]
+    rang: int, session: Annotated[SessionAdmin, Depends(exige_admin)]
 ) -> dict[str, Any]:
     return await _appliquer_surcouche(lambda s: s.retirer_dirigeant(rang=rang), par=session.email)
 
@@ -639,7 +640,7 @@ class ProfessionDemande(BaseModel):
 
 @router.post("/professions", status_code=201)
 async def ajouter_profession(
-    demande: ProfessionDemande, session: Annotated[SessionAdmin, Depends(admin_complet)]
+    demande: ProfessionDemande, session: Annotated[SessionAdmin, Depends(exige_admin)]
 ) -> dict[str, Any]:
     """`US-B5+` — une profession, rattachée à un groupe métier EXISTANT."""
     return await _appliquer_surcouche(
@@ -650,7 +651,7 @@ async def ajouter_profession(
 
 @router.delete("/professions/{label}")
 async def retirer_profession(
-    label: str, session: Annotated[SessionAdmin, Depends(admin_complet)]
+    label: str, session: Annotated[SessionAdmin, Depends(exige_admin)]
 ) -> dict[str, Any]:
     return await _appliquer_surcouche(
         lambda s: s.retirer_profession(label=label), par=session.email
@@ -778,7 +779,7 @@ class CreerPays(BaseModel):
 @router.post("/pays", status_code=201)
 async def creer_pays(
     demande: CreerPays,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-B6` COMPLET — creer un pays, comme la ville et le telco.
 
@@ -896,7 +897,7 @@ class CreerDevise(BaseModel):
 @router.post("/devises", status_code=201)
 async def creer_devise(
     demande: CreerDevise,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Creer une monnaie — meme rite et memes invariants que le pays :
     verrou EF-55, `GET`-avant-`POST` sur `iso_name` (existe -> 409, jamais de
@@ -992,7 +993,7 @@ class RegionDemande(BaseModel):
 @router.post("/regions", status_code=201)
 async def ajouter_region(
     demande: RegionDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """L'ajout d'une region — invariants seulement, jamais de plafond.
 
@@ -1049,7 +1050,7 @@ class QuartierDemande(BaseModel):
 @router.post("/quartiers", status_code=201)
 async def ajouter_quartier(
     demande: QuartierDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """L'ajout d'un quartier — c'est de la CAPACITE : le quartier porte un
     Kiosque, et l'index unique `(run_id, district_id)` n'en admet qu'un par
@@ -1194,7 +1195,7 @@ async def telcos_config(
 async def changer_etat_telco(
     telco_id: Annotated[str, Path(min_length=1, max_length=64)],
     demande: EtatRessourceDemande,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Active/desactive un operateur LA-BAS — la garde parle avant le reseau.
 
@@ -1291,7 +1292,7 @@ async def changer_etat_telco(
 async def changer_etat_devise(
     devise_id: Annotated[str, Path(min_length=1, max_length=64)],
     demande: EtatRessourceDemande,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """La desactivation d'une devise est TOUJOURS refusee — par MESURE.
 

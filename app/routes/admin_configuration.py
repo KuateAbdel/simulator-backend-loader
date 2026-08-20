@@ -36,7 +36,7 @@ from app.core.configuration import (
     Surcharge,
 )
 from app.repositories.configuration import ConfigurationRepository
-from app.routes.dependances import SessionAdmin, admin_complet, refuser_si_run_en_cours
+from app.routes.dependances import SessionAdmin, admin_complet, exige_admin, refuser_si_run_en_cours
 
 router = APIRouter(prefix="/admin/configuration", tags=["admin — configuration"])
 
@@ -185,7 +185,7 @@ async def lire_configuration(
 @router.put("")
 async def modifier_configuration(
     demande: ConfigurationDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-B2` — volumes et surcharges par pays.
 
@@ -245,7 +245,7 @@ async def modifier_configuration(
 async def changer_etat_pays(
     code: str,
     demande: EtatPaysDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-B3` — activer/desactiver un pays COTE LOADER.
 
@@ -324,7 +324,7 @@ async def lister_scenarios(
 @router.post("/scenarios", status_code=201)
 async def sauver_scenario(
     demande: ScenarioDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Sauve un preset — 409 si le nom existe (remplacer = supprimer PUIS
     sauver : jamais d'ecrasement silencieux)."""
@@ -356,7 +356,7 @@ async def sauver_scenario(
 @router.delete("/scenarios/{nom}")
 async def supprimer_scenario(
     nom: str,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     from app.core.database import COLLECTION_LOADER_CONFIGURATION, get_collection
 
@@ -371,7 +371,7 @@ async def supprimer_scenario(
 @router.post("/scenarios/{nom}/appliquer")
 async def appliquer_scenario(
     nom: str,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Applique le preset PAR le chemin du PUT — les gardes valent (EF-55,
     bornes, pays hors cibles, totaux) et la reponse est la vue RELUE."""

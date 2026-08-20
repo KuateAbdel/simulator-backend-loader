@@ -3982,3 +3982,59 @@ class TestAntiBruteForce:
             "/admin/auth/login", json={"email": inexistant, "mot_de_passe": "faux"}
         )
         assert bloque.status_code == 429, bloque.text
+
+
+async def _session_avec_role(client: httpx.AsyncClient, email: str, role: str) -> dict[str, str]:
+    """Cree un compte du role donne (via le super-admin bootstrap), fait son
+    cycle premiere-connexion, renvoie ses en-tetes de session PLEINE."""
+    admin = await _session_complete(client)
+    creation = await client.post(
+        "/admin/comptes", json={"email": email, "role": role}, headers=admin
+    )
+    initial = creation.json()["mot_de_passe_initial"]
+    conn = await client.post(
+        "/admin/auth/login", json={"email": email, "mot_de_passe": initial}
+    )
+    jeton0 = conn.json()["access_token"]
+    reponse = await client.post(
+        "/admin/auth/password",
+        json={"ancien": initial, "nouveau": "cheval-agrafe-batterie-solide"},
+        headers={"Authorization": f"Bearer {jeton0}"},
+    )
+    return {"Authorization": f"Bearer {reponse.json()['access_token']}"}
+
+
+class TestMatriceRBAC:
+    """FZ-RBAC-LOADER — la permission est verifiee A L'API (403), pas seulement
+    a l'UI. Viewer lit ; Admin opere ; seul le Super-Admin fait tout."""
+
+    async def test_viewer_lit_mais_n_ecrit_pas(self, client: httpx.AsyncClient) -> None:
+        v = await _session_avec_role(client, "viewer-rbac@finzuu.com", "viewer")
+        # Lecture : autorisee.
+        assert (
+            await client.get("/admin/referentiels/produits-catalogue", headers=v)
+        ).status_code == 200
+        # Ecriture : refusee 403 AVANT tout effet (la garde tombe la premiere).
+        ecr = await client.post(
+            "/admin/referentiels/industries", json={"label": "RBAC-Interdit"}, headers=v
+        )
+        assert ecr.status_code == 403, ecr.text
+        # Actions sensibles : refusees aussi.
+        assert (await client.post("/admin/purge/preparer", json={}, headers=v)).status_code == 403
+        assert (await client.get("/admin/comptes", headers=v)).status_code == 403
+
+    async def test_admin_opere_mais_n_est_pas_super_admin(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        a = await _session_avec_role(client, "admin-rbac@finzuu.com", "admin")
+        # Ecriture ordinaire : autorisee.
+        cree = await client.post(
+            "/admin/referentiels/industries",
+            json={"label": "RBAC-Test-Industrie"},
+            headers=a,
+        )
+        assert cree.status_code == 201, cree.text
+        await client.delete("/admin/referentiels/industries/RBAC-Test-Industrie", headers=a)
+        # Comptes et purge : reserves au Super-Admin -> 403 pour un Admin.
+        assert (await client.get("/admin/comptes", headers=a)).status_code == 403
+        assert (await client.post("/admin/purge/preparer", json={}, headers=a)).status_code == 403

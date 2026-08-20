@@ -45,6 +45,7 @@ from app.repositories.loader_runs import LoaderRunRepository
 from app.routes.dependances import (
     SessionAdmin,
     admin_complet,
+    exige_admin,
     refuser_si_run_en_cours,
 )
 from app.services.pilotage import executer
@@ -120,7 +121,7 @@ def _fiche(run: LoaderRun) -> dict[str, Any]:
 @router.post("", status_code=202)
 async def preparer(
     demande: LancementDemande,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-C1` — la PREPARATION : un DRY_RUN complet sur l'intention persistee.
 
@@ -148,7 +149,7 @@ async def preparer(
 @router.post("/{run_id}/confirmer", status_code=202)
 async def confirmer(
     run_id: UUID,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-C2` — le REAL, sur le perimetre FIGE de la preparation.
 
@@ -259,7 +260,7 @@ async def progression(
 @router.post("/{run_id}/arreter")
 async def arreter(
     run_id: UUID,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-C4` — l'arret. Dit avec exactitude ce qu'il fait en v1 : la tache
     est annulee, le moteur clot le run en FAILED — un etat terminal et VRAI,

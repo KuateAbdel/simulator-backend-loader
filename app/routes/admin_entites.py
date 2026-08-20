@@ -50,6 +50,7 @@ from app.repositories.audit_trail import AuditTrailRepository
 from app.routes.dependances import (
     SessionAdmin,
     admin_complet,
+    exige_admin,
     refuser_si_run_en_cours,
 )
 from app.services.catalogue import (
@@ -194,7 +195,7 @@ def _client_produits() -> Any:
 @router.post("/produits/apercu")
 async def apercu_produit(
     demande: ProduitDemande,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-D2` etape 1 — le payload EXACT qui partirait, policy embarquee
     comprise. AUCUN appel d'ecriture ne part d'ici."""
@@ -222,7 +223,7 @@ async def apercu_produit(
 @router.post("/produits", status_code=201)
 async def creer_produit(
     demande: ProduitDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-D2` etape 2 — la creation, avec le protocole a deux cles.
 
@@ -534,7 +535,7 @@ async def _composer_company(
 @router.post("/companies/apercu")
 async def apercu_company(
     demande: CompanyDemande,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-D1` etape 1 — la fiche COMPLETE composee, sans aucune ecriture :
     `creer_company()` en DRY_RUN valide tout et n'emet rien."""
@@ -555,7 +556,7 @@ async def apercu_company(
 @router.post("/companies", status_code=201)
 async def creer_company_unite(
     demande: CompanyDemande,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-D1` etape 2 — la sequence S3-03 reelle : Company (GET-avant-POST
     par short_name, INV-CPY-01), cascade owner verifiee (D-CMP-2), Admin User
@@ -677,7 +678,7 @@ class GroupeDemande(BaseModel):
 @router.post("/groupes", status_code=201)
 async def creer_groupe(
     demande: GroupeDemande,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Creation d'un groupe a l'unite — et le Loader SAIT quoi envoyer.
 
@@ -986,7 +987,7 @@ async def _composer_depositaire(
 @router.post("/depositaires/apercu")
 async def apercu_depositaire(
     demande: DepositaireDemande,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-D3` etape 1 — la COMPOSITION complete, AUCUNE ecriture."""
     client = _client_depositaires_unite()
@@ -1014,7 +1015,7 @@ async def apercu_depositaire(
 @router.post("/depositaires", status_code=201)
 async def creer_depositaire(
     demande: DepositaireDemande,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-D3` etape 2 — gardes re-jouees, write-ahead, POST, RELECTURE.
 
@@ -1149,7 +1150,7 @@ async def licences_de_company(
 async def creer_licence_company(
     company_id: str,
     demande: LicenceDemande,
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Attribue une licence a une company A NOUS — le geste exact du run.
 
