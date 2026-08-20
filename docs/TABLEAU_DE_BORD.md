@@ -337,11 +337,17 @@ clés Mailjet du boss (Confluence 67665944, lecture seule), relais SMTP port
 (+14). Frontend : cloche 🔔 header (badge non-lues sondé 30 s, panneau,
 marquer lu/tout lu, rendu localisé FR/EN depuis type+donnees — le backend
 n'envoie jamais une phrase) + colonne « Dernière connexion » (ou « jamais
-connecté ») ; banc navigateur 10/10, captures relues. **RESTE OPS (geste
-Yann/Yaniv)** : remplacer sur le serveur les 3 MAILJET_* du `.env`
-(/home/apps/loader) par le NOUVEAU jeu (celui du .env local) et recréer le
-conteneur — la prod répond 202 mais avec les clés de l'ancien compte bloqué
-mj-0001, les emails ne partent donc pas réellement.
+connecté ») ; banc navigateur 10/10, captures relues. **ÉTAPE OPS FAITE le
+soir même, en ops-as-code** (commit `7280021`) : le SSH direct depuis la
+machine de dev étant refusé (classificateur de permissions — et c'est
+conforme à la doctrine « plus rien depuis la machine de dev »), les 3
+MAILJET_* sont passées en **secrets GitHub** et le CD **enforce le `.env`
+serveur à chaque déploiement** (idempotent, sauvegarde unique, échec nommé
+si un secret manque, empreinte sha256 tronquée au log). Preuves : log CD
+`empreinte api-key en place : a47373825232` = l'empreinte de la NOUVELLE clé
+calculée localement, santé OK, sonde reset 202, et un code de
+réinitialisation RÉELLEMENT envoyé vers ak@finzuu.com depuis la prod
+(20/08 ~19h, à vérifier en boîte). Plus jamais de dérive secrets/serveur.
 
 ## E. Backlog S4/S5 restant
 
