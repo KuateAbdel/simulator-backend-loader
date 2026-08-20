@@ -60,6 +60,7 @@ from app.routes import (
     admin_entites,
     admin_inventaire,
     admin_journal,
+    admin_notifications,
     admin_purge,
     admin_referentiels,
     admin_runs,
@@ -129,5 +130,6 @@ app.include_router(admin_dashboard.router)
 app.include_router(admin_entites.router)
 app.include_router(admin_inventaire.router)
 app.include_router(admin_journal.router)
+app.include_router(admin_notifications.router)
 app.include_router(admin_purge.router)
 app.include_router(admin_runs.router)

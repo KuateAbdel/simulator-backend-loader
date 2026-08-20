@@ -34,9 +34,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 import time
 from typing import Annotated
+from uuid import NAMESPACE_OID, UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
@@ -46,11 +48,17 @@ from app.core import politique_mot_de_passe as politique
 from app.core.config import settings
 from app.core.politique_mot_de_passe import LONGUEUR_MDP_MIN
 from app.core.security import emettre_jeton_admin
+from app.repositories.audit_trail import AuditTrailRepository
 from app.repositories.auth_throttle import AuthThrottleRepository
 from app.repositories.super_admin import SuperAdminRepository
 from app.routes.dependances import SessionAdmin, session_admin
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/admin/auth", tags=["admin — session"])
+
+#: Run SENTINELLE des evenements d'administration hors-run (cf. admin_comptes).
+RUN_ADMIN = UUID(int=0)
 
 
 def _ip_client(request: Request) -> str:
@@ -165,6 +173,24 @@ async def login(demande: DemandeConnexion, request: Request) -> ReponseSession:
     # Reussite : auto-cicatrisation des deux compteurs.
     await throttle.reinitialiser(f"id:{identifiant}")
     await throttle.reinitialiser(f"ip:{ip}")
+
+    # Tracabilite (Yaniv 20/08) : horodater la connexion et l'inscrire au
+    # JOURNAL (visible du seul Super-Admin). Tracer ne doit JAMAIS empecher de
+    # se connecter — d'ou le try/except qui avale et journalise.
+    try:
+        await SuperAdminRepository().marquer_connexion(compte.email)
+        audit = AuditTrailRepository()
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="Session",
+            entity_id=uuid5(NAMESPACE_OID, f"loader-login:{compte.email}"),
+            operation="LOGIN",
+            cible="loader /admin/auth/login",
+            payload={"par": compte.email, "role": compte.role},
+        ) as suivi:
+            suivi.reussi({"email": compte.email})
+    except Exception as erreur:  # la trace ne bloque JAMAIS le login
+        logger.warning("trace de connexion ignoree : %s", type(erreur).__name__)
 
     portee = "password_only" if compte.must_change_password else "admin"
     jeton, duree = emettre_jeton_admin(compte.email, portee=portee, role=compte.role)

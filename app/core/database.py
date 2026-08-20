@@ -51,6 +51,9 @@ COLLECTION_LOADER_CONFIGURATION: Final = "loader_configuration"
 #: bug plateforme INV-USR-19 / CWE-645, deni de service sur l'utilisateur
 #: legitime). Purgee par TTL des qu'un identifiant reste inactif.
 COLLECTION_AUTH_THROTTLE: Final = "auth_throttle"
+#: Neuvieme collection — notifications IN-APP (canal du systeme de notification).
+#: Une entree par (destinataire, evenement) ; lues comme non lues sont gardees.
+COLLECTION_NOTIFICATIONS: Final = "notifications"
 
 _client: AsyncIOMotorClient[MongoDocument] | None = None
 
@@ -183,6 +186,12 @@ async def ensure_indexes() -> None:
         "expire_le",
         name="ttl_auth_throttle",
         expireAfterSeconds=0,
+    )
+    # Notifications : la boite d'un destinataire se lit par (destinataire, plus
+    # recentes d'abord) ; le compteur de non-lues filtre en plus sur `lu`.
+    await db[COLLECTION_NOTIFICATIONS].create_index(
+        [("destinataire", 1), ("cree_le", -1)],
+        name="idx_destinataire_recent",
     )
     # CR-02 : la verification de recette se fait par une seule requete sur
     # (run_id, niveau). L'unicite du district par run garantit qu'aucun quartier

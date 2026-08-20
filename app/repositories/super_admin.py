@@ -93,6 +93,15 @@ class SuperAdminRepository(RepositoryBase):
             )
         )
 
+    async def marquer_connexion(self, email: str) -> None:
+        """Horodate la derniere connexion reussie (tracabilite Yaniv 20/08)."""
+        from datetime import UTC, datetime
+
+        await self.collection.update_one(
+            {"email": email.strip().lower()},
+            {"$set": {"derniere_connexion": datetime.now(tz=UTC).isoformat()}},
+        )
+
     async def changer_role(self, email: str, role: str) -> bool:
         resultat = await self.collection.update_one(
             {"email": email.strip().lower()}, {"$set": {"role": role}}

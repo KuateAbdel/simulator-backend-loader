@@ -179,6 +179,30 @@ class AuditTrailEntry(LoaderDocument):
     timestamp: datetime
 
 
+class Notification(LoaderDocument):
+    """Collection `notifications` -- une notification IN-APP destinee a UN compte.
+
+    Le systeme de notification separe l'EVENEMENT (ce qui s'est passe) du CANAL
+    (comment on previent). Ce document est le canal IN-APP : une entree par
+    (destinataire, evenement). Le contenu n'est PAS rendu ici -- on garde le
+    `type` et les `donnees` structurees, et c'est le frontend qui rend le texte
+    localise (FR/EN). Le canal EMAIL, lui, part en plus via le relais Mailjet.
+
+    `lu` porte l'etat de lecture (la cloche compte les non-lues). Rien ne se
+    supprime -- une notification lue reste, elle grise seulement.
+    """
+
+    id: UUID = Field(alias="_id")
+    #: Email du compte destinataire (resolu par ROLE au moment de l'emission).
+    destinataire: str
+    #: Type d'evenement (cf. services/notifications.py) -- la cle de rendu.
+    type: str
+    #: Donnees structurees de l'evenement (email vise, role, acteur, motif...).
+    donnees: dict[str, Any] = Field(default_factory=dict)
+    lu: bool = False
+    cree_le: datetime
+
+
 class OrgHierarchyNode(LoaderDocument):
     """Collection `org_hierarchy` -- arbre operationnel cote Loader (niveaux 3 a 6).
 
@@ -275,6 +299,10 @@ class SuperAdminAccount(LoaderDocument):
     #: Qui a cree ce compte (email du createur) — None pour le bootstrap.
     cree_par: str | None = None
     cree_le: str | None = None
+    #: Tracabilite (demande Yaniv 20/08) : horodatage ISO de la DERNIERE
+    #: connexion reussie — « la derniere fois qu'il etait dans le systeme ».
+    #: None tant que le compte ne s'est jamais connecte.
+    derniere_connexion: str | None = None
     #: Reinitialisation par email (`US-A4` v2) — seul le HASH du code est
     #: persiste, avec sa peremption (epoch, sans piege de fuseau) et un
     #: compteur d'essais : 5 echecs consomment le code.

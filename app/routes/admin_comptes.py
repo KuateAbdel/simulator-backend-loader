@@ -37,6 +37,7 @@ from app.clients import mailjet
 from app.repositories.audit_trail import AuditTrailRepository
 from app.repositories.super_admin import SuperAdminRepository
 from app.routes.dependances import SessionAdmin, exige_super_admin
+from app.services import notifications
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ def _fiche(compte: Any) -> dict[str, Any]:
         "must_change_password": compte.must_change_password,
         "cree_par": compte.cree_par,
         "cree_le": compte.cree_le,
+        "derniere_connexion": compte.derniere_connexion,
     }
 
 
@@ -149,6 +151,8 @@ async def creer_compte(
     )
     if not email_envoye:
         logger.warning("invitation email non partie pour %s — canal createur", email)
+    # Notification (in-app) aux autres Super-Admins — informer ne casse jamais.
+    await notifications.sur_compte_cree(email, demande.role, session.email)
     return {
         "compte": _fiche(compte),
         #: Affiche UNE FOIS — ni persiste en clair, ni rejoue par aucune API.
@@ -213,6 +217,10 @@ async def changer_etat_compte(
         await depot.changer_etat(cible, demande.actif)
         suivi.reussi({"email": cible, "actif": demande.actif})
 
+    if demande.actif:
+        await notifications.sur_compte_reactive(cible, session.email)
+    else:
+        await notifications.sur_compte_desactive(cible, session.email, demande.motif)
     relu = await depot.par_email(cible)
     return {
         "compte": _fiche(relu),
@@ -262,6 +270,7 @@ async def changer_role_compte(
         await depot.changer_role(cible, demande.role)
         suivi.reussi({"email": cible, "role": demande.role})
 
+    await notifications.sur_role_change(cible, demande.role, session.email)
     relu = await depot.par_email(cible)
     return {
         "compte": _fiche(relu),

@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
 #: l'API HTTP v3.1, mais le relais SMTP ACCEPTE les envois — identifiants =
 #: la paire cle/secret API. smtplib est synchrone : il tourne dans un thread.
 _SMTP_HOTE = "in-v3.mailjet.com"
-_SMTP_PORT = 587
+#: Port confirme par test le 20/08 (accepte l'envoi) et documente sur la page
+#: Confluence « Setup SMS & SMTP » ; 587 reste un repli si 2525 est filtre.
+_SMTP_PORTS = (2525, 587)
 
 _URL_ENVOI = "https://api.mailjet.com/v3.1/send"
 #: Second secours : l'endpoint HTTP v3 historique accepte aussi.
@@ -39,20 +41,28 @@ _URL_ENVOI_LEGACY = "https://api.mailjet.com/v3/send"
 
 
 def _envoyer_smtp(destinataire: str, sujet: str, texte: str) -> bool:
-    """Envoi par le relais SMTP — synchrone, appele via asyncio.to_thread."""
-    try:
-        message = MIMEText(texte, _charset="utf-8")
-        message["Subject"] = sujet
-        message["From"] = f"FinZuu Loader <{settings.mailjet_expediteur}>"
-        message["To"] = destinataire
-        with smtplib.SMTP(_SMTP_HOTE, _SMTP_PORT, timeout=20) as relais:
-            relais.starttls()
-            relais.login(str(settings.mailjet_api_key), str(settings.mailjet_secret_key))
-            relais.sendmail(str(settings.mailjet_expediteur), [destinataire], message.as_string())
-        return True
-    except (smtplib.SMTPException, OSError) as erreur:
-        logger.warning("relais SMTP mailjet a refuse : %s", type(erreur).__name__)
-        return False
+    """Envoi par le relais SMTP — synchrone, appele via asyncio.to_thread.
+
+    Essaie les ports dans l'ordre (2525 confirme, puis 587) : selon le reseau
+    de sortie, l'un peut etre filtre et pas l'autre."""
+    message = MIMEText(texte, _charset="utf-8")
+    message["Subject"] = sujet
+    message["From"] = f"FinZuu Loader <{settings.mailjet_expediteur}>"
+    message["To"] = destinataire
+    for port in _SMTP_PORTS:
+        try:
+            with smtplib.SMTP(_SMTP_HOTE, port, timeout=20) as relais:
+                relais.starttls()
+                relais.login(str(settings.mailjet_api_key), str(settings.mailjet_secret_key))
+                relais.sendmail(
+                    str(settings.mailjet_expediteur), [destinataire], message.as_string()
+                )
+            return True
+        except (smtplib.SMTPException, OSError) as erreur:
+            logger.warning(
+                "relais SMTP mailjet (port %s) a refuse : %s", port, type(erreur).__name__
+            )
+    return False
 
 
 def provisionne() -> bool:
