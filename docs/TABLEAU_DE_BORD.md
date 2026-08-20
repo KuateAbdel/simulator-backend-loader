@@ -349,6 +349,27 @@ calculée localement, santé OK, sonde reset 202, et un code de
 réinitialisation RÉELLEMENT envoyé vers ak@finzuu.com depuis la prod
 (20/08 ~19h, à vérifier en boîte). Plus jamais de dérive secrets/serveur.
 
+**20/08 (nuit) — REFONTE NAV + COCKPIT MÉTIER (audit UX senior, demandes
+JJB).** (1) **Audit du backoffice de la plateforme** au navigateur (login
+ROOT sur web-app.test, sections/onglets parcourus jusqu'au pied de page) :
+architecture BONNE (sidebar 8 entrées, Back-Office = 1 entrée → 4 sections
+× onglets, gabarit table unique), finition FAIBLE (« Nouveau Prosuit »,
+« Nouvelle Utilisateur », Logs = HTTP brut 479 884 lignes inutilisables,
+colonnes désalignées, données de test crues) — on copie la structure, pas
+la finition ; notre Journal d'intentions est SUPÉRIEUR à leurs Logs.
+(2) **Sidebar Loader : 18 → 8 sections** (frontend `ffa5e62`) — Runs /
+Observatoire / Entités / Référentiels / Inventaire & Purge deviennent des
+sections à onglets (`SectionOnglets` générique), Journal déjà onglet
+d'Administration (`1c9ab28`) ; identifiants de page FINS conservés
+(navigation croisée intacte, PAGE_META : le header suit l'onglet actif).
+Banc 14/14. **RÈGLE FERME : plus jamais d'entrée de sidebar — un onglet.**
+(3) **Cockpit métier** (`d602622`) : « Santé de la plateforme », pictogramme
++ libellé bilingue par sonde (Utilisateurs & accès, Comptes & soldes,
+Identité KYC…), zéro « -service » à l'écran, nom technique en infobulle,
+bannière de panne en métier. Banc 16/16. (4) **Contrat frontend↔backend
+VÉRIFIÉ : 66/66** chemins d'api.ts présents dans l'openapi.json DÉPLOYÉ
+(+ 4 littéraux inventaire). CI/CD vertes, EN LIGNE, bundle prouvé.
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |

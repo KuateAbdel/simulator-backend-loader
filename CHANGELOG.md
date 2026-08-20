@@ -6,6 +6,43 @@ Versionnage : [SemVer](https://semver.org/lang/fr/), règle du
 définition de terminé est atteinte, jamais sur une intention.
 `1.0.0` = première livraison couvrant la recette `CR-01` → `CR-12`.
 
+## [0.6.0] — 2026-08-20
+
+**L'API d'administration devient multi-comptes, gouvernée et traçante** —
+tout ce qui a suivi la v0.5.0 hébergée : RBAC, audit, notifications.
+
+### Ajouté
+- **RBAC 3 rôles** (viewer / admin / super_admin) : rôle porté par le JWT,
+  gardes `exige_admin` / `exige_super_admin` appliquées à TOUTES les
+  écritures (matrice FZ-RBAC-LOADER, prouvée par `TestMatriceRBAC`) ;
+  comptes multi-personnes (création avec rôle fail-closed viewer,
+  changement de rôle, désactivation motivée réversible, anti-lock-out).
+- **Journal d'administration** : `GET /admin/journal` (qui a fait quoi,
+  quand — intentions sous RUN_ADMIN, Super-Admin seulement) + **traçabilité
+  des connexions** (`derniere_connexion` posée au login, ligne
+  `Session/LOGIN` au Journal ; tracer ne bloque jamais le login).
+- **Système de notification** (doctrine événement → destinataires par RÔLE →
+  canaux) : in-app (`GET/PUT /admin/notifications`, chacun ne voit que les
+  siennes) + email pour les gestes sensibles ; 4 événements
+  (compte_cree, role_change, compte_desactive, compte_reactive) — informer
+  ne casse jamais l'action.
+- **US-A4 v2 opérationnelle en prod** : reset par email via le relais SMTP
+  Mailjet (port 2525, replis 587 puis API) ; **le CD provisionne les
+  secrets `MAILJET_*` du serveur** à chaque déploiement (empreinte sha256
+  au log — plus de dérive secrets/serveur).
+- Créations à l'unité : company US-D1 avec licence UC-07, dépositaire
+  US-D3 (quartier + company à nous), diff payload↔relecture sur les 4
+  créations ; US-B6 (refus pédagogique pays), Lot H (régions/quartiers
+  sans limite, groupes à l'unité, permissions vivantes).
+
+### Sécurité
+- I-AUTH-9 (politique de mot de passe) · I-AUTH-11 (anti-brute-force à
+  double clé identifiant+IP, sans verrouillage de compte) · 401/202
+  anti-énumération partout · fix d'escalade (rôle REPORTÉ au changement de
+  mot de passe et au reset — jamais de retombée sur le défaut super_admin).
+
+1 038 tests (990 à la v0.5.0 → +90), mutations attrapées à chaque lot.
+
 ## [0.5.0] — 2026-08-14
 
 Le CODE de tous les modules jusqu'à la Population client est complet et
