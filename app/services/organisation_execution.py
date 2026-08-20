@@ -61,7 +61,6 @@ from app.core.cdc import (
     LENDERS_LOCAUX_PAR_PAYS,
     LICENCE_MARGE_FUTURE_JOURS,
     PAYS_CIBLES,
-    PREFIXE_DONNEES,
 )
 from app.core.invariants import (
     valider_age,
@@ -967,7 +966,9 @@ class ExecuteurOrganisation:
                 forme_juridique="Etablissement",
                 secteur="Financement",
                 type_company=CompanyType.FUNDING_PROVIDER,
-                raison_imposee=f"{PREFIXE_DONNEES}{nom_institutionnel}",
+                # SANS prefixe (20/08) : le nom officiel UC-08 part tel quel —
+                # la reconnaissance est au REGISTRE (lenders_registry).
+                raison_imposee=nom_institutionnel,
                 region=region.name,
                 ville=ville.name,
                 quartier=quartiers[0].name,

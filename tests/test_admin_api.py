@@ -1256,7 +1256,7 @@ class TestUSD2ProduitALUnite:
         assert reponse.status_code == 200, reponse.text
         corps = reponse.json()
         assert corps["payload"]["name"] == "Tontine Marche Central"
-        assert corps["payload"]["short_name"] == "DEMO_TONT_MC"
+        assert corps["payload"]["short_name"] == "TONT_MC"  # sans prefixe (20/08)
         assert corps["payload"]["policy"]["type"] == "CASH"
         assert posts == [], "l'apercu ne poste JAMAIS"
 
@@ -1334,7 +1334,7 @@ class TestUSD2ProduitALUnite:
         )
         assert reponse.status_code == 201, reponse.text
         corps = reponse.json()
-        assert corps["fiche_relue"]["short_name"] == "DEMO_TONT_MC", (
+        assert corps["fiche_relue"]["short_name"] == "TONT_MC", (
             "la fiche vient d'une RELECTURE, jamais deduite (FRA-218)"
         )
         assert len(posts) == 1
@@ -3296,7 +3296,7 @@ class TestUSD3DepositaireALUnite:
         )
         assert apercu.status_code == 200, apercu.text
         corps = apercu.json()
-        assert corps["payload"]["name"] == f"DEMO_Kiosque {qnom}"
+        assert corps["payload"]["name"] == f"Kiosque {qnom}"  # sans prefixe (20/08)
         assert corps["payload"]["currency"] == "XAF", "la devise est DERIVEE"
         assert corps["composition"]["coherence_verifiee_par"] == "devise de la company"
         assert etat["crees"] == [], "l'apercu n'ecrit JAMAIS"

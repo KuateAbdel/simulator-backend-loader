@@ -386,8 +386,9 @@ class TestRattachementClientEF26:
         assert noeud.niveau is NiveauOrganisation.CLIENT
         assert noeud.parent_id == kiosque.id
         assert noeud.client_id == client
-        assert noeud.name == "DEMO_Client 237673689015", (
-            "un artefact du Loader porte le prefixe (CR-07/EF-63) ; une personne, non"
+        assert noeud.name == "Client 237673689015", (
+            "SANS prefixe (20/08) : le noeud est identifiable par run_id + "
+            "client_id (registre), le nom n'est qu'un libelle d'arbre"
         )
         assert noeud.district_id is None, (
             "le district n'est PAS duplique : il est derive du Kiosque, donc "

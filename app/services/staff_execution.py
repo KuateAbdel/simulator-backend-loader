@@ -347,7 +347,9 @@ class ExecuteurStaff:
         genre = "FEMALE" if rang % 2 == 0 else "MALE"
 
         return {
-            "user_name": f"DEMO_{pays}_{role.replace('/', '')}_{rang:03d}",
+            # SANS prefixe (20/08) — un identifiant d'operateur propre :
+            # pays_role_rang, ex. `CM_TellerAgent_001`.
+            "user_name": f"{pays}_{role.replace('/', '')}_{rang:03d}",
             "mot_de_passe_initial": "Init#2026Aa",
             "nouveau_mot_de_passe": f"Stf#{pays}{rang:04d}Aa",
             "identity": {

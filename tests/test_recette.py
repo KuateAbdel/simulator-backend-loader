@@ -18,7 +18,6 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.core.cdc import PREFIXE_DONNEES
 from app.models.enums import NiveauOrganisation, RunStatus
 from app.services.recette import ControleRecette, Verdict
 
@@ -29,8 +28,15 @@ pytestmark = pytest.mark.asyncio
 
 @dataclass(slots=True)
 class _Noeud:
+    """Le noeud minimal que CR-07 lit : niveau + reference serveur.
+
+    SANS prefixe (20/08) : l'identifiabilite est par REGISTRE — un KIOSQUE
+    porte son `depositary_id`, la seule reference distante du niveau."""
+
     name: str
     id: UUID = field(default_factory=uuid4)
+    niveau: NiveauOrganisation = NiveauOrganisation.KIOSQUE
+    depositary_id: UUID | None = field(default_factory=uuid4)
 
 
 class _HierarchieFausse:
@@ -45,6 +51,7 @@ class _HierarchieFausse:
         orphelins: list[str] | None = None,
         noms: list[str] | None = None,
         clients: int = 0,
+        sans_registre: int = 0,
     ) -> None:
         self._anomalies = anomalies or []
         self._kiosques = kiosques
@@ -53,6 +60,8 @@ class _HierarchieFausse:
         #: `EF-26` — les rattachements Client -> Kiosque. Zero par defaut :
         #: `CR-04` doit rester NON_VERIFIABLE tant qu'aucun run reel n'a eu lieu.
         self._clients = clients
+        #: CR-07 — nombre de kiosques SANS id serveur inscrit (residus simules).
+        self._sans_registre = sans_registre
 
     async def verifier_cr02(self, run_id: UUID) -> list[str]:
         return list(self._anomalies)
@@ -62,8 +71,13 @@ class _HierarchieFausse:
 
     async def par_niveau(self, run_id: UUID, niveau: NiveauOrganisation) -> list[Any]:
         if niveau is NiveauOrganisation.KIOSQUE:
-            noms = self._noms or [f"{PREFIXE_DONNEES}Kiosque {i}" for i in range(self._kiosques)]
-            return [_Noeud(n) for n in noms[: self._kiosques or len(noms)]]
+            noms = self._noms or [f"Kiosque {i}" for i in range(self._kiosques)]
+            noeuds = [_Noeud(n) for n in noms[: self._kiosques or len(noms)]]
+            # Le(s) dernier(s) noeud(s) « sans registre » simulent un residu :
+            # un Kiosque dont l'id serveur n'a pas ete inscrit.
+            for noeud in noeuds[len(noeuds) - self._sans_registre :] if self._sans_registre else []:
+                noeud.depositary_id = None
+            return noeuds
         return []
 
     async def kiosques_sans_agent(self, run_id: UUID) -> list[str]:
@@ -155,7 +169,7 @@ class TestCR02:
 
 class TestUC09:
     async def test_un_kiosque_sans_agent_est_une_violation(self) -> None:
-        hier = _HierarchieFausse(kiosques=5, orphelins=["DEMO_Kiosque Plateau"])
+        hier = _HierarchieFausse(kiosques=5, orphelins=["Kiosque Plateau"])
         critere = _critere(await _controle(hierarchie=hier).executer(), "UC-09")
         assert critere.verdict is Verdict.VIOLE
         assert "Plateau" in critere.detail
@@ -200,18 +214,22 @@ class TestCR06:
 
 
 class TestCR07:
-    async def test_un_seul_nom_sans_prefixe_casse_la_reversibilite(self) -> None:
-        """Sans outil de purge (`EF-65`), le prefixe EST la reversibilite. Une
-        entite sans prefixe est un residu definitif."""
-        hier = _HierarchieFausse(kiosques=2, noms=[f"{PREFIXE_DONNEES}Kiosque A", "Kiosque B"])
+    async def test_un_noeud_sans_id_serveur_casse_la_reversibilite(self) -> None:
+        """SANS prefixe (20/08), la reversibilite est par REGISTRE : un Kiosque
+        dont l'id serveur n'est pas inscrit est injoignable la-bas — un residu
+        definitif que la purge ne pourrait pas retrouver."""
+        hier = _HierarchieFausse(kiosques=2, noms=["Kiosque A", "Kiosque B"], sans_registre=1)
         critere = _critere(await _controle(hierarchie=hier).executer(), "CR-07")
         assert critere.verdict is Verdict.VIOLE
         assert "Kiosque B" in critere.detail
 
-    async def test_toutes_prefixees_est_tenu(self) -> None:
+    async def test_toutes_au_registre_est_tenu(self) -> None:
+        """Aucun prefixe requis : des noms entierement METIER passent CR-07
+        des lors que chaque noeud distant porte son id serveur."""
         hier = _HierarchieFausse(kiosques=3)
         critere = _critere(await _controle(hierarchie=hier).executer(), "CR-07")
         assert critere.verdict is Verdict.TENU
+        assert "registre" in critere.detail
 
 
 class TestRapport:

@@ -202,7 +202,8 @@ async def companies(
         await client.fermer()
     classement["note"] = (
         "aucune company n'est supprimable — company-service n'a pas de DELETE ; "
-        "les notres restent marquees DEMO_ dans short_name"
+        "les notres sont reconnus au REGISTRE (le stock d'avant le 20/08 "
+        "reste marque DEMO_ dans short_name)"
     )
     return classement
 
@@ -218,7 +219,7 @@ async def depositaires(
     _: Annotated[SessionAdmin, Depends(admin_complet)],
 ) -> dict[str, Any]:
     """Reconciliation des depositaires (16/08) — registre = les depositary_id
-    des Kiosques d'org_hierarchy (UC-09), marqueur DEMO_ dans `name`. AUCUN
+    des Kiosques d'org_hierarchy (UC-09), reconnaissance par REGISTRE. AUCUN
     n'est supprimable : depositary-service n'a pas de DELETE (D-DEP-3), et la
     desactivation est cosmetique — elle n'arrete ni collectes ni retraits
     (D-DEP-8, FRA-203/204)."""

@@ -12,7 +12,7 @@ from uuid import UUID
 
 import pytest
 
-from app.core.cdc import AGE_SEUIL_JEUNE, PREFIXE_DONNEES
+from app.core.cdc import AGE_SEUIL_JEUNE
 from app.services.generateur import Generateur
 
 RUN_ID = UUID("11111111-2222-3333-4444-555555555555")
@@ -24,11 +24,13 @@ def generateur() -> Generateur:
 
 
 class TestRaisonSociale:
-    def test_credible_et_prefixee(self, generateur: Generateur) -> None:
+    def test_credible_et_sans_prefixe(self, generateur: Generateur) -> None:
         """UC-08 exige « un nom metier credible ». Faker renvoie
-        « Test Business CM 748 » — on compose mieux, a partir de sa matiere."""
+        « Test Business CM 748 » — on compose mieux, a partir de sa matiere.
+        SANS prefixe (decision direction 20/08) : le nom est entierement
+        metier, la reconnaissance est au REGISTRE."""
         nom = generateur.raison_sociale("Kouassi", "SARL", "Textile")
-        assert nom.startswith(PREFIXE_DONNEES)
+        assert not nom.startswith("DEMO_")
         assert "Kouassi" in nom and "SARL" in nom
         assert "Test Business" not in nom
 
@@ -43,7 +45,7 @@ class TestRaisonSociale:
     def test_le_kiosque_porte_son_quartier(self, generateur: Generateur) -> None:
         """depositary-service n'a AUCUN champ geographique : le nom est le seul
         endroit ou l'ancrage reste visible."""
-        assert generateur.nom_kiosque("Bepanda") == f"{PREFIXE_DONNEES}Kiosque Bepanda"
+        assert generateur.nom_kiosque("Bepanda") == "Kiosque Bepanda"
 
     def test_les_accents_sont_retires(self, generateur: Generateur) -> None:
         assert "é" not in generateur.nom_agence("Bobo-Dioulassé")

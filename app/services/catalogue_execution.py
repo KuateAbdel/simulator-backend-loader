@@ -254,11 +254,15 @@ class ExecuteurCatalogue:
         # doublon serait definitif.
         #
         # PREMIERE CLE — le `short_name`. Depuis que le `name` est entierement
-        # metier, le marqueur est la seule identite qui nous appartient : c'est
-        # lui qui reconnait NOS produits d'un run anterieur (`CR-03`).
-        existant = await self._produits.chercher_par_short_name(
-            str(payload.get("short_name") or "")
-        )
+        # metier, le code court est la seule identite qui nous appartient :
+        # c'est lui qui reconnait NOS produits d'un run anterieur (`CR-03`).
+        # REPLI LEGACY : un produit cree AVANT le 20/08 porte encore l'ancien
+        # prefixe dans son short_name — la reprise doit le retrouver aussi,
+        # sinon on fabriquerait un DOUBLON d'un produit qui est deja a nous.
+        code_court = str(payload.get("short_name") or "")
+        existant = await self._produits.chercher_par_short_name(code_court)
+        if existant is None and code_court:
+            existant = await self._produits.chercher_par_short_name(f"DEMO_{code_court}")
         if existant is None:
             # SECONDE CLE — le `name`. S'il est occupe alors que notre marqueur
             # est absent, c'est un produit ETRANGER : on refuse avant reseau.

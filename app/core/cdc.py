@@ -252,8 +252,12 @@ TAUX_RECOUVREMENT_MIN_PCT: Final = 85.0
 #: ENF-01 / OBJ-04 / CR-04 : 2000 clients en moins de 30 minutes.
 DUREE_MAX_EXECUTION_MINUTES: Final = 30
 
-#: UC-07 / EF-63 / OBJ-05 : chaque donnee generee porte ce prefixe, qui la rend
-#: reconnaissable et supprimable (CR-07, reversibilite).
+#: PREFIXE HISTORIQUE — plus JAMAIS emis depuis le 20/08/2026 (decision
+#: direction : « le Loader ne met jamais DEMO_ devant quoi que ce soit »).
+#: La reconnaissance et la reversibilite (CR-07/EF-63) sont PAR REGISTRE
+#: (journal write-ahead + ids serveur), doctrine A-13 etendue a TOUTES les
+#: entites. La constante reste pour la LECTURE seule : le serveur de test
+#: porte un stock anterieur marque, l'inventaire doit encore le reconnaitre.
 PREFIXE_DONNEES: Final = "DEMO_"
 
 #: UC-07 : la licence couvre « la fenetre historique 180 jours plus 30 jours a venir ».

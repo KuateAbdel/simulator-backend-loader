@@ -348,8 +348,10 @@ class TestLeLoaderNeutraliseANOPRDUNIQ01:
     async def test_NOTRE_produit_d_un_run_anterieur_est_reconnu_par_son_MARQUEUR(
         self,
     ) -> None:
-        """`CR-03` — la reprise : le marqueur retrouve le notre, meme si le nom
-        a change entre deux versions du catalogue."""
+        """`CR-03` — la reprise : le code court retrouve le notre, meme si le
+        nom a change entre deux versions du catalogue. Le stub repond sur
+        l'ANCIEN short_name prefixe (stock d'avant le 20/08) : le repli
+        legacy doit le reconnaitre, sinon doublon."""
         identifiant = uuid4()
 
         class _Produits:

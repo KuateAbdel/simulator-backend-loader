@@ -154,9 +154,9 @@ class ProduitCollecte:
             )
         if not self.code:
             raise ValueError(
-                f"{self.nom!r} : `code` absent — sans lui, `short_name` vaudrait "
-                f"« {PREFIXE_DONNEES} » nu et la purge (CR-07/EF-63) perdrait son "
-                "critere sur un service sans DELETE."
+                f"{self.nom!r} : `code` absent — sans lui, `short_name` serait "
+                "VIDE et la double cle d'unicite (ANO-PRD-UNIQ-01) perdrait "
+                "sa seconde branche."
             )
 
     @property
@@ -174,12 +174,13 @@ class ProduitCollecte:
 
     @property
     def marqueur(self) -> str:
-        """Le `short_name` emis — le marqueur de purge (`CR-07`/`EF-63`).
+        """Le `short_name` emis — le CODE technique du produit.
 
-        C'est LUI qui porte le prefixe depuis le 13/08. Sans lui, retirer
-        `DEMO_` du nom aurait laisse la purge sans critere sur un service sans
-        `DELETE` — le defaut silencieux que la conception §4 nommait deja."""
-        return f"{PREFIXE_DONNEES}{self.code}"
+        SANS prefixe depuis le 20/08 (decision direction : « jamais de DEMO_,
+        nulle part ») : la reconnaissance et la purge (`CR-07`/`EF-63`) sont
+        par REGISTRE (journal + `produits_admin`, Lot G) — le short_name
+        n'est plus un marquage, c'est un code court lisible."""
+        return self.code
 
 
 #: Catalogue COLLECT cible — croisement complet PolicyType x Category (D-PRD-9).
@@ -398,7 +399,7 @@ def policy_lending(produit: ProduitCredit, categorie: ProductCategory) -> dict[s
     exactement ce pour quoi ce champ existe.
     """
     return {
-        "name": f"{PREFIXE_DONNEES}{produit.nom}-{categorie.value}",
+        "name": f"{produit.nom}-{categorie.value}",
         "loan_duration": produit.duree_jours,
         "recovery_day": produit.duree_jours,
         "interest": produit.taux_applique,
@@ -424,7 +425,7 @@ def policy_collect(produit: ProduitCollecte) -> dict[str, Any]:
     KILOGRAM sans que l'operateur le sache, on ne reproduit pas ce defaut.
     """
     return {
-        "name": f"{PREFIXE_DONNEES}{produit.nom}",
+        "name": produit.nom,
         "type": produit.policy_type.value,
         "interest_type": "MONTHLY",
         "interest_rate": produit.taux,
@@ -478,7 +479,7 @@ def marqueur_lending(produit: ProduitCredit, categorie: ProductCategory) -> str:
     homonymie : Nano, Macro, BNPL, ReadyToGo), suffixe de la categorie quand le
     split `D-PRD-4` dedouble — la meme desambiguation que `nom_lending`, sur
     l'axe technique."""
-    base = f"{PREFIXE_DONNEES}{produit.nom.upper()}"
+    base = produit.nom.upper()
     if len(produit.categories_cibles) == 1:
         return base
     return f"{base}_{categorie.value[:4]}"

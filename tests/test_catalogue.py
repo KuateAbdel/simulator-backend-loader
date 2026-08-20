@@ -180,17 +180,15 @@ class TestCatalogueCollect:
         for refuse in PRODUITS_ENVIRONNEMENT:
             assert refuse not in a_creer, f"{refuse} porte des valeurs de test"
 
-    def test_le_nom_est_REEL_et_le_marqueur_vit_dans_short_name(self) -> None:
-        """Decision de Yaniv du 13/08 : « il faut des vrais produits, pas de
-        DEMO_ ». Le NOM que le bailleur lit est entierement metier ; la purge
-        (`CR-07`/`EF-63`) garde son critere dans `short_name` — sur un service
-        sans DELETE, perdre ce critere serait definitif."""
+    def test_le_nom_est_REEL_et_le_short_name_est_le_code(self) -> None:
+        """13/08 : « il faut des vrais produits, pas de DEMO_ » — etendu le
+        20/08 par la direction a TOUT, short_name compris. Le NOM que le
+        bailleur lit est metier ; le short_name est le CODE declare, sans
+        prefixe ; la purge reconnait par REGISTRE (journal + produits_admin)."""
         for payload in payloads_collect():
-            assert not str(payload["name"]).startswith(PREFIXE_DONNEES), payload["name"]
-            assert str(payload["short_name"]).startswith(PREFIXE_DONNEES), (
-                f"{payload['name']} : short_name={payload['short_name']!r} — "
-                "sans marqueur, la purge laisserait ce produit en residu"
-            )
+            assert not str(payload["name"]).startswith("DEMO_"), payload["name"]
+            assert not str(payload["short_name"]).startswith("DEMO_"), payload["short_name"]
+            assert payload["short_name"], f"{payload['name']} : short_name vide"
 
     def test_les_marqueurs_sont_DISTINCTS(self) -> None:
         """Deux produits au meme `short_name` seraient indiscernables a la purge

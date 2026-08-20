@@ -51,7 +51,7 @@ router = APIRouter(prefix="/admin/purge", tags=["admin — purge"])
 #: La carte des residus, avec leur verdict MESURE. C'est la reponse a
 #: « purgeable, ca veut dire quoi ? » — gravee dans le code.
 VERDICTS_RESIDUS: dict[str, str] = {
-    "companies": "AUCUN DELETE (company-service) — permanentes, marquees DEMO_",
+    "companies": "AUCUN DELETE (company-service) — permanentes, au registre",
     "depositaires": (
         "AUCUN DELETE (D-DEP-3), desactivation cosmetique — n'arrete ni "
         "collectes ni retraits (D-DEP-8, FRA-203/204)"

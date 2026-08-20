@@ -34,12 +34,12 @@ class TestUniciteDesNoms:
         gen = Generateur(uuid4())
         noms = [gen.nom_branche(r.name, r.country_iso2) for r in regions]
         assert len(set(noms)) == len(noms)
-        assert "DEMO_Branche Centre BF" in noms  # leve par le code pays
+        assert "Branche Centre BF" in noms  # leve par le code pays
 
     def test_le_quartier_plateau_existe_deux_fois_et_donne_deux_kiosques_distincts(self) -> None:
         """Cas le PLUS grave : depositary-service n'a aucun champ geographique.
 
-        Deux « DEMO_Kiosque Plateau » seraient strictement indiscernables.
+        Deux « Kiosque Plateau » seraient strictement indiscernables.
         """
         from uuid import uuid4
 
@@ -50,7 +50,7 @@ class TestUniciteDesNoms:
         gen = Generateur(uuid4())
         noms = [gen.nom_kiosque(q.name) for q in quartiers]
         assert len(set(noms)) == len(noms)
-        assert "DEMO_Kiosque Plateau 2" in noms
+        assert "Kiosque Plateau 2" in noms
 
     def test_huit_companies_dans_un_pays_de_cinq_patronymes(self) -> None:
         """Le parametrage du boss autorise plus de companies que de patronymes.

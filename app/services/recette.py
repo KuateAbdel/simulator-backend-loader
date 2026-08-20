@@ -49,7 +49,6 @@ from uuid import UUID
 
 from app.core.cdc import (
     NB_CLIENTS,
-    PREFIXE_DONNEES,
     TAUX_USURE_MAX_ANNUEL_PCT,
     nb_kiosques_total,
     nb_lenders_total,
@@ -279,13 +278,14 @@ class ControleRecette:
         return ResultatCritere("CR-06", "journal d'execution exploitable", Verdict.TENU, detail)
 
     async def _cr07_reversibilite(self) -> ResultatCritere:
-        """`CR-07` / `EF-63` — tout porte le prefixe, donc tout est retrouvable.
+        """`CR-07` / `EF-63` — chaque entite est identifiable, donc retrouvable.
 
-        La reversibilite ne se prouve pas par l'existence d'un outil de purge —
-        il n'existe pas encore (`EF-65`). Elle se prouve par le fait que **chaque
-        entite generee est identifiable**. Un seul nom sans prefixe et la purge
-        laisserait un residu.
+        La reversibilite se prouve par le REGISTRE, plus par un marquage
+        (decision direction 20/08 : jamais de prefixe dans les noms). Un noeud
+        a contrepartie serveur SANS id distant serait injoignable la-bas — la
+        purge laisserait un residu : c'est LUI la violation.
         """
+        critere = "chaque entite est identifiable par REGISTRE (run_id + id serveur)"
         noeuds = [
             n
             for niveau in NiveauOrganisation
@@ -294,23 +294,40 @@ class ControleRecette:
         if not noeuds:
             return ResultatCritere(
                 "CR-07",
-                f"chaque entite porte le prefixe {PREFIXE_DONNEES}",
+                critere,
                 Verdict.NON_VERIFIABLE,
                 "aucune entite pour ce run",
             )
-        sans = [n.name for n in noeuds if not n.name.startswith(PREFIXE_DONNEES)]
+        # SANS prefixe (20/08) : l'identifiabilite ne se prouve plus par un
+        # marquage dans le nom mais par le REGISTRE — chaque noeud porte le
+        # run_id, et les niveaux a contrepartie SERVEUR portent l'id distant
+        # qui rend l'entite adressable (donc purgeable). KIOSQUE ->
+        # depositary_id, AGENT -> user_id, CLIENT -> client_id ; BRANCHE et
+        # AGENCE sont des niveaux LOGIQUES sans contrepartie (decision b).
+        reference_requise = {
+            NiveauOrganisation.KIOSQUE: "depositary_id",
+            NiveauOrganisation.AGENT: "user_id",
+            NiveauOrganisation.CLIENT: "client_id",
+            NiveauOrganisation.PRODUIT: "product_id",
+        }
+        sans = [
+            n.name
+            for n in noeuds
+            if (champ := reference_requise.get(n.niveau)) is not None
+            and getattr(n, champ, None) is None
+        ]
         if sans:
             return ResultatCritere(
                 "CR-07",
-                f"chaque entite porte le prefixe {PREFIXE_DONNEES}",
+                critere,
                 Verdict.VIOLE,
-                f"{len(sans)} sans prefixe : {', '.join(sans[:3])}",
+                f"{len(sans)} noeud(s) sans id serveur : {', '.join(sans[:3])}",
             )
         return ResultatCritere(
             "CR-07",
-            f"chaque entite porte le prefixe {PREFIXE_DONNEES}",
+            critere,
             Verdict.TENU,
-            f"{len(noeuds)} entite(s), toutes prefixees",
+            f"{len(noeuds)} entite(s), toutes au registre (ids serveur presents)",
         )
 
     def _cr08_usure(self) -> ResultatCritere:

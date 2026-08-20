@@ -80,7 +80,7 @@ class ProduitDemande(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     nom: str = Field(min_length=3, max_length=80)
-    #: Le code court du marqueur — DEMO_<code> part dans short_name (CR-07).
+    #: Le code court — part TEL QUEL dans short_name (sans prefixe, 20/08).
     code: str = Field(min_length=2, max_length=24, pattern=r"^[A-Z0-9_]+$")
     policy_type: Literal["CASH", "CASH_DAT", "PRODUCT"]
     categorie: Literal["INDIVIDUAL", "CORPORATE"]
@@ -837,7 +837,7 @@ class DepositaireDemande(BaseModel):
     """DEUX champs saisis — le reste est COMPOSE, c'est notre conception
     (refonte 16/08, exigence Yaniv) : un depositaire n'existe jamais « en
     l'air ». Il naît d'un QUARTIER (CR-02 : chaque Kiosque a un District
-    valide) et d'une company A NOUS. Le nom devient `DEMO_Kiosque <Quartier>`
+    valide) et d'une company A NOUS. Le nom devient `Kiosque <Quartier>`
     (EF-63, comme au run) et la devise est DERIVEE du pays — jamais saisie
     (D-DEP-6/FRA-201 : le serveur accepterait n'importe quoi, PAS NOUS)."""
 
@@ -961,7 +961,8 @@ async def _composer_depositaire(
     # 5) Le nom COMPOSE (EF-63, comme au run) + GET-avant-POST (D-DEP-3 :
     #    AUCUNE unicite serveur mesuree, AUCUN DELETE — un doublon serait
     #    permanent).
-    marqueur = f"DEMO_Kiosque {quartier.name}"
+    # SANS prefixe (20/08) : le nom est METIER, la reconnaissance au registre.
+    marqueur = f"Kiosque {quartier.name}"
     existant = await client_depositaires.chercher_par_nom(marqueur)
     if existant is not None:
         raise HTTPException(

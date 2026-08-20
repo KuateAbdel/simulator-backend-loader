@@ -26,7 +26,6 @@ from uuid import UUID, uuid4
 
 from pymongo.errors import DuplicateKeyError
 
-from app.core.cdc import PREFIXE_DONNEES
 from app.core.database import COLLECTION_ORG_HIERARCHY
 from app.models.domain import OrgHierarchyNode
 from app.models.enums import NiveauOrganisation
@@ -250,10 +249,11 @@ class OrgHierarchyRepository(RepositoryBase):
             niveau=NiveauOrganisation.CLIENT,
             parent_id=kiosque_id,
             company_id=company_id,
-            # Un artefact du Loader porte le prefixe (`CR-07`/`EF-63`) ; une
-            # personne, non. Le msisdn est la cle naturelle du Client, et stable
-            # d'un run a l'autre depuis `D-CLI-11`.
-            name=f"{PREFIXE_DONNEES}Client {msisdn}",
+            # SANS prefixe (20/08) — le noeud est identifiable par `run_id` +
+            # `client_id` (registre), le nom n'est qu'un libelle d'arbre. Le
+            # msisdn est la cle naturelle du Client, stable d'un run a l'autre
+            # depuis `D-CLI-11`.
+            name=f"Client {msisdn}",
             country_code=country_code.upper(),
             client_id=client_id,
             # `P-01` — le produit d'entree est enregistre AU RATTACHEMENT ;

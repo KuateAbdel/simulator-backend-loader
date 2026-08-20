@@ -450,10 +450,13 @@ class Generateur:
         # deux camerounaises. On leve d'abord par le SUFFIXE COMMERCIAL — deux
         # maisons du meme patronyme se distinguent ainsi dans la vraie vie,
         # « Tamadou & Fils » et « Tamadou Negoce ».
-        candidat = f"{PREFIXE_DONNEES}{noyau}"
+        # SANS prefixe (decision direction 20/08) : la raison sociale est
+        # entierement METIER — forme juridique + patronyme + activite. La
+        # reconnaissance « a nous » est par REGISTRE, jamais par marquage.
+        candidat = noyau
         if candidat in self._noms_emis and forme not in ("Fondation", "Association"):
             for suffixe in SUFFIXES:
-                autre = f"{PREFIXE_DONNEES}{noyau} {suffixe}"
+                autre = f"{noyau} {suffixe}"
                 if autre not in self._noms_emis:
                     candidat = autre
                     break
@@ -465,8 +468,10 @@ class Generateur:
         On y adjoint un discriminant court derive du run pour eviter toute
         collision entre executions, sans rendre le nom illisible.
         """
+        # `replace` garde le nom court propre meme sur une raison sociale du
+        # stock historique encore prefixee (lecture seule).
         lettres = "".join(m[0] for m in raison_sociale.replace(PREFIXE_DONNEES, "").split()[:3])
-        return f"{PREFIXE_DONNEES}{lettres.upper()}{self._alea.randrange(100, 999)}"
+        return f"{lettres.upper()}{self._alea.randrange(100, 999)}"
 
     def nom_kiosque(self, quartier: str, pays: str | None = None) -> str:
         """Le Kiosque porte son quartier dans son nom.
@@ -475,18 +480,18 @@ class Generateur:
         endroit ou l'ancrage reste visible dans l'interface. C'est aussi ce
         qu'on lit sur une devanture reelle.
         """
-        return self._nom_unique(f"{PREFIXE_DONNEES}Kiosque {_sans_accents(quartier).title()}", pays)
+        return self._nom_unique(f"Kiosque {_sans_accents(quartier).title()}", pays)
 
     def nom_branche(self, region: str, pays: str | None = None) -> str:
         """`Centre`, `Est`, `Nord` et `Sud-Ouest` sont des regions de PLUSIEURS
         pays — 4 doublons sur 51 branches, mesures le 09/08. `D-12`."""
-        return self._nom_unique(f"{PREFIXE_DONNEES}Branche {_sans_accents(region).title()}", pays)
+        return self._nom_unique(f"Branche {_sans_accents(region).title()}", pays)
 
     def nom_agence(self, ville: str, pays: str | None = None) -> str:
         """Les 50 villes du referentiel ont des noms distincts — aucun doublon
         aujourd'hui. Le registre passe quand meme : la surcouche `CFG-03`
         autorise l'ajout de villes, et rien ne garantit leur unicite."""
-        return self._nom_unique(f"{PREFIXE_DONNEES}Agence {_sans_accents(ville).title()}", pays)
+        return self._nom_unique(f"Agence {_sans_accents(ville).title()}", pays)
 
     # ----------------------------------------------------------------------
     # Identites — ce que Faker ne fournit pas
