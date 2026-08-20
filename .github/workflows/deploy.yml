@@ -49,6 +49,32 @@ jobs:
           cd "${DEPLOY_PATH:-/home/apps/loader}"
           git fetch origin main
           git merge --ff-only origin/main
+          # --- Provisionnement du .env serveur DEPUIS les secrets GitHub ---
+          # Le .env est gitignore : git ne le porte jamais. Les valeurs vivent
+          # en secrets (Settings -> Actions) et le CD les ENFORCE a chaque
+          # deploiement — idempotent, remplace la ligne si elle existe, l'ajoute
+          # sinon. GitHub masque les valeurs dans les logs ; l'empreinte sha256
+          # tronquee suffit a prouver QUELLE cle est en place sans la montrer.
+          touch .env
+          cp -n .env .env.sauvegarde-avant-mailjet-20260820 || true
+          maj_env() {
+            cle="$1"; val="$2"
+            if [ -z "$val" ]; then
+              echo "ECHEC : secret ${cle} vide ou absent — .env laisse intact"
+              exit 1
+            fi
+            if grep -q "^${cle}=" .env; then
+              sed -i "s|^${cle}=.*|${cle}=${val}|" .env
+            else
+              printf '%s=%s\n' "${cle}" "${val}" >> .env
+            fi
+          }
+          maj_env MAILJET_API_KEY '${{ secrets.MAILJET_API_KEY }}'
+          maj_env MAILJET_SECRET_KEY '${{ secrets.MAILJET_SECRET_KEY }}'
+          maj_env MAILJET_EXPEDITEUR '${{ secrets.MAILJET_EXPEDITEUR }}'
+          echo "empreinte api-key en place : $(printf '%s' '${{ secrets.MAILJET_API_KEY }}' | sha256sum | cut -c1-12)"
+          # compose hache la config (.env inclus) : le conteneur est recree
+          # si les valeurs ont change, laisse en place sinon.
           docker compose up -d --build
           # La preuve, jamais la deduction : /health doit repondre 200.
           # Port 8003 (8000 est pris par finzuu-talk-recording — recon 14/08).
