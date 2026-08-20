@@ -103,12 +103,17 @@ def _secret_session() -> str:
     return _SECRET_EPHEMERE
 
 
-def emettre_jeton_admin(email: str, *, portee: str) -> tuple[str, int]:
-    """Emet le jeton de session. Rend (jeton, duree_en_secondes)."""
+def emettre_jeton_admin(
+    email: str, *, portee: str, role: str = "super_admin"
+) -> tuple[str, int]:
+    """Emet le jeton de session. Rend (jeton, duree_en_secondes).
+
+    `role` (RBAC du Loader) est porte dans le jeton ; defaut `super_admin`
+    pour rester compatible avec les jetons et comptes anterieurs au RBAC."""
     duree = _settings.admin_session_duree_heures * 3600
     maintenant = int(_time.time())
     jeton = _jwt.encode(
-        {"sub": email, "scope": portee, "iat": maintenant, "exp": maintenant + duree},
+        {"sub": email, "scope": portee, "role": role, "iat": maintenant, "exp": maintenant + duree},
         _secret_session(),
         algorithm="HS256",
     )
@@ -127,4 +132,8 @@ def verifier_jeton_admin(jeton: str) -> dict[str, str] | None:
         "password_only",
     ):
         return None
-    return {"email": claims["sub"], "portee": claims["scope"]}
+    return {
+        "email": claims["sub"],
+        "portee": claims["scope"],
+        "role": claims.get("role", "super_admin"),
+    }

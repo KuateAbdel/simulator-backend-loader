@@ -45,6 +45,12 @@ COLLECTION_ORG_HIERARCHY: Final = "org_hierarchy"
 #: figer l'empreinte PAR RUN — la collection porte l'intention, le run porte
 #: le fait.
 COLLECTION_LOADER_CONFIGURATION: Final = "loader_configuration"
+#: Huitieme collection — anti-brute-force du login (I-AUTH-11). Compteurs
+#: d'echecs consecutifs PAR IDENTIFIANT soumis, avec cooldown a backoff
+#: exponentiel AUTO-CICATRISANT. Jamais un verrou dur du compte (ce serait le
+#: bug plateforme INV-USR-19 / CWE-645, deni de service sur l'utilisateur
+#: legitime). Purgee par TTL des qu'un identifiant reste inactif.
+COLLECTION_AUTH_THROTTLE: Final = "auth_throttle"
 
 _client: AsyncIOMotorClient[MongoDocument] | None = None
 
@@ -168,6 +174,15 @@ async def ensure_indexes() -> None:
         [("email", 1)],
         name="uniq_email",
         unique=True,
+    )
+    # I-AUTH-11 : les compteurs anti-brute-force s'auto-purgent. Le champ
+    # `expire_le` porte une date d'inactivite ; MongoDB supprime le document
+    # quand elle est depassee (expireAfterSeconds=0). Un identifiant qui cesse
+    # d'echouer redevient donc vierge tout seul.
+    await db[COLLECTION_AUTH_THROTTLE].create_index(
+        "expire_le",
+        name="ttl_auth_throttle",
+        expireAfterSeconds=0,
     )
     # CR-02 : la verification de recette se fait par une seule requete sur
     # (run_id, niveau). L'unicite du district par run garantit qu'aucun quartier

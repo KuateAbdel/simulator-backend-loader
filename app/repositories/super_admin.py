@@ -31,12 +31,16 @@ class SuperAdminRepository(RepositoryBase):
         email: str,
         mot_de_passe_initial: str,
         cree_par: str | None = None,
+        role: str = "viewer",
     ) -> SuperAdminAccount:
         """Cree le compte avec `must_change_password=True`.
 
         Le mot de passe initial (env au bootstrap, genere pour un compte
         cree par l'API) est un mot de passe de premiere connexion, jamais un
         mot de passe durable. `cree_par` trace le createur (RBAC 15/08).
+
+        `role` par defaut = `viewer` (FAIL-CLOSED) : un compte cree sans choix
+        explicite n'a que la lecture. Le bootstrap, lui, passe `super_admin`.
         """
         from datetime import UTC, datetime
 
@@ -45,6 +49,7 @@ class SuperAdminRepository(RepositoryBase):
             email=email.strip().lower(),
             password_hash=hacher(mot_de_passe_initial),
             must_change_password=True,
+            role=role,
             cree_par=cree_par,
             cree_le=datetime.now(tz=UTC).isoformat() if cree_par else None,
         )
@@ -76,6 +81,23 @@ class SuperAdminRepository(RepositoryBase):
 
     async def compter_actifs(self) -> int:
         return int(await self.collection.count_documents({"actif": {"$ne": False}}))
+
+    async def compter_super_admins_actifs(self) -> int:
+        """Comptes ACTIFS de role super_admin — la vraie borne d'anti-lock-out :
+        perdre le dernier super_admin fermerait la gestion des acces. Un
+        document sans champ `role` compte comme super_admin (defaut du modele),
+        d'ou le `$nin` plutot qu'un `== super_admin`."""
+        return int(
+            await self.collection.count_documents(
+                {"actif": {"$ne": False}, "role": {"$nin": ["admin", "viewer"]}}
+            )
+        )
+
+    async def changer_role(self, email: str, role: str) -> bool:
+        resultat = await self.collection.update_one(
+            {"email": email.strip().lower()}, {"$set": {"role": role}}
+        )
+        return bool(resultat.matched_count)
 
     async def changer_mot_de_passe(self, email: str, nouveau: str) -> bool:
         resultat = await self.collection.update_one(

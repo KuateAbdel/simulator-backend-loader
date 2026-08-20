@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import secrets
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import NAMESPACE_OID, UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from app.clients import mailjet
 from app.repositories.audit_trail import AuditTrailRepository
 from app.repositories.super_admin import SuperAdminRepository
-from app.routes.dependances import SessionAdmin, admin_complet
+from app.routes.dependances import SessionAdmin, exige_super_admin
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,15 @@ class CompteDemande(BaseModel):
 
     #: L'email REEL de la personne — c'est la que partira tout code US-A4.
     email: EmailStr
+    #: Role RBAC du Loader. Defaut FAIL-CLOSED = viewer (lecture seule) : on
+    #: n'accorde jamais un privilege par omission.
+    role: Literal["viewer", "admin", "super_admin"] = "viewer"
+
+
+class RoleDemande(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["viewer", "admin", "super_admin"]
 
 
 class EtatDemande(BaseModel):
@@ -64,6 +73,7 @@ def _fiche(compte: Any) -> dict[str, Any]:
     """La vue publique d'un compte — JAMAIS un hash, jamais un code."""
     return {
         "email": compte.email,
+        "role": compte.role,
         "actif": compte.actif,
         "must_change_password": compte.must_change_password,
         "cree_par": compte.cree_par,
@@ -73,7 +83,7 @@ def _fiche(compte: Any) -> dict[str, Any]:
 
 @router.get("")
 async def lister_comptes(
-    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    _: Annotated[SessionAdmin, Depends(exige_super_admin)],
 ) -> dict[str, Any]:
     """Tous les comptes du role Super-Admin — leur vue publique seulement."""
     comptes = await SuperAdminRepository().lister()
@@ -91,7 +101,7 @@ async def lister_comptes(
 @router.post("", status_code=201)
 async def creer_compte(
     demande: CompteDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_super_admin)],
 ) -> dict[str, Any]:
     """Cree un compte Super-Admin pour une PERSONNE (email reel).
 
@@ -118,9 +128,9 @@ async def creer_compte(
         entity_id=uuid5(NAMESPACE_OID, f"loader-compte:{email}"),
         operation="CREATE",
         cible="loader super_admin_accounts",
-        payload={"email": email, "cree_par": session.email},
+        payload={"email": email, "role": demande.role, "cree_par": session.email},
     ) as suivi:
-        compte = await depot.creer(email, initial, cree_par=session.email)
+        compte = await depot.creer(email, initial, cree_par=session.email, role=demande.role)
         suivi.reussi({"email": compte.email})
 
     email_envoye = await mailjet.envoyer_email(
@@ -156,7 +166,7 @@ async def creer_compte(
 async def changer_etat_compte(
     email: str,
     demande: EtatDemande,
-    session: Annotated[SessionAdmin, Depends(admin_complet)],
+    session: Annotated[SessionAdmin, Depends(exige_super_admin)],
 ) -> dict[str, Any]:
     """Active ou desactive un compte — les gardes anti-lock-out d'abord.
 
@@ -176,12 +186,13 @@ async def changer_etat_compte(
                 status_code=409,
                 detail="se desactiver soi-meme est refuse — demander a un autre admin",
             )
-        if compte.actif and await depot.compter_actifs() <= 1:
+        est_super = compte.role not in ("admin", "viewer")
+        if compte.actif and est_super and await depot.compter_super_admins_actifs() <= 1:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "dernier compte actif — indesactivable : le Loader ne "
-                    "reste jamais sans Super-Admin"
+                    "dernier Super-Admin actif — indesactivable : le Loader ne "
+                    "reste jamais sans Super-Admin a la barre"
                 ),
             )
 
@@ -203,4 +214,54 @@ async def changer_etat_compte(
         "note": "desactive = 401 generique au login, jamais supprime"
         if not demande.actif
         else "compte reactive — son mot de passe n'a pas change",
+    }
+
+
+@router.put("/{email}/role")
+async def changer_role_compte(
+    email: str,
+    demande: RoleDemande,
+    session: Annotated[SessionAdmin, Depends(exige_super_admin)],
+) -> dict[str, Any]:
+    """Change le role RBAC d'un compte du Loader — Super-Admin uniquement.
+
+    Anti-lock-out : retrograder le DERNIER Super-Admin actif est refuse. Le
+    nouveau role s'applique au PROCHAIN jeton du compte : sa session en cours
+    garde son role jusqu'au re-login (les sessions durent 4 h)."""
+    depot = SuperAdminRepository()
+    cible = email.strip().lower()
+    compte = await depot.par_email(cible)
+    if compte is None:
+        raise HTTPException(status_code=404, detail=f"aucun compte pour {cible!r}")
+
+    est_super = compte.role not in ("admin", "viewer")
+    if est_super and compte.actif and demande.role != "super_admin":
+        if await depot.compter_super_admins_actifs() <= 1:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "retrograder le dernier Super-Admin actif est refuse — "
+                    "le Loader garde toujours au moins un Super-Admin"
+                ),
+            )
+
+    audit = AuditTrailRepository()
+    async with audit.intention(
+        RUN_ADMIN,
+        entity_type="SuperAdminAccount",
+        entity_id=uuid5(NAMESPACE_OID, f"loader-compte:{cible}"),
+        operation="UPDATE",
+        cible="loader super_admin_accounts",
+        payload={"email": cible, "role": demande.role, "par": session.email},
+    ) as suivi:
+        await depot.changer_role(cible, demande.role)
+        suivi.reussi({"email": cible, "role": demande.role})
+
+    relu = await depot.par_email(cible)
+    return {
+        "compte": _fiche(relu),
+        "note": (
+            f"role change en {demande.role} — effectif au prochain login du "
+            "compte (le jeton en cours conserve son role, sessions 4 h)"
+        ),
     }

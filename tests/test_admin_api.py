@@ -30,7 +30,7 @@ from app.repositories.super_admin import SuperAdminRepository
 #: .example) — et c'est exactement la rigueur demandee. Aucun mail ne part.
 EMAIL = "pilote-tests@finzuu.com"
 MDP_INITIAL = "initial-bootstrap-9911"
-MDP_DURABLE = "un-mot-de-passe-durable-13aout"
+MDP_DURABLE = "cheval-agrafe-batterie-13aout"  # conforme I-AUTH-9 (ni « passe » ni mot banni)
 
 
 @pytest_asyncio.fixture()
@@ -41,7 +41,13 @@ async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncCl
     await database.get_database().drop_collection(
         database.COLLECTION_SUPER_ADMIN_ACCOUNTS
     )
-    await SuperAdminRepository().creer(EMAIL, MDP_INITIAL)
+    # Isolation anti-brute-force (I-AUTH-11) : compteurs de throttle vierges a
+    # chaque test, sinon les echecs d'un test declenchent le 429 du suivant.
+    await database.get_database().drop_collection(database.COLLECTION_AUTH_THROTTLE)
+    # Compte de bootstrap = un SUPER_ADMIN (comme app/services/bootstrap.py) :
+    # le defaut fail-closed de `creer` est 'viewer', reserve aux comptes crees
+    # par l'API. Le pilote initial du Loader, lui, est super_admin.
+    await SuperAdminRepository().creer(EMAIL, MDP_INITIAL, role="super_admin")
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
@@ -3058,8 +3064,12 @@ class TestComptesRBAC:
     ) -> None:
         """Meme un AUTRE admin ne peut pas eteindre la derniere lumiere."""
         entetes = await _session_complete(client)
+        # Deux SUPER_ADMINS : l'anti-lock-out se joue entre porteurs du role,
+        # et seul un super_admin peut desactiver (garde exige_super_admin).
         creation = await client.post(
-            "/admin/comptes", json={"email": self.EMAIL_B}, headers=entetes
+            "/admin/comptes",
+            json={"email": self.EMAIL_B, "role": "super_admin"},
+            headers=entetes,
         )
         initial_b = creation.json()["mot_de_passe_initial"]
         connexion_b = await client.post(
@@ -3910,3 +3920,65 @@ class TestDiffPayloadRelecture:
             "envoye": "DEMO_Composee",
             "relu": "DEMO_Compose",
         }
+
+
+class TestAntiBruteForce:
+    """I-AUTH-11 — le login se protege du brute-force par backoff auto-cicatrisant,
+    et ne verrouille JAMAIS le compte (pas de CWE-645, la Disponibilite d'abord)."""
+
+    async def test_le_brute_force_finit_en_429_avec_retry_after(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        # Sous le seuil : chaque echec est un 401 muet, aucun delai.
+        for _ in range(6):
+            r = await client.post(
+                "/admin/auth/login", json={"email": EMAIL, "mot_de_passe": "faux"}
+            )
+            assert r.status_code == 401, r.text
+        # Au-dela : le cooldown mord — 429 GENERIQUE + Retry-After.
+        bloque = await client.post(
+            "/admin/auth/login", json={"email": EMAIL, "mot_de_passe": "faux"}
+        )
+        assert bloque.status_code == 429, bloque.text
+        assert int(bloque.headers["Retry-After"]) > 0
+        # Le message ne nomme ni le compte ni la cause exacte (anti-enumeration).
+        assert "compte" not in bloque.text.lower()
+
+    async def test_un_login_reussi_efface_le_compteur(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        # Quelques echecs, puis une reussite : le compteur repart de zero.
+        for _ in range(4):
+            assert (
+                await client.post(
+                    "/admin/auth/login", json={"email": EMAIL, "mot_de_passe": "faux"}
+                )
+            ).status_code == 401
+        bon = await client.post(
+            "/admin/auth/login", json={"email": EMAIL, "mot_de_passe": MDP_INITIAL}
+        )
+        assert bon.status_code == 200, bon.text
+        # Apres cicatrisation, 4 nouveaux echecs restent sous le seuil : aucun
+        # 429 (sinon la reussite n'aurait pas remis le compteur a zero).
+        for _ in range(4):
+            r = await client.post(
+                "/admin/auth/login", json={"email": EMAIL, "mot_de_passe": "faux"}
+            )
+            assert r.status_code == 401, r.text
+
+    async def test_429_identique_pour_un_email_inexistant(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Anti-enumeration : le throttle se declenche pareil que le compte
+        existe ou non — un 429 ne revele jamais l'existence d'un email."""
+        inexistant = "fantome-inexistant@finzuu.com"
+        for _ in range(6):
+            r = await client.post(
+                "/admin/auth/login",
+                json={"email": inexistant, "mot_de_passe": "faux"},
+            )
+            assert r.status_code == 401, r.text
+        bloque = await client.post(
+            "/admin/auth/login", json={"email": inexistant, "mot_de_passe": "faux"}
+        )
+        assert bloque.status_code == 429, bloque.text

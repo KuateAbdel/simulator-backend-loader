@@ -122,5 +122,14 @@ class Settings(BaseSettings):
     def origines_cors(self) -> list[str]:
         return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
 
+    # -- Anti-brute-force (I-AUTH-11) — confiance au reverse-proxy ---------
+    #    L'IP de throttling doit etre la VRAIE IP du client. Derriere nginx,
+    #    elle arrive dans `X-Forwarded-For` ; en direct, c'est la socket. On ne
+    #    lit l'en-tete QUE si on declare le proxy de confiance : sinon un
+    #    attaquant forge `X-Forwarded-For` et se donne une IP neuve a chaque
+    #    coup, contournant le throttle. FAUX par defaut = sur (on n'accorde la
+    #    confiance qu'explicitement, une fois le proxy en place).
+    faire_confiance_proxy: bool = False
+
 
 settings = Settings()

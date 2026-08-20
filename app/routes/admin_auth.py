@@ -38,20 +38,47 @@ import secrets
 import time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 
 from app.clients import mailjet
+from app.core import politique_mot_de_passe as politique
+from app.core.config import settings
+from app.core.politique_mot_de_passe import LONGUEUR_MDP_MIN
 from app.core.security import emettre_jeton_admin
+from app.repositories.auth_throttle import AuthThrottleRepository
 from app.repositories.super_admin import SuperAdminRepository
 from app.routes.dependances import SessionAdmin, session_admin
 
 router = APIRouter(prefix="/admin/auth", tags=["admin — session"])
 
-#: Longueur minimale du mot de passe durable. 12 est le plancher NIST/ANSSI
-#: pour un compte a privilege unique ; la complexite par classes de caracteres
-#: n'est PAS exigee — c'est la longueur qui protege, pas les `@`.
-LONGUEUR_MDP_MIN = 12
+
+def _ip_client(request: Request) -> str:
+    """La VRAIE IP du client, pour le throttle par source (I-AUTH-11).
+
+    Derriere un reverse-proxy declare de confiance, elle est dans le PREMIER
+    hop de `X-Forwarded-For` (les suivants sont ajoutes par nos propres
+    couches). Sans cette confiance EXPLICITE, on ignore l'en-tete — sinon un
+    attaquant le forge et se donne une IP neuve a chaque tentative. En dernier
+    recours (pas de socket : ASGI de test), on renvoie une valeur stable."""
+    if settings.faire_confiance_proxy:
+        transmis = request.headers.get("x-forwarded-for", "")
+        premier = transmis.split(",")[0].strip()
+        if premier:
+            return premier
+    return request.client.host if request.client else "inconnu"
+
+
+def _refus_si_throttle(bloque: bool, retry: int) -> None:
+    """429 GENERIQUE + `Retry-After` si un cooldown court. Le message ne nomme
+    ni le compte ni la cause exacte : un 429 identique pour un email existant
+    ou non (anti-enumeration, CWE-204)."""
+    if bloque:
+        raise HTTPException(
+            status_code=429,
+            detail="trop de tentatives — patientez avant de réessayer",
+            headers={"Retry-After": str(retry)},
+        )
 
 #: Le code de reinitialisation : 8 chiffres, 15 minutes, 5 essais. Un code
 #: court est acceptable PARCE QUE la fenetre est courte et les essais bornes.
@@ -78,6 +105,10 @@ class ReponseSession(BaseModel):
     expires_in: int
     #: `US-A2` — quand vrai, la seule route ouverte est /admin/auth/password.
     must_change_password: bool
+    #: RBAC — le role du compte, remonte des le login pour que le front projette
+    #: le bon dashboard sans avoir a decoder le JWT. La verite d'autorisation
+    #: reste le jeton (verifie a l'API) ; ceci n'est qu'une commodite d'affichage.
+    role: str
 
 
 class DemandeChangementMdp(BaseModel):
@@ -85,25 +116,63 @@ class DemandeChangementMdp(BaseModel):
     nouveau: str = Field(min_length=LONGUEUR_MDP_MIN)
 
 
+def _exiger_mot_de_passe_conforme(nouveau: str, *, email: str) -> None:
+    """Applique l'invariant I-AUTH-9. Leve 422 avec la LISTE des exigences non
+    tenues — le front les affiche telles quelles (« choisissez-en un autre »).
+
+    N.B. : on NE verifie PAS l'unicite inter-comptes du mot de passe — voir
+    l'en-tete de `politique_mot_de_passe` (oracle interdit, NIST 800-63B)."""
+    raisons = politique.evaluer(nouveau, email=email)
+    if raisons:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "mot de passe refuse — choisissez-en un autre",
+                "exigences": raisons,
+            },
+        )
+
+
 @router.post("/login", response_model=ReponseSession)
-async def login(demande: DemandeConnexion) -> ReponseSession:
-    """`US-A1` — la connexion.
+async def login(demande: DemandeConnexion, request: Request) -> ReponseSession:
+    """`US-A1` — la connexion, protegee du brute-force (I-AUTH-11).
 
     Le refus est VOLONTAIREMENT muet sur sa cause : dire « email inconnu »
     confirmerait l'existence des comptes a un attaquant. 401, un seul message.
+
+    Anti-brute-force : deux clés de throttle, l'IDENTIFIANT soumis et l'IP
+    SOURCE. Si l'une est en cooldown, on refuse en 429 AVANT toute verification
+    (on ne brule pas de scrypt pour un attaquant, et on ne verrouille JAMAIS le
+    compte — cf. `auth_throttle`). Un login reussi efface les deux compteurs.
     """
+    throttle = AuthThrottleRepository()
+    identifiant = str(demande.email).strip().lower()
+    ip = _ip_client(request)
+
+    for cle in (f"id:{identifiant}", f"ip:{ip}"):
+        bloque, retry = await throttle.etat(cle)
+        _refus_si_throttle(bloque, retry)
+
     compte = await SuperAdminRepository().authentifier(
         str(demande.email), demande.mot_de_passe
     )
     if compte is None:
+        # Echec compte SUR LES DEUX cles : l'identifiant vise ET la source.
+        await throttle.enregistrer_echec(f"id:{identifiant}")
+        await throttle.enregistrer_echec(f"ip:{ip}")
         raise HTTPException(status_code=401, detail="identifiants invalides")
 
+    # Reussite : auto-cicatrisation des deux compteurs.
+    await throttle.reinitialiser(f"id:{identifiant}")
+    await throttle.reinitialiser(f"ip:{ip}")
+
     portee = "password_only" if compte.must_change_password else "admin"
-    jeton, duree = emettre_jeton_admin(compte.email, portee=portee)
+    jeton, duree = emettre_jeton_admin(compte.email, portee=portee, role=compte.role)
     return ReponseSession(
         access_token=jeton,
         expires_in=duree,
         must_change_password=compte.must_change_password,
+        role=compte.role,
     )
 
 
@@ -127,11 +196,44 @@ async def changer_mot_de_passe(
             status_code=422,
             detail="le nouveau mot de passe doit differer de l'ancien",
         )
+    _exiger_mot_de_passe_conforme(demande.nouveau, email=session.email)
 
     await depot.changer_mot_de_passe(session.email, demande.nouveau)
     # La session repart PLEINE : l'obligation est levee, le jeton l'atteste.
-    jeton, duree = emettre_jeton_admin(session.email, portee="admin")
-    return ReponseSession(access_token=jeton, expires_in=duree, must_change_password=False)
+    # Le role du compte est REPORTE — sans lui, le jeton retomberait sur le
+    # defaut super_admin (escalade). Le mot de passe change, pas le role.
+    jeton, duree = emettre_jeton_admin(session.email, portee="admin", role=compte.role)
+    return ReponseSession(
+        access_token=jeton, expires_in=duree, must_change_password=False, role=compte.role
+    )
+
+
+class DemandeVerifMotDePasse(BaseModel):
+    mot_de_passe: str
+    #: Optionnel — permet de refuser un mot de passe qui contient l'email.
+    email: EmailStr | None = None
+
+
+@router.post("/politique-mot-de-passe")
+async def verifier_politique_mot_de_passe(
+    demande: DemandeVerifMotDePasse,
+) -> dict[str, object]:
+    """Valide un mot de passe candidat en TEMPS REEL (UX interactive I-AUTH-9).
+
+    Ouvert et sans etat : c'est une fonction PURE du candidat (aucun compte
+    n'est consulte), donc elle ne peut rien reveler sur les utilisateurs — a
+    l'oppose exact d'un oracle « ce mot de passe est deja pris ». Le front s'en
+    sert pour afficher « choisissez-en un autre » avant meme la soumission ;
+    l'enforcement reste 422 cote serveur, seul juge.
+    """
+    raisons = politique.evaluer(
+        demande.mot_de_passe, email=str(demande.email) if demande.email else None
+    )
+    return {
+        "acceptable": not raisons,
+        "exigences": raisons,
+        "longueur_min": LONGUEUR_MDP_MIN,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -150,13 +252,20 @@ class DemandeReinitialisation(BaseModel):
 
 
 @router.post("/mot-de-passe-oublie", status_code=202)
-async def mot_de_passe_oublie(demande: DemandeMotDePasseOublie) -> dict[str, object]:
+async def mot_de_passe_oublie(
+    demande: DemandeMotDePasseOublie, request: Request
+) -> dict[str, object]:
     """`US-A4` v2 — envoie un code de reinitialisation par email.
 
     202 TOUJOURS quand le service est provisionne, que le compte existe ou
     non : confirmer l'existence d'un email offrirait l'enumeration des
     comptes (meme doctrine que le 401 muet du login). L'echec d'ENVOI est
     journalise en warning mais ne change pas la reponse, pour la meme raison.
+
+    Anti-email-bombing (I-AUTH-11) : on borne les demandes PAR SOURCE. Au-dela
+    du seuil, on ne DECLENCHE PLUS d'envoi — mais on garde le 202 muet (ne rien
+    reveler). Chaque appel incremente le compteur de la source ; l'inactivite
+    le purge.
     """
     if not mailjet.provisionne():
         raise HTTPException(
@@ -168,10 +277,15 @@ async def mot_de_passe_oublie(demande: DemandeMotDePasseOublie) -> dict[str, obj
             ),
         )
 
+    throttle = AuthThrottleRepository()
+    cle_source = f"reset-req:ip:{_ip_client(request)}"
+    source_saturee, _ = await throttle.etat(cle_source)
+    await throttle.enregistrer_echec(cle_source)
+
     depot = SuperAdminRepository()
     email = str(demande.email).strip().lower()
     compte = await depot.par_email(email)
-    if compte is not None:
+    if compte is not None and not source_saturee:
         code = f"{secrets.randbelow(10**8):08d}"
         await depot.poser_code_reinitialisation(
             email, _hacher_code(code), time.time() + CODE_RESET_VALIDITE_SECONDES
@@ -194,34 +308,55 @@ async def mot_de_passe_oublie(demande: DemandeMotDePasseOublie) -> dict[str, obj
 
 
 @router.post("/reinitialiser", response_model=ReponseSession)
-async def reinitialiser_par_code(demande: DemandeReinitialisation) -> ReponseSession:
+async def reinitialiser_par_code(
+    demande: DemandeReinitialisation, request: Request
+) -> ReponseSession:
     """`US-A4` v2 — consomme le code et pose le nouveau mot de passe.
 
     Le refus est GENERIQUE (401, un seul message) : distinguer « email
     inconnu » / « code faux » / « code expire » renseignerait un attaquant.
     Le mot de passe qui en sort est DURABLE (choisi par son proprietaire) —
     la session repart pleine, comme apres `US-A2`.
+
+    Double borne anti-devinette du code : le code lui-meme meurt a 5 essais
+    (per-code), ET la SOURCE est throttlee (I-AUTH-11) pour empecher d'enchainer
+    les codes depuis une meme origine. 429 generique si la source est saturee.
     """
+    throttle = AuthThrottleRepository()
+    cle_source = f"reset-code:ip:{_ip_client(request)}"
+    bloque, retry = await throttle.etat(cle_source)
+    _refus_si_throttle(bloque, retry)
+
     refus = HTTPException(status_code=401, detail="code invalide ou expiré")
     depot = SuperAdminRepository()
     email = str(demande.email).strip().lower()
     compte = await depot.par_email(email)
     if compte is None or compte.code_reset_hash is None or compte.code_reset_expire is None:
+        await throttle.enregistrer_echec(cle_source)
         raise refus
     if time.time() > compte.code_reset_expire:
+        await throttle.enregistrer_echec(cle_source)
         raise refus
     if compte.code_reset_essais >= CODE_RESET_ESSAIS_MAX:
+        await throttle.enregistrer_echec(cle_source)
         raise refus
     if not hmac.compare_digest(compte.code_reset_hash, _hacher_code(demande.code)):
         # L'essai rate CONSOMME — 5 echecs tuent le code, meme encore valide.
         await depot.incrementer_essais_reset(email)
+        await throttle.enregistrer_echec(cle_source)
         raise refus
     if demande.nouveau == demande.code:
         raise HTTPException(
             status_code=422, detail="le mot de passe ne peut pas être le code lui-même"
         )
+    _exiger_mot_de_passe_conforme(demande.nouveau, email=email)
 
     await depot.changer_mot_de_passe(email, demande.nouveau)
     await depot.effacer_code_reinitialisation(email)
-    jeton, duree = emettre_jeton_admin(email, portee="admin")
-    return ReponseSession(access_token=jeton, expires_in=duree, must_change_password=False)
+    await throttle.reinitialiser(cle_source)  # reussite -> auto-cicatrisation
+    # Role REPORTE (cf. US-A2) : ne jamais laisser le jeton retomber sur le
+    # defaut super_admin apres un reset.
+    jeton, duree = emettre_jeton_admin(email, portee="admin", role=compte.role)
+    return ReponseSession(
+        access_token=jeton, expires_in=duree, must_change_password=False, role=compte.role
+    )

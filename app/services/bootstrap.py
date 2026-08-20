@@ -45,7 +45,11 @@ async def amorcer_super_admin() -> str:
         logger.info("Bootstrap Super-Admin : compte deja present, aucune action.")
         return "deja_present"
 
-    compte = await depot.creer(settings.super_admin_email, settings.super_admin_password_initial)
+    compte = await depot.creer(
+        settings.super_admin_email,
+        settings.super_admin_password_initial,
+        role="super_admin",
+    )
     logger.info(
         "Bootstrap Super-Admin : compte cree (%s), changement de mot de passe requis.",
         compte.email,

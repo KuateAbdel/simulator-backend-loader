@@ -28,6 +28,9 @@ _porteur = HTTPBearer(auto_error=False)
 class SessionAdmin:
     email: str
     portee: str
+    #: Role RBAC du Loader ('viewer' < 'admin' < 'super_admin'). Defaut
+    #: 'super_admin' pour un jeton anterieur au RBAC (retro-compatibilite).
+    role: str = "super_admin"
 
 
 async def session_admin(
@@ -43,7 +46,11 @@ async def session_admin(
     claims = verifier_jeton_admin(creds.credentials)
     if claims is None:
         raise HTTPException(status_code=401, detail="session invalide ou expiree")
-    return SessionAdmin(email=claims["email"], portee=claims["portee"])
+    return SessionAdmin(
+        email=claims["email"],
+        portee=claims["portee"],
+        role=claims.get("role", "super_admin"),
+    )
 
 
 async def refuser_si_run_en_cours() -> None:
@@ -78,5 +85,36 @@ async def admin_complet(
                 "changement de mot de passe requis avant tout acces — "
                 "POST /admin/auth/password"
             ),
+        )
+    return session
+
+
+#: Hierarchie des roles RBAC du Loader (matrice FZ-RBAC-LOADER). Un rang plus
+#: eleve possede toutes les capacites des rangs inferieurs.
+RANG_ROLE = {"viewer": 0, "admin": 1, "super_admin": 2}
+
+
+async def exige_admin(
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> SessionAdmin:
+    """Garde d'OPERATION : role >= admin. Un `viewer` (lecture seule) est
+    refuse en 403 au niveau de l'API — l'UI ne fait que le refleter."""
+    if RANG_ROLE.get(session.role, 0) < RANG_ROLE["admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="operation reservee aux roles Admin et Super-Admin (lecture seule)",
+        )
+    return session
+
+
+async def exige_super_admin(
+    session: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> SessionAdmin:
+    """Garde des ACTIONS SENSIBLES : purge, suppressions destructives, gestion
+    des comptes et des roles. Reservee au `super_admin`."""
+    if session.role != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="action reservee au Super-Admin",
         )
     return session

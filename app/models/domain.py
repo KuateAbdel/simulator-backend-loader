@@ -267,6 +267,11 @@ class SuperAdminAccount(LoaderDocument):
     #: de passe. Un compte desactive ne se connecte plus (401 generique) mais
     #: n'est jamais supprime : l'historique du journal reste attribuable.
     actif: bool = True
+    #: RBAC du Loader (matrice FZ-RBAC-LOADER) : 'viewer' (lecture seule) <
+    #: 'admin' (operations) < 'super_admin' (tout + gestion comptes/roles).
+    #: Defaut 'super_admin' : les comptes existants (documents sans ce champ)
+    #: et le bootstrap restent Super-Admin — aucune coupure de compatibilite.
+    role: str = "super_admin"
     #: Qui a cree ce compte (email du createur) — None pour le bootstrap.
     cree_par: str | None = None
     cree_le: str | None = None
