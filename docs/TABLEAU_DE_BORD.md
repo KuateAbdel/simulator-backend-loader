@@ -319,6 +319,30 @@ ecrans de creation, fiche RELUE rendue pour Company ; preuves : tsc strict,
 build vert, banc navigateur 7/7 sur API simulee au contrat (verdict
 infidele rendu, capture relue), CHANGELOG 1.1.0.
 
+**20/08 — NOTIFICATIONS + TRAÇABILITÉ DES CONNEXIONS (demande boss), LIVRÉ
+BOUT EN BOUT** (backend `2dbe6d7`, frontend `729dd8a`, CI/CD verts × 2).
+Doctrine « comme Microsoft » : événement → destinataires PAR RÔLE
+(Super-Admins actifs, jamais l'acteur) → canaux (in-app toujours, email si
+sensible) ; informer ne casse JAMAIS l'action. Backend : modèle+collection
+`notifications` (index destinataire), repository borné au destinataire,
+service (compte_cree / role_change avec la personne visée dédoublonnée /
+compte_desactive in-app+EMAIL / compte_reactive), routes GET/PUT
+/admin/notifications (chacun ne voit QUE les siennes, 404 sinon, boîte
+ouverte au Viewer — recevoir n'est pas un privilège) ; traçabilité :
+`derniere_connexion` posée au login + remontée dans la fiche, chaque
+connexion réussie inscrit Session/LOGIN au Journal sous RUN_ADMIN (tracer
+ne bloque jamais le login, le 401 ne trace rien). Transport EMAIL : nouvelles
+clés Mailjet du boss (Confluence 67665944, lecture seule), relais SMTP port
+2525 confirmé (587 repli), envoi réel REÇU (confirmé Yann). 1038 tests
+(+14). Frontend : cloche 🔔 header (badge non-lues sondé 30 s, panneau,
+marquer lu/tout lu, rendu localisé FR/EN depuis type+donnees — le backend
+n'envoie jamais une phrase) + colonne « Dernière connexion » (ou « jamais
+connecté ») ; banc navigateur 10/10, captures relues. **RESTE OPS (geste
+Yann/Yaniv)** : remplacer sur le serveur les 3 MAILJET_* du `.env`
+(/home/apps/loader) par le NOUVEAU jeu (celui du .env local) et recréer le
+conteneur — la prod répond 202 mais avec les clés de l'ancien compte bloqué
+mj-0001, les emails ne partent donc pas réellement.
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |
