@@ -6,6 +6,19 @@ Versionnage : [SemVer](https://semver.org/lang/fr/), règle du
 définition de terminé est atteinte, jamais sur une intention.
 `1.0.0` = première livraison couvrant la recette `CR-01` → `CR-12`.
 
+## [0.7.0] — 2026-08-20
+
+**Plus jamais de préfixe `DEMO_`** (décision direction, veille de
+démonstration) — noms 100 % métier partout : raisons sociales composées
+(forme + patronyme + activité), « Kiosque <quartier> », noms officiels
+UC-08 tels quels, short_name produits = le code déclaré, staff
+`CM_TellerAgent_001`. La réversibilité (`CR-07`/`EF-63`) est **par
+REGISTRE** (journal write-ahead + ids serveur) — CR-07 redéfini : un nœud
+distant sans id serveur = résidu = VIOLÉ. Le stock d'avant le 20/08 reste
+reconnu en lecture (inventaire + repli legacy du GET-avant-POST produits :
+la reprise CR-03 ne fabrique jamais de doublon). 1 038 tests, DRY_RUN 2000
+propre de bout en bout.
+
 ## [0.6.0] — 2026-08-20
 
 **L'API d'administration devient multi-comptes, gouvernée et traçante** —
