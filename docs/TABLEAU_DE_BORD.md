@@ -370,6 +370,22 @@ bannière de panne en métier. Banc 16/16. (4) **Contrat frontend↔backend
 VÉRIFIÉ : 66/66** chemins d'api.ts présents dans l'openapi.json DÉPLOYÉ
 (+ 4 littéraux inventaire). CI/CD vertes, EN LIGNE, bundle prouvé.
 
+**20/08 (nuit, VEILLE DE DÉMO) — PLUS JAMAIS DE `DEMO_` (décision direction,
+catégorique) — backend v0.7.0 (`b9a981d`), frontend v1.2.1, DÉPLOYÉS.**
+Doctrine A-13 étendue à TOUT : écriture 100 % métier (raisons sociales
+composées forme+patronyme+activité, « Kiosque <quartier> », noms UC-08 tels
+quels, short_name = code déclaré, staff `CM_TellerAgent_001`, nœud
+« Client <msisdn> ») ; réversibilité PAR REGISTRE — **CR-07 redéfini** (nœud
+distant sans id serveur = VIOLÉ) ; lecture rétro-compatible (inventaire
+reconnaît le stock marqué d'avant, repli legacy du GET-avant-POST produits —
+la reprise CR-03 ne double jamais un produit à nous). Preuves : 1 038 tests,
+DRY_RUN 2000 propre, CI/CD verts × 2. **Sénégal vérifié suite signalement
+Oti : SN ACTIF et complet sur config-service (14 villes, devise, telcos),
+500 clients SN composés au DRY — RAS, demander à Oti le point précis.**
+Alimentation des comptes CONFIRMÉE dans le code : solde initial client =
+POST /accounts/credit (DEPOSIT/MOMO/SELF, montant LogNormal par profession
+EF-73/EF-68) puis solde RELU ; dotation Lender = INVESTMENT/BANK/LENDER.
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |
