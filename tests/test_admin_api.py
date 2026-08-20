@@ -4038,3 +4038,26 @@ class TestMatriceRBAC:
         # Comptes et purge : reserves au Super-Admin -> 403 pour un Admin.
         assert (await client.get("/admin/comptes", headers=a)).status_code == 403
         assert (await client.post("/admin/purge/preparer", json={}, headers=a)).status_code == 403
+
+
+class TestJournalAdmin:
+    """Audit — le journal « qui a fait quoi, quand », réservé au Super-Admin."""
+
+    async def test_le_journal_montre_qui_a_fait_quoi(self, client: httpx.AsyncClient) -> None:
+        entetes = await _session_complete(client)
+        await client.post(
+            "/admin/comptes",
+            json={"email": "trace-audit@finzuu.com", "role": "viewer"},
+            headers=entetes,
+        )
+        reponse = await client.get("/admin/journal", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        entrees = reponse.json()["entrees"]
+        assert any(
+            e["acteur"] == EMAIL and "trace-audit@finzuu.com" in str(e["details"])
+            for e in entrees
+        ), entrees
+
+    async def test_journal_reserve_au_super_admin(self, client: httpx.AsyncClient) -> None:
+        a = await _session_avec_role(client, "admin-journal@finzuu.com", "admin")
+        assert (await client.get("/admin/journal", headers=a)).status_code == 403

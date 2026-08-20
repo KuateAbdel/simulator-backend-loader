@@ -227,6 +227,20 @@ class AuditTrailRepository(RepositoryBase):
         curseur = self.collection.find({"run_id": str(run_id)}).sort("timestamp", 1)
         return [AuditTrailEntry.model_validate(d) async for d in curseur]
 
+    async def lister_admin(self, limite: int = 200) -> list[AuditTrailEntry]:
+        """Le journal « qui a fait quoi, quand » des actions d'ADMINISTRATION :
+        les dernieres INTENTIONS sous le run sentinelle RUN_ADMIN (UUID int=0),
+        les plus recentes d'abord. Borne a `limite` — la pagination fine est
+        cote UI (comme les autres listes du Loader)."""
+        curseur = (
+            self.collection.find(
+                {"run_id": str(UUID(int=0)), "action": ACTION_INTENTION}
+            )
+            .sort("timestamp", -1)
+            .limit(limite)
+        )
+        return [AuditTrailEntry.model_validate(d) async for d in curseur]
+
     async def compter_par_type(self, run_id: UUID) -> dict[str, int]:
         """Statistiques de fin d'execution (EF-61)."""
         pipeline: list[dict[str, Any]] = [

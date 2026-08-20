@@ -203,7 +203,12 @@ async def changer_etat_compte(
         entity_id=uuid5(NAMESPACE_OID, f"loader-compte:{cible}"),
         operation="UPDATE",
         cible="loader super_admin_accounts",
-        payload={"email": cible, "actif": demande.actif, "motif": demande.motif},
+        payload={
+            "email": cible,
+            "actif": demande.actif,
+            "motif": demande.motif,
+            "par": session.email,
+        },
     ) as suivi:
         await depot.changer_etat(cible, demande.actif)
         suivi.reussi({"email": cible, "actif": demande.actif})
