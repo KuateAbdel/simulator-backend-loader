@@ -386,6 +386,18 @@ Alimentation des comptes CONFIRMÉE dans le code : solde initial client =
 POST /accounts/credit (DEPOSIT/MOMO/SELF, montant LogNormal par profession
 EF-73/EF-68) puis solde RELU ; dotation Lender = INVESTMENT/BANK/LENDER.
 
+**21/08 (matin, JOUR DE DÉMO) — PRÉ-VOL à la confirmation (exigence Yaniv),
+backend `b707fce` DÉPLOYÉ.** POST /confirmer franchit 4 portes : préparation
+connue (404) · terminée et lue (409) · périmètre inchangé (409) · **PRÉ-VOL :
+les 10 sondes répondent à l'instant T, sinon 503 qui NOMME les pannes et
+« RIEN n'est parti »** (réutilise LA sonde E1 — une seule vérité). Frontière
+des mécanismes : pré-vol = mort AVANT départ ; retry D-USR-2 = hoquet EN VOL
+(3 tentatives, backoff, transitoire seul — l'idempotence serveur mesurée
+rend le rejeu sûr) ; write-ahead + réconciliation = le doute ; reprise =
+l'interruption franche. Écran : 409 re-préparer → retour structurel à
+l'étape ① ; 503 pré-vol → bannière avec le message nommé, l'étape ② reste
+ouverte (re-confirmer sans re-préparer). 1 039 tests (+1, sondes doublées).
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |
