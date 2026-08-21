@@ -34,6 +34,7 @@ import logging
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 
@@ -42,6 +43,7 @@ from app.models.domain import LoaderRun
 from app.models.enums import RunMode, RunStatus
 from app.repositories.configuration import ConfigurationRepository
 from app.repositories.loader_runs import LoaderRunRepository
+from app.routes.admin_dashboard import SERVICES_SONDES, _sonder
 from app.routes.dependances import (
     SessionAdmin,
     admin_complet,
@@ -153,11 +155,17 @@ async def confirmer(
 ) -> dict[str, Any]:
     """`US-C2` — le REAL, sur le perimetre FIGE de la preparation.
 
-    Trois refus, chacun structurel :
+    Quatre refus, chacun structurel :
       404  preparation inconnue ;
       409  la preparation n'est pas terminee, ou n'est pas un DRY_RUN ;
       409  la configuration a CHANGE depuis la preparation — « le rapport lu
-           ne decrit plus ce qui va s'executer : re-preparer » (D-01).
+           ne decrit plus ce qui va s'executer : re-preparer » (D-01) ;
+      503  PRE-VOL refuse (21/08, exigence Yaniv) : un ou plusieurs des 10
+           services est injoignable A L'INSTANT de la confirmation — rien
+           n'est parti, les services en panne sont NOMMES. On ne lance pas
+           des ecritures quasi permanentes vers des services dont on n'a pas
+           la preuve de vie ; le retry D-USR-2 couvre le transitoire EN VOL,
+           pas un service deja mort AVANT le depart.
     """
     depot = LoaderRunRepository()
     preparation = await depot.obtenir(run_id)
@@ -190,6 +198,23 @@ async def confirmer(
         )
 
     await refuser_si_run_en_cours()
+
+    # --- PRE-VOL (21/08) : la preuve de vie des 10 sondes AVANT la premiere
+    # ecriture. La meme sonde que le tableau de bord E1 — une seule verite.
+    async with httpx.AsyncClient(timeout=3.0) as sonde:
+        etats = await asyncio.gather(
+            *(_sonder(sonde, nom, base) for nom, base in SERVICES_SONDES)
+        )
+    en_panne = [str(e["nom"]) for e in etats if e["etat"] != "up"]
+    if en_panne:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "pré-vol refusé — service(s) injoignable(s) : "
+                f"{', '.join(en_panne)}. RIEN n'est parti. Relancer la "
+                "confirmation quand le tableau de bord est entièrement vert."
+            ),
+        )
 
     # Le REAL s'execute sur l'empreinte FIGEE de la preparation — pas sur la
     # configuration courante, meme si les deux sont identiques a cet instant :

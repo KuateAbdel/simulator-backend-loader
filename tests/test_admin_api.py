@@ -781,6 +781,23 @@ class TestLotBRuns:
     """
 
     @staticmethod
+    def _doubler_sondes(
+        monkeypatch: pytest.MonkeyPatch, *, en_panne: tuple[str, ...] = ()
+    ) -> None:
+        """Double le PRE-VOL de /confirmer — hermetique, aucune sonde reseau.
+
+        Le pre-vol (21/08) reutilise la sonde E1 du dashboard ; ici on la
+        remplace pour jouer les deux mondes : tout vert, ou une panne NOMMEE."""
+
+        async def fausse_sonde(client: Any, nom: str, base: str) -> dict[str, Any]:
+            if nom in en_panne:
+                return {"nom": nom, "etat": "down", "http": None,
+                        "latence_ms": 1, "erreur": "ConnectTimeout"}
+            return {"nom": nom, "etat": "up", "http": 200, "latence_ms": 1}
+
+        monkeypatch.setattr("app.routes.admin_runs._sonder", fausse_sonde)
+
+    @staticmethod
     def _doubler_moteur(monkeypatch: pytest.MonkeyPatch, *, statut_final: str = "PARTIAL"):
         """Remplace pilotage.executer par un double qui joue le cycle de vie."""
         from datetime import date as _date
@@ -858,6 +875,7 @@ class TestLotBRuns:
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         appels = self._doubler_moteur(monkeypatch)
+        self._doubler_sondes(monkeypatch)  # pre-vol tout vert
         entetes = await _session_complete(client)
         await database.get_database().drop_collection("loader_runs")
         await database.get_database().drop_collection("loader_configuration")
@@ -876,6 +894,30 @@ class TestLotBRuns:
         assert appels[1]["mode"].value == "REAL"
         assert appels[1]["configuration"] is not None, (
             "le REAL recoit l'empreinte FIGEE de la preparation, jamais None"
+        )
+
+    async def test_US_C2_pre_vol_un_service_en_panne_refuse_503_et_rien_ne_part(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Exigence Yaniv (21/08) : AVANT de pousser quoi que ce soit, la
+        preuve de vie des 10 sondes. Un service muet -> 503 qui le NOMME,
+        et le moteur n'est PAS lance — aucune ecriture n'est partie."""
+        appels = self._doubler_moteur(monkeypatch)
+        self._doubler_sondes(monkeypatch, en_panne=("collect-service",))
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        await database.get_database().drop_collection("loader_configuration")
+        preparation_id = await self._preparer_et_attendre(client, entetes)
+
+        reponse = await client.post(
+            f"/admin/runs/{preparation_id}/confirmer", headers=entetes
+        )
+        assert reponse.status_code == 503, reponse.text
+        detail = reponse.json()["detail"]
+        assert "collect-service" in detail, "la panne est NOMMEE, jamais generique"
+        assert "RIEN n'est parti" in detail
+        assert len(appels) == 1, (
+            "seule la preparation a tourne — le pre-vol refuse AVANT le moteur"
         )
 
     async def test_US_C2_une_configuration_changee_est_un_409_re_preparer(
