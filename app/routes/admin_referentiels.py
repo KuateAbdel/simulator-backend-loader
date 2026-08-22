@@ -127,7 +127,13 @@ async def geographie(
     surcouche, meta = await SurcoucheRepository().charger()
     referentiel = surcouche.appliquer(_geo())
     arbre: list[dict[str, Any]] = []
-    for pays in sorted({r.country_iso2 for r in referentiel.regions.values()}):
+    # BUG-C1-03 (22/08) : deduire les pays des REGIONS rendait invisible tout
+    # pays dont la geographie n'est pas encore saisie — l'ecran affichait 24
+    # pays quand le referentiel en portait 48. Un pays sans region s'affiche
+    # desormais avec `regions: []` : le Super-Admin VOIT le trou au lieu de
+    # l'ignorer.
+    codes = set(referentiel.pays_index) | {r.country_iso2 for r in referentiel.regions.values()}
+    for pays in sorted(codes):
         regions = []
         for region in sorted(referentiel.regions_du_pays(pays), key=lambda r: r.name):
             villes = []
@@ -713,6 +719,198 @@ async def produits_catalogue(
         "lending": lending,
         "collect": collect,
         "comptes": {"lending": len(lending), "collect": len(collect)},
+    }
+
+
+# ---------------------------------------------------------------------------
+# C1 (22/08) — le pays DANS LE LOADER : lister, creer, retirer
+# ---------------------------------------------------------------------------
+# Les quatre bugs de conception releves par l'audit prod du 22/08 :
+#   BUG-C1-01  POST /pays poussait vers config-service sans que le Loader
+#              connaisse le pays — l'admin croyait « creer », le Loader ignorait.
+#   BUG-C1-02  `ajouter_pays` n'etait joignable que par script — aucun ecran.
+#   BUG-C1-03  aucun GET des fiches : 22 pays invisibles, autocompletion
+#              impossible (corrige aussi dans /geographie).
+#   BUG-C1-04  la reversibilite CFG-03 n'avait aucun DELETE.
+# Tout est ADDITIF : POST /pays (US-B6, le push volontaire) est inchange.
+
+
+class FichePaysDemande(BaseModel):
+    """`C1` — la fiche COMPLETE d'un pays du Loader. `extra="forbid"`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    iso2: str = Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")
+    nom_fr: str = Field(min_length=2, max_length=60)
+    nom_en: str = Field(min_length=2, max_length=60)
+    capitale: str = Field(min_length=1, max_length=80)
+    dial_code: str = Field(min_length=1, max_length=6)
+    devise_iso: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
+    tva_percent: float = Field(ge=0, le=40)
+    timezone: str = Field(default="", max_length=40)
+    region_africa: str = Field(default="", max_length=40)
+    regulateur_telco: str = Field(default="", max_length=40)
+    regulateur_finance: str = Field(default="", max_length=40)
+    devise_nom: str = Field(default="", max_length=60)
+    devise_decimales: int = Field(default=0, ge=0, le=4)
+    banque_centrale: str = Field(default="", max_length=40)
+
+
+@router.get("/pays")
+async def lister_fiches_pays(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`C1` — TOUTES les fiches pays du Loader, avec leur COMPLETUDE.
+
+    C'est la matiere de l'ecran « Pays » : choisir un pays auto-complete la
+    fiche entiere (devise, TVA, fuseau, regulateurs), et les compteurs disent
+    ce qui manque AVANT de generer. `sur_config_service` est verifie en direct
+    quand config-service repond ; sinon la fiche le dit (`null`), jamais un
+    faux « non ».
+    """
+    surcouche, meta = await SurcoucheRepository().charger()
+    referentiel = surcouche.appliquer(_geo())
+
+    presents: set[str] | None = None
+    lecture = _config_lecture()
+    try:
+        presents = {
+            str(p.get("iso_name") or "").upper() for p in await lecture.lister_pays()
+        }
+    except Exception:
+        presents = None
+    finally:
+        await lecture.fermer()
+
+    quartiers_par_ville: dict[str, int] = {}
+    for quartier in referentiel.quartiers.values():
+        quartiers_par_ville[quartier.city_id] = quartiers_par_ville.get(quartier.city_id, 0) + 1
+
+    fiches = []
+    for code in sorted(referentiel.pays_index):
+        fiche = referentiel.pays_index[code]
+        villes = [v for v in referentiel.villes.values() if v.country_iso2 == code]
+        fiches.append(
+            {
+                "iso2": code,
+                "nom_fr": fiche.nom_fr,
+                "nom_en": fiche.nom_en,
+                "capitale": fiche.capitale,
+                "dial_code": fiche.dial_code,
+                "devise_iso": fiche.devise_iso,
+                "tva_percent": fiche.tva_percent,
+                "timezone": fiche.timezone,
+                "region_africa": fiche.region_africa,
+                "regulateur_telco": fiche.regulateur_telco,
+                "regulateur_finance": fiche.regulateur_finance,
+                "origine": "classeur" if _geo().pays(code) else "surcouche",
+                "completude": {
+                    "regions": len(referentiel.regions_du_pays(code)),
+                    "villes": len(villes),
+                    "quartiers": sum(
+                        quartiers_par_ville.get(v.city_id, 0) for v in villes
+                    ),
+                    "telcos": len(referentiel.telcos_du_pays(code)),
+                },
+                "sur_config_service": (code in presents) if presents is not None else None,
+            }
+        )
+    return {
+        "pays": fiches,
+        "surcouche": {"resume": surcouche.resume(), "version": meta["version"]},
+    }
+
+
+@router.post("/pays/fiche", status_code=201)
+async def creer_fiche_pays(
+    demande: FichePaysDemande,
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
+) -> dict[str, Any]:
+    """`C1` — creer un pays DANS LE LOADER (surcouche), fiche complete.
+
+    Le geste principal que l'ecran n'avait pas (BUG-C1-02). Les invariants de
+    `ajouter_pays` s'appliquent : ISO2 unique, indicatif numerique, TVA
+    bornee, devise JAMAIS orpheline (fiche exigee si inconnue). Le pousser
+    vers config-service reste le geste volontaire d'`US-B6` (POST /pays) —
+    rien ne part d'ici.
+    """
+    await refuser_si_run_en_cours()
+
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    try:
+        fiche = surcouche.ajouter_pays(
+            _geo(),
+            iso2=demande.iso2,
+            nom_fr=demande.nom_fr,
+            nom_en=demande.nom_en,
+            capitale=demande.capitale,
+            dial_code=demande.dial_code,
+            devise_iso=demande.devise_iso,
+            tva_percent=demande.tva_percent,
+            timezone=demande.timezone,
+            region_africa=demande.region_africa,
+            regulateur_telco=demande.regulateur_telco,
+            regulateur_finance=demande.regulateur_finance,
+            devise_nom=demande.devise_nom,
+            devise_decimales=demande.devise_decimales,
+            banque_centrale=demande.banque_centrale,
+        )
+    except AjoutRefuse as refus:
+        raise HTTPException(status_code=422, detail=str(refus)) from refus
+
+    meta = await depot.enregistrer(surcouche, par=session.email)
+    return {
+        "pays": {
+            "iso2": fiche.iso2,
+            "nom_fr": fiche.nom_fr,
+            "devise_iso": fiche.devise_iso,
+            "tva_percent": fiche.tva_percent,
+        },
+        "surcouche": {"resume": surcouche.resume(), "version": meta["version"]},
+        "prochaines_etapes": [
+            "regions : POST /admin/referentiels/regions (US-B4)",
+            "villes : POST /admin/referentiels/villes",
+            "quartiers : POST /admin/referentiels/quartiers",
+            "telcos : POST /admin/referentiels/telcos (US-B7)",
+            "pousser vers config-service : POST /admin/referentiels/pays (US-B6)",
+        ],
+    }
+
+
+@router.delete("/surcouche/{identifiant}")
+async def retirer_ajout_surcouche(
+    identifiant: str,
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
+) -> dict[str, Any]:
+    """`C1` / `CFG-03` — la reversibilite promise, enfin exposee (BUG-C1-04).
+
+    Retire UN ajout de la surcouche : pays (code ISO2), region, ville,
+    quartier (identifiants `SC-...`). Le classeur est intouchable — retirer
+    une ligne du classeur repond 404, pas un retrait silencieux. Les gardes
+    anti-orphelin du service s'appliquent (un pays qui porte encore des
+    ajouts, une region qui porte des villes -> 422 explique).
+    """
+    await refuser_si_run_en_cours()
+
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    try:
+        retire = surcouche.retirer(identifiant.strip())
+    except AjoutRefuse as refus:
+        raise HTTPException(status_code=422, detail=str(refus)) from refus
+    if not retire:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"{identifiant!r} n'est pas un ajout de la surcouche — le "
+                "classeur est immuable, rien a retirer."
+            ),
+        )
+    meta = await depot.enregistrer(surcouche, par=session.email)
+    return {
+        "retire": identifiant,
+        "surcouche": {"resume": surcouche.resume(), "version": meta["version"]},
     }
 
 

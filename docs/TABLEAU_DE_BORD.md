@@ -485,6 +485,26 @@ planification au-delà de `PAYS_CIBLES` — alors seulement un pays importé
 devient GÉNÉRABLE. Et rejouer l'import SUR LE SERVEUR après déploiement
 (la surcouche v10 est locale).
 
+## D-septies. AUDIT PROD 22/08 + les 4 bugs de conception C1 corrigés
+
+**Batterie QA sur la PROD** (`simul.api.fintech4esg.com`, Super-Admin réel) :
+login 200 · E1 10/10 sondes UP (~350 ms) · 6 tests négatifs PASS (gardes
+422/409 exactes, refus GN cite C1 — preuve que le déploiement est le bon) ·
+3 écritures VRAIES PASS (ville Mbalmayo → surcouche serveur PUIS config-service
+« envoyé » ; quartier Ndokoti/Douala ; telco Nexttel CM 5 %) · doublon refusé ·
+journal admin avec **issue + acteur** vérifié en prod (durcissement du 21/08
+opérant). **Import serveur REJOUÉ** (à blanc puis réel, via SSH+docker) :
+surcouche prod v6 = 44 pays · 259 régions · 462 villes · 129 quartiers ·
+34 devises — GN complet (8 régions, Conakry et ses 5 communes, GPS).
+
+**4 bugs de conception attrapés par l'audit, corrigés en ADDITIF (+5 tests,
+1059)** : BUG-C1-01/02 `POST /pays/fiche` crée le pays DANS le Loader (le
+push US-B6 reste volontaire et inchangé) · BUG-C1-03 `GET /pays` liste les
+48 fiches avec complétude + présence config-service, et `/geographie` montre
+désormais les pays SANS régions (l'écran n'affichait que 24/48) · BUG-C1-04
+`DELETE /surcouche/{id}` expose la réversibilité CFG-03 (gardes anti-orphelin,
+classeur immuable → 404).
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |

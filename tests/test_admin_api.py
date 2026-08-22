@@ -4103,3 +4103,131 @@ class TestJournalAdmin:
     async def test_journal_reserve_au_super_admin(self, client: httpx.AsyncClient) -> None:
         a = await _session_avec_role(client, "admin-journal@finzuu.com", "admin")
         assert (await client.get("/admin/journal", headers=a)).status_code == 403
+
+
+class TestC1FichesPays:
+    """`C1` (22/08) — les 4 bugs de conception releves par l'audit prod.
+
+    BUG-C1-02 : creer un pays DANS le Loader par l'API. BUG-C1-03 : le lister
+    avec sa completude, et le voir dans /geographie meme sans regions.
+    BUG-C1-04 : la reversibilite CFG-03 exposee en DELETE.
+    """
+
+    _EGYPTE: ClassVar[dict[str, Any]] = {
+        "iso2": "EG",
+        "nom_fr": "Égypte",
+        "nom_en": "Egypt",
+        "capitale": "Le Caire",
+        "dial_code": "20",
+        "devise_iso": "EGP",
+        "tva_percent": 14.0,
+        "timezone": "Africa/Cairo",
+        "region_africa": "Northern Africa",
+        "devise_nom": "Egyptian Pound",
+        "devise_decimales": 2,
+        "banque_centrale": "CBE",
+    }
+
+    async def _preparer(self, client: httpx.AsyncClient) -> dict[str, str]:
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        return entetes
+
+    async def test_get_pays_liste_les_fiches_avec_completude(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await self._preparer(client)
+        reponse = await client.get("/admin/referentiels/pays", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        fiches = reponse.json()["pays"]
+        codes = {f["iso2"] for f in fiches}
+        assert {"CM", "CI", "BF", "SN"} <= codes
+        cm = next(f for f in fiches if f["iso2"] == "CM")
+        assert cm["origine"] == "classeur"
+        assert cm["tva_percent"] == 19.25
+        assert cm["completude"]["regions"] == 10
+        assert cm["completude"]["telcos"] >= 3
+
+    async def test_creer_une_fiche_pays_puis_la_voir_partout(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await self._preparer(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays/fiche", json=self._EGYPTE, headers=entetes
+        )
+        assert reponse.status_code == 201, reponse.text
+        assert reponse.json()["pays"]["devise_iso"] == "EGP"
+
+        fiches = (
+            await client.get("/admin/referentiels/pays", headers=entetes)
+        ).json()["pays"]
+        eg = next(f for f in fiches if f["iso2"] == "EG")
+        assert eg["origine"] == "surcouche"
+        assert eg["completude"] == {
+            "regions": 0, "villes": 0, "quartiers": 0, "telcos": 0,
+        }
+
+        # BUG-C1-03 : un pays SANS region apparait dans l'arbre, regions vides
+        arbre = (
+            await client.get("/admin/referentiels/geographie", headers=entetes)
+        ).json()["pays"]
+        eg_arbre = next(p for p in arbre if p["pays"] == "EG")
+        assert eg_arbre["regions"] == []
+
+    async def test_un_doublon_de_fiche_est_refuse(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await self._preparer(client)
+        assert (
+            await client.post(
+                "/admin/referentiels/pays/fiche", json=self._EGYPTE, headers=entetes
+            )
+        ).status_code == 201
+        second = await client.post(
+            "/admin/referentiels/pays/fiche", json=self._EGYPTE, headers=entetes
+        )
+        assert second.status_code == 422
+        assert "existe deja" in second.json()["detail"]
+
+    async def test_le_retrait_est_garde_puis_reversible(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await self._preparer(client)
+        await client.post(
+            "/admin/referentiels/pays/fiche", json=self._EGYPTE, headers=entetes
+        )
+        await client.post(
+            "/admin/referentiels/regions",
+            json={"pays": "EG", "nom": "Le Caire"},
+            headers=entetes,
+        )
+        # garde anti-orphelin : le pays porte une region -> 422 explique
+        refus = await client.delete(
+            "/admin/referentiels/surcouche/EG", headers=entetes
+        )
+        assert refus.status_code == 422
+        assert "porte encore" in refus.json()["detail"]
+        # retirer l'enfant puis le pays — et sa devise forgee part avec lui
+        region_id = "SC-EG-REG-LE-CAIRE"
+        assert (
+            await client.delete(
+                f"/admin/referentiels/surcouche/{region_id}", headers=entetes
+            )
+        ).status_code == 200
+        retrait = await client.delete(
+            "/admin/referentiels/surcouche/EG", headers=entetes
+        )
+        assert retrait.status_code == 200
+        assert "aucun ajout" in retrait.json()["surcouche"]["resume"]
+
+    async def test_retirer_du_classeur_repond_404(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        entetes = await self._preparer(client)
+        reponse = await client.delete(
+            "/admin/referentiels/surcouche/CM-CT-01", headers=entetes
+        )
+        assert reponse.status_code == 404
+        assert "classeur est immuable" in reponse.json()["detail"]
