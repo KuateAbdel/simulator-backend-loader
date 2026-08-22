@@ -807,6 +807,15 @@ async def lister_fiches_pays(
         )
     return {
         "pays": fiches,
+        # Le 4e etat de la machine (conception 22/08) : present LA-BAS mais
+        # inconnu du Loader — une ANOMALIE a montrer, jamais a cacher (la
+        # recon du 14/08 avait vu un « ca » minuscule qui traine). Meme appel
+        # config-service que `presents`, zero cout supplementaire.
+        "hors_loader": (
+            sorted(code for code in presents if code and code not in referentiel.pays_index)
+            if presents is not None
+            else None
+        ),
         "surcouche": {"resume": surcouche.resume(), "version": meta["version"]},
     }
 
@@ -1010,93 +1019,11 @@ MATIERE_REQUISE_PAYS: list[dict[str, str]] = [
 # fiche, rien a ressaisir). Un seul sens par verbe.
 
 
-class CreerDevise(BaseModel):
-    """Creer une monnaie sur config-service (decision Yaniv 14/08) — meme
-    logique que le pays. `POST /currencies/create` attend
-    `{name_en, name_fr, iso_name, accepts_decimal}`. `iso_name` = code ISO 4217
-    (3 lettres : XOF, XAF, NGN...). `extra="forbid"`."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    iso_name: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
-    name_en: str = Field(min_length=2, max_length=60)
-    name_fr: str = Field(min_length=2, max_length=60)
-    accepts_decimal: bool = False
-
-
-@router.post("/devises", status_code=201)
-async def creer_devise(
-    demande: CreerDevise,
-    session: Annotated[SessionAdmin, Depends(exige_admin)],
-) -> dict[str, Any]:
-    """Creer une monnaie — meme rite et memes invariants que le pays :
-    verrou EF-55, `GET`-avant-`POST` sur `iso_name` (existe -> 409, jamais de
-    doublon), creation puis RELECTURE, journalisee sous RUN_ADMIN. Formulaire
-    pur, aucune donnee en dur."""
-    from uuid import NAMESPACE_OID, uuid5
-
-    from app.clients.base import ErreurService
-    from app.repositories.audit_trail import AuditTrailRepository
-    from app.routes.admin_entites import RUN_ADMIN
-
-    await refuser_si_run_en_cours()
-
-    payload = {
-        "name_en": demande.name_en,
-        "name_fr": demande.name_fr,
-        "iso_name": demande.iso_name,
-        "accepts_decimal": demande.accepts_decimal,
-    }
-    admin = _config_admin()
-    try:
-        audit = AuditTrailRepository()
-        entite = uuid5(NAMESPACE_OID, f"finzuu-devise:{demande.iso_name}")
-        async with audit.intention(
-            RUN_ADMIN,
-            entity_type="Currency",
-            entity_id=entite,
-            operation="CREATE",
-            cible="config-service POST /currencies/create",
-            payload={"iso_name": demande.iso_name, "par": session.email},
-        ) as suivi:
-            try:
-                fiche, cree = await admin.creer_devise_si_absent(payload)
-            except ErreurService as exc:
-                # Le REFUS COMPLET voyage — 21/08 : la creation du pays GN a
-                # echoue deux fois en pleine presentation direction, et ce 502
-                # muet a rendu la cause indiagnosticable depuis l'ecran.
-                suivi.echoue(f"HTTP {exc.status} : {exc.detail[:600]}")
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"config-service a refuse la creation : HTTP {exc.status} "
-                        f"— {exc.detail[:600]}"
-                    ),
-                ) from exc
-            identifiant = str(fiche.get("id") or fiche.get("_id") or "")
-            if not cree:
-                suivi.echoue("existe deja")
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"la devise {demande.iso_name} EXISTE deja sur config-service "
-                        f"(id {identifiant}) — reutiliser, jamais doubler."
-                    ),
-                )
-            suivi.reussi({"currency_id": identifiant, "iso_name": demande.iso_name})
-    finally:
-        await admin.fermer()
-
-    return {
-        "devise": {
-            "id": identifiant,
-            "iso_name": demande.iso_name,
-            "name_fr": demande.name_fr,
-            "accepts_decimal": demande.accepts_decimal,
-        },
-        "statut": "a_nous",
-        "note": "monnaie declaree sur config-service — utilisable pour creer un pays",
-    }
+# DECISION 22/08 (Yaniv, recensement de l'inutile) : la creation MANUELLE
+# de monnaie est SUPPRIMEE — redondante depuis la consolidation pays :
+# POST /pays/{iso}/pousser cree la devise sur config-service depuis NOTRE
+# fiche quand elle y manque (GET-avant-POST, jamais un doublon). Les 34
+# devises du Loader viennent des imports backend, comme les pays.
 
 
 # ---------------------------------------------------------------------------

@@ -2348,11 +2348,13 @@ class TestUSB6CreationDePays:
 
 
 class TestCreationDeMonnaie:
-    """Creer une monnaie sur config-service (Yaniv 14/08) — meme patron que le
-    pays : formulaire pur, GET-avant-POST, 409 si existe, EF-55, journal."""
+    """DECISION 22/08 — la creation manuelle de monnaie N'EXISTE PLUS : les
+    devises entrent par l'import backend, et POST /pays/{iso}/pousser cree
+    la devise sur config-service depuis NOTRE fiche quand elle y manque
+    (prouve par TestUSB6CreationDePays)."""
 
-    async def test_creer_une_monnaie_neuve_part_a_config_service(
-        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    async def test_la_creation_manuelle_de_monnaie_n_existe_plus(
+        self, client: httpx.AsyncClient
     ) -> None:
         entetes = await _session_complete(client)
         reponse = await client.post(
@@ -2361,64 +2363,7 @@ class TestCreationDeMonnaie:
                   "accepts_decimal": True},
             headers=entetes,
         )
-        assert reponse.status_code == 201, reponse.text
-        assert reponse.json()["devise"]["iso_name"] == "NGN"
-        assert len(_config_service_double["devises_creees"]) == 1
-        assert _config_service_double["devises_creees"][0]["accepts_decimal"] is True
-
-    async def test_une_monnaie_existante_repond_409_jamais_un_double(
-        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
-    ) -> None:
-        entetes = await _session_complete(client)
-        reponse = await client.post(
-            "/admin/referentiels/devises",
-            json={"iso_name": "XOF", "name_en": "CFA", "name_fr": "Franc CFA"},
-            headers=entetes,
-        )
-        assert reponse.status_code == 409
-        assert "EXISTE deja" in reponse.json()["detail"]
-        assert _config_service_double["devises_creees"] == []
-
-    async def test_un_code_devise_mal_forme_422(
-        self, client: httpx.AsyncClient
-    ) -> None:
-        entetes = await _session_complete(client)
-        reponse = await client.post(
-            "/admin/referentiels/devises",
-            json={"iso_name": "xof", "name_en": "x", "name_fr": "x"},
-            headers=entetes,
-        )
-        assert reponse.status_code == 422
-
-    async def test_le_verrou_EF_55_couvre_la_monnaie(
-        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
-    ) -> None:
-        from datetime import date as _date
-        from uuid import uuid4 as _uuid4
-
-        from app.models.domain import LoaderRun
-        from app.models.enums import RunStatus
-        from app.repositories.loader_runs import LoaderRunRepository
-
-        entetes = await _session_complete(client)
-        await database.get_database().drop_collection("loader_runs")
-        await LoaderRunRepository().remplacer(
-            LoaderRun(
-                _id=_uuid4(), sim_start_date=_date(2026, 2, 1),
-                sim_end_date=_date(2026, 8, 1), status=RunStatus.RUNNING,
-            )
-        )
-        try:
-            reponse = await client.post(
-                "/admin/referentiels/devises",
-                json={"iso_name": "GHS", "name_en": "Cedi", "name_fr": "Cedi"},
-                headers=entetes,
-            )
-            assert reponse.status_code == 409
-            assert "EF-55" in reponse.json()["detail"]
-        finally:
-            await database.get_database().drop_collection("loader_runs")
-
+        assert reponse.status_code == 404, reponse.text
 
 class TestRegionsQuartiersSansLimite:
     """Decision Yaniv 14/08 : « le nombre que l'on veut, pas de barrieres
@@ -4202,11 +4147,15 @@ class TestC1FichesPays:
         return entetes
 
     async def test_get_pays_liste_les_fiches_avec_completude(
-        self, client: httpx.AsyncClient
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
     ) -> None:
         entetes = await self._preparer(client)
         reponse = await client.get("/admin/referentiels/pays", headers=entetes)
         assert reponse.status_code == 200, reponse.text
+        # 4e etat de la machine (22/08) : rien la-bas qui nous soit inconnu
+        # dans le double (les 4 cibles) -> liste VIDE, jamais null quand la
+        # plateforme repond.
+        assert reponse.json()["hors_loader"] == []
         fiches = reponse.json()["pays"]
         codes = {f["iso2"] for f in fiches}
         assert {"CM", "CI", "BF", "SN"} <= codes
