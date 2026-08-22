@@ -2253,6 +2253,59 @@ class TestUSB6CreationDePays:
             "sans villes en referentiel, la capitale de la fiche part — jamais vide"
         )
 
+    async def test_pousser_fait_l_aller_COMPLET_devise_pays_villes_telcos(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """L'ordre du contrat config-service : devise -> pays+villes ->
+        telcos CREES puis RATTACHES (US-B7 : un telco non rattache
+        n'appartient a aucun pays). Les parts de marche restent CHEZ NOUS."""
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="GN", nom_fr="Guinée", nom_en="Guinea", capitale="Conakry",
+            dial_code="224", devise_iso="GNF", tva_percent=18.0,
+            devise_nom="Guinean Franc", devise_decimales=0, banque_centrale="BCRG",
+        )
+        # un telco du pays, comme la vague 2 l'a fait (via le service)
+        from pathlib import Path as _Path
+
+        from app.repositories.surcouche import SurcoucheRepository
+        from app.services.geographie import charger_referentiel as _charger
+
+        depot = SurcoucheRepository()
+        surcouche, _ = await depot.charger()
+        surcouche.ajouter_telco(
+            _charger(_Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")),
+            pays="GN", network_name="Orange Guinee", short_name="Orange GN",
+            regex_msisdn=r"^224(62\d{7}|61\d{7})$", part_marche=65.0,
+            exemple_msisdn="224621234567",
+        )
+        await depot.enregistrer(surcouche, par="import-test")
+
+        reponse = await client.post(
+            "/admin/referentiels/pays/GN/pousser", headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["statut"] == "mis_en_operation"
+        assert corps["devise"]["statut"] == "mise_en_operation"  # GNF absent la-bas
+        assert corps["echecs"] == []
+        assert corps["telcos"] == [
+            {"nom": "Orange Guinee", "statut": "mis_en_operation", "rattache": True}
+        ]
+        assert _config_service_double["crees"] == ["Orange Guinee"], (
+            "le telco est CREE la-bas AVANT le pays, depuis NOTRE plan"
+        )
+        assert _config_service_double["pays_crees"][0]["telcos"] == [
+            "tl-Orange Guinee"
+        ], "le payload du pays reference le telco par UUID — l'ordre du contrat"
+        assert _config_service_double["rattaches"] == [], (
+            "a la CREATION le payload porte deja les telcos — le rattachement "
+            "apres coup ne sert qu'au cas adoption"
+        )
+
     async def test_pousser_un_pays_deja_en_operation_est_idempotent(
         self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
     ) -> None:

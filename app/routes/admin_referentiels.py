@@ -827,16 +827,23 @@ async def pousser_pays_en_operation(
 ) -> dict[str, Any]:
     """`C1`/`US-B6` — mettre un pays du Loader EN OPERATION sur la plateforme.
 
-    LA DISTINCTION FONDAMENTALE (Yaniv, 22/08) : le Loader PORTE l'information
-    (il peut porter le globe entier) ; ce qui est EN OPERATION, c'est ce qui
-    existe sur config-service — aucun marqueur artificiel, l'etat operationnel
-    EST la presence la-bas, verifiee en direct.
+    L'ALLER COMPLET, DANS L'ORDRE QUE LE CONTRAT DE config-service IMPOSE
+    (on le maitrise — 9 services audites) :
 
-    Et LE LOADER SAIT QUOI ENVOYER — tout part de SA fiche, rien n'est
-    ressaisi : la DEVISE d'abord (creee sur la plateforme si absente, depuis
-    notre fiche complete), puis le PAYS avec les villes de notre referentiel.
-    GET-avant-POST des deux cotes : relancer ne double jamais, un pays deja
-    en operation repond « deja_en_operation », pas une erreur.
+      1. la DEVISE : resolue par code ISO la-bas, CREEE depuis NOTRE fiche si
+         absente (une devise n'est jamais orpheline, ni ici ni la-bas) ;
+      2. le PAYS : cree avec ses villes et sa devise ; deja present -> ADOPTE
+         (GET-avant-POST, jamais un doublon) ;
+      3. les VILLES manquantes : cas adoption — la relecture integrale du
+         client (ANO-CFG-DUP : les 9 champs) complete `cities[]` sans doublon ;
+      4. les TELCOS du pays : crees si absents (motif ancre + compile, RC-184)
+         PUIS rattaches au pays — « un telco cree mais non rattache
+         n'appartient a aucun pays » (US-B7).
+
+    Regions, quartiers, GPS, TVA, parts de marche RESTENT chez nous — la
+    plateforme n'a aucun champ pour eux. Chaque echec partiel est DIT et
+    n'interrompt pas le reste ; le refus complet voyage (21/08). Idempotent :
+    re-pousser complete ce qui manque et ne double rien.
     """
     from uuid import NAMESPACE_OID, uuid5
 
@@ -863,7 +870,9 @@ async def pousser_pays_en_operation(
         v.name for v in referentiel.villes.values() if v.country_iso2 == code
     ) or [fiche.capitale]
     fiche_devise = referentiel.devises.get(fiche.devise_iso)
+    telcos_locaux = referentiel.telcos_du_pays(code)
 
+    echecs: list[str] = []
     admin = _config_admin()
     try:
         audit = AuditTrailRepository()
@@ -877,6 +886,7 @@ async def pousser_pays_en_operation(
             payload={"iso_name": code, "depuis": "fiche Loader", "par": session.email},
         ) as suivi:
             try:
+                # 1. LA DEVISE — d'abord, le pays la reference par UUID
                 devise_id = await admin.resoudre_devise(fiche.devise_iso)
                 devise_statut = "deja_en_operation"
                 if devise_id is None:
@@ -893,6 +903,29 @@ async def pousser_pays_en_operation(
                     devise_id = str(fiche_dev.get("id") or fiche_dev.get("_id") or "")
                     devise_statut = "mise_en_operation" if cree_devise else "deja_en_operation"
 
+                # 2. LES TELCOS — AVANT le pays (l'ordre du contrat,
+                #    rappele par Yaniv) : le payload de creation du pays les
+                #    reference par UUID, comme la devise. Crees si absents
+                #    (motif ancre + compile, RC-184), ids collectes.
+                telcos_statuts = []
+                telco_ids: list[str] = []
+                for telco in telcos_locaux:
+                    fiche_telco, telco_cree = await admin.creer_telco_si_absent(
+                        telco.network_name, telco.regex_msisdn
+                    )
+                    telco_id = str(fiche_telco.get("id") or fiche_telco.get("_id") or "")
+                    if telco_id:
+                        telco_ids.append(telco_id)
+                    telcos_statuts.append(
+                        {
+                            "nom": telco.network_name,
+                            "statut": "mis_en_operation" if telco_cree else "deja_en_operation",
+                            "rattache": bool(telco_id),
+                        }
+                    )
+
+                # 3. LE PAYS — TOUS les champs du contrat (les 9), devise et
+                #    telcos references par UUID ; present -> adopte
                 fiche_pays, cree = await admin.creer_pays_si_absent(
                     {
                         "name_en": fiche.nom_en,
@@ -903,7 +936,7 @@ async def pousser_pays_en_operation(
                         "continent": "Africa",
                         "cities": villes,
                         "currencies": [devise_id],
-                        "telcos": [],
+                        "telcos": telco_ids,
                     }
                 )
             except ErreurService as exc:
@@ -918,6 +951,35 @@ async def pousser_pays_en_operation(
                 ) from exc
             identifiant = str(fiche_pays.get("id") or fiche_pays.get("_id") or "")
             suivi.reussi({"country_id": identifiant, "cree": cree})
+
+        # 3. LES VILLES MANQUANTES — cas adoption : completer, jamais doubler.
+        villes_completees = 0
+        if not cree and identifiant:
+            deja_labas = {str(v).strip() for v in (fiche_pays.get("cities") or [])}
+            for nom_ville in villes:
+                if nom_ville in deja_labas:
+                    continue
+                try:
+                    await admin.ajouter_ville(identifiant, nom_ville)
+                    villes_completees += 1
+                except Exception as erreur:  # echec PARTIEL, dit — jamais muet
+                    echecs.append(
+                        f"ville {nom_ville} : {type(erreur).__name__}: {str(erreur)[:120]}"
+                    )
+
+        # 4. Cas ADOPTION : les telcos deja crees (etape 2) sont RATTACHES au
+        #    pays existant — « un telco cree mais non rattache n'appartient a
+        #    aucun pays » (US-B7). A la creation, le payload les portait deja.
+        if not cree and identifiant:
+            for statut_telco, telco_id in zip(telcos_statuts, telco_ids, strict=False):
+                try:
+                    await admin.rattacher_telco_au_pays(identifiant, telco_id)
+                except Exception as erreur:  # echec PARTIEL, dit — jamais muet
+                    statut_telco["rattache"] = False
+                    echecs.append(
+                        f"telco {statut_telco['nom']} : "
+                        f"{type(erreur).__name__}: {str(erreur)[:120]}"
+                    )
     finally:
         await admin.fermer()
 
@@ -925,11 +987,14 @@ async def pousser_pays_en_operation(
         "pays": {"iso2": code, "id": identifiant, "nom_fr": fiche.nom_fr},
         "statut": "mis_en_operation" if cree else "deja_en_operation",
         "devise": {"code": fiche.devise_iso, "statut": devise_statut},
-        "villes_envoyees": len(villes),
+        "villes_envoyees": len(villes) if cree else villes_completees,
+        "telcos": telcos_statuts,
+        "echecs": echecs,
         "note": (
-            "le pays est EN OPERATION — la geographie fine (regions, "
-            "quartiers) et la TVA restent la richesse du Loader, la "
-            "plateforme n'a aucun champ pour elles"
+            "l'aller COMPLET : devise -> pays+villes -> villes manquantes -> "
+            "telcos crees et rattaches. Regions, quartiers, GPS, TVA et parts "
+            "de marche restent la richesse du Loader — la plateforme n'a "
+            "aucun champ pour elles"
         ),
     }
 
