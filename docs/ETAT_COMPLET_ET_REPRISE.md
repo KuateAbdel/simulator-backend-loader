@@ -7,6 +7,108 @@
 
 ---
 
+## SESSION DU 22/08/2026 — LA JOURNÉE RÉFÉRENTIEL PAYS (lire EN PREMIER pour reprendre)
+
+**Marathon complet, ~14 commits backend + 4 frontend, tout CI verte + déployé.
+État final : backend surcouche serveur v26, frontend `78921ce`+.**
+
+### 1. Durcissement post-mortem du 1er run REAL (21/08) — commit `9bef2bb`
+Les 3 causes du crash ne peuvent plus tuer un run : DEPOSITAIRES ne réattribue
+plus jamais le réseau d'une IMF absente (sauté+déclaré, UC-07), DuplicateKeyError
+rattrapée ; emails pris semés au lancement (`reserver_emails`) ; `prix_mesure`
+métier (mil 240, cacao 1800). Erreurs 600c, journal admin issue+acteur (vérifié
+en prod). CR-01 de la recette était CODÉ EN DUR → mesure réelle (`63c19fe`).
+
+### 2. C1 — le Loader maître de ses pays + fichiers direction (`c2a1cd6`)
+Doctrine Yaniv : le Loader PORTE (peut porter le globe) ; l'OPÉRATION = présence
+sur config-service, vérifiée EN DIRECT, aucun marqueur. `ajouter_pays` dans la
+surcouche (devise jamais orpheline, retrait réversible). Fichiers du boss
+TRAITÉS en data scientist : `Import_pays.xlsx` (48 fiches — 7 MCC faux corrigés
+plan UIT, accents, TVA/fuseaux comblés, 8 regex réécrites) +
+`afrique_ouest_centrale_pays_villes_1.csv` (24 pays, 563 lignes ; le `_1`
+annonce des suites). Import re-lançable `scripts/importer_referentiel_pays.py`,
+versionné `docs/reference/`. JAMAIS vers config-service (push = geste US-B6).
+
+### 3. Audit QA prod + 4 bugs de conception corrigés (`0a3e87f`)
+Batterie prod (login réel ak@finzuu.com) : gardes 422/409 exactes, écritures
+VRAIES (Mbalmayo→surcouche PUIS config-service « envoyé », Ndokoti, telco),
+journal issue+acteur. 4 bugs : GET /pays (fiches+complétude+sur_config_service),
+POST /pays/fiche, DELETE /surcouche/{id} (réversibilité CFG-03), /geographie
+montre les pays sans régions (l'écran cachait 24/48). Bug telco-retrait attrapé
+par batterie destructive → corrigé (`6045e36`), cycle Égypte complet, base propre.
+
+### 4. Doctrine opérationnelle — plus AUCUN verrou statique (`a31c9fa`)
+Literal["CM","CI","BF","SN"] RETIRÉ de la company → porte dynamique
+`_exiger_pays_operationnel` (fiche Loader + EN OPÉRATION vérifié live + matière :
+patronymes, telco, villes — 422 qui NOMME les manques, 503 zéro-trust si
+plateforme muette). US-B3 admet un 5e pays (matière complète + quartier D-03).
+Planification : ordre CDC + extras (rangs des 4 intacts, ENF-15).
+`valider_nationalite` paramétrable. Écart au CDC dit toute extension (CR-09).
+CONSOLIDATION routes : POST /pays (création manuelle) SUPPRIMÉ — entrée pays =
+IMPORT BACKEND uniquement (décision direction) ; POST /pays/{iso}/pousser part
+de NOTRE fiche (devise créée là-bas si absente, villes du référentiel,
+idempotent) ; GET /pays sert le globe. Création manuelle de MONNAIE aussi
+SUPPRIMÉE (`0a7984e`) + `hors_loader` (4e état : là-bas mais inconnu → anomalie
+MONTRÉE — détecte le résidu « ca/CA » de la plateforme).
+
+### 5. Le GLOBE AFRIQUE (artifacts + frontend prod)
+Artifacts : rapport https://claude.ai/code/artifact/b4dfe0b3-2939-4811-8cb7-6c34cbb2c64a
+· globe https://claude.ai/code/artifact/38f446f0-e116-4be3-b1ff-9655dc7d68ba
+Frontend : GlobeAfrique.tsx dans l'écran Géographie — Natural Earth 1:50m
+(src/data/afrique-frontieres.json), états LIVE depuis GET /pays (vert clignotant
+= EN OPÉRATION — a détecté CV tout seul), palette de l'ARTEFACT (scopée
+clair/sombre), tuiles réelles, vue table, i18n FR/EN, reduced-motion.
+Panneau « Pays & Monnaies » REFONDU = machine d'états + bouton Pousser +
+anomalies + devises là-bas (formulaires de création supprimés). Géographie
+ÉPURÉE : arbre + recherche SUPPRIMÉS (le globe est LA structure), seul l'ajout
+de QUARTIER survit (aucune source mondiale ne les fournit, D-03).
+
+### 6. GeoNames + compléments de connaissance sûre
+`importer_geonames.py` (extraits 48 pays versionnés docs/reference/geonames/,
+CC-BY) : +2481 villes → 3 148 villes GPS/population officielles.
+`completer_geographie.py` : 24 pays Est/Sud/MR (+146 régions officielles,
++157 villes GPS, +60 quartiers). `completer_quartiers_telcos.py` : +33
+quartiers officiels + **38 TELCOS RÉELS sur 13 marchés** (NG GH KE TZ UG RW
+ZA GN ZM MZ CD ET MW — parts régulateurs/GSMA, plans composables validés par
+le moteur 38/38, longueurs UIT contre-vérifiées). Nexttel (défunt au CM,
+erreur de ma batterie) RETIRÉ via DELETE /surcouche.
+
+### 7. LES LEÇONS DE YANIV (fautes à ne JAMAIS refaire)
+- « Le Cameroun a 17 régions ?! » : GeoNames livre l'ANGLAIS (Far North,
+  North Kivu...) → 14 doublons de traduction sur 5 pays. Règle de GÉOGRAPHE :
+  NORMALISER À L'INGESTION → `scripts/normalisation_geo.py` = LA norme
+  partagée (clé traduite, ordre trié) ; fusion réparatrice `a79a48d`+`dbcc6b1`.
+- RÉCONCILIATION contre les listes OFFICIELLES (`dbcac13`) : 63 actions —
+  renommages (Elgeyo-Marakwet, Cubango 2024, County/Region collés), fusions
+  d'orthographe (Atacora/Atakora, FCT, Luanda Norte=Lunda Norte...), Somalie
+  redescendue au niveau région, ajouts des manquants (Bomet, Tagant,
+  Nouakchott Sud, Kavango West, Kunene, Omusati, Bakool, Kgalagadi, Chobe).
+  **11/11 pays aux décomptes officiels, 0 orpheline. MANQUANTS ≠ DOUBLONS.**
+- `mypy | tail` AVALE le code d'échec → toujours tester les codes retour
+  AVANT commit (2 pushes fautifs ce jour).
+- Vérifier AVANT d'envoyer ; auditer soi-même ; données confrontées au
+  terrain ; trous DITS jamais inventés ; pas le mot « démo ».
+
+### 8. INCIDENT PLATEFORME (résolu en séance)
+~12h30 : compte ROOT partagé VERROUILLÉ (HTTP 423 login attempts) — /health
+vert mais données refusées. Le Loader n'a PAS subi : portes → 503 zéro-trust,
+écran → null. Déverrouillé ensuite ; RE-TEST COMPLET OK : lister_pays rend
+6 pays (BF CI CM CV SN + « ca »), GN → 422 pédagogique, CM → aperçu
+« SARL Mbarga Microfinance » à Mbalmayo. NE JAMAIS boucler les logins.
+
+### 9. RESTE À FAIRE (la reprise)
+1. **C1 lot 2 — rendre un 5e pays GÉNÉRABLE** : patronymes par pays dans la
+   surcouche + porte déjà en place ; alors GN sera poussable et générable.
+2. Telcos des ~31 marchés restants (matière boss/régulateurs) ; fichiers `_2`
+   direction ; quartiers hors capitales ; CI 33 régions (arbitrage direction).
+3. Anomalie « ca/CA » sur config-service : à nettoyer côté plateforme (Oti).
+4. Prochain run REAL depuis le serveur (code durci déployé) ; puis 2e run
+   identique = preuve CR-03.
+5. Synchro villes → config-service pour pays DÉJÀ en opération (pousser ne
+   met pas à jour les villes d'un pays existant — couture déclarée).
+
+---
+
 ## 0. LES DEUX PROJETS & LEURS EMPLACEMENTS
 
 | Projet | Local | GitHub | Déploiement |
