@@ -210,7 +210,14 @@ def planifier(
         pays_a_planifier = PAYS_CIBLES
     else:
         actifs = set(configuration.pays_actifs)
-        pays_a_planifier = tuple(code for code in PAYS_CIBLES if code in actifs)
+        # 22/08 (Yaniv) : les 4 cibles etaient le PREMIER USAGE, pas une borne.
+        # Un pays admis par la porte d'activation (US-B3 : fiche + EN OPERATION
+        # + matiere generable) entre dans le plan — APRES les cibles CDC, en
+        # ordre alphabetique : les rangs des 4 ne bougent pas, leurs tirages
+        # non plus (ENF-15, la lecon du 11/08 reste tenue).
+        pays_a_planifier = tuple(code for code in PAYS_CIBLES if code in actifs) + tuple(
+            sorted(actifs - set(PAYS_CIBLES))
+        )
 
     for pays in pays_a_planifier:
         if configuration is not None:

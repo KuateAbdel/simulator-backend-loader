@@ -735,25 +735,15 @@ async def produits_catalogue(
 # Tout est ADDITIF : POST /pays (US-B6, le push volontaire) est inchange.
 
 
-class FichePaysDemande(BaseModel):
-    """`C1` — la fiche COMPLETE d'un pays du Loader. `extra="forbid"`."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    iso2: str = Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")
-    nom_fr: str = Field(min_length=2, max_length=60)
-    nom_en: str = Field(min_length=2, max_length=60)
-    capitale: str = Field(min_length=1, max_length=80)
-    dial_code: str = Field(min_length=1, max_length=6)
-    devise_iso: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
-    tva_percent: float = Field(ge=0, le=40)
-    timezone: str = Field(default="", max_length=40)
-    region_africa: str = Field(default="", max_length=40)
-    regulateur_telco: str = Field(default="", max_length=40)
-    regulateur_finance: str = Field(default="", max_length=40)
-    devise_nom: str = Field(default="", max_length=60)
-    devise_decimales: int = Field(default=0, ge=0, le=4)
-    banque_centrale: str = Field(default="", max_length=40)
+# DECISION DIRECTION 22/08 : PAS de creation manuelle de pays a l'ecran —
+# « ce n'est pas de l'automatisation, ca rend les choses lourdes ». Les
+# pays entrent dans la base du Loader UNIQUEMENT par le backend :
+# fichiers traites -> scripts/importer_referentiel_pays.py (versionne,
+# re-lancable, invariants EF-02/INV-18 appliques ligne a ligne). L'ecran
+# garde : VOIR (GET /pays), METTRE EN OPERATION (POST /pays/{iso}/pousser),
+# RETIRER (DELETE /surcouche/{id}) et ACTIVER au perimetre (US-B3).
+# L'ajout de regions/villes/quartiers/telcos sur un pays EXISTANT reste
+# intact (US-B4/US-B7) — la structure geographique ne bouge pas.
 
 
 @router.get("/pays")
@@ -762,11 +752,11 @@ async def lister_fiches_pays(
 ) -> dict[str, Any]:
     """`C1` — TOUTES les fiches pays du Loader, avec leur COMPLETUDE.
 
-    C'est la matiere de l'ecran « Pays » : choisir un pays auto-complete la
-    fiche entiere (devise, TVA, fuseau, regulateurs), et les compteurs disent
-    ce qui manque AVANT de generer. `sur_config_service` est verifie en direct
-    quand config-service repond ; sinon la fiche le dit (`null`), jamais un
-    faux « non ».
+    C'est la matiere de l'ecran « Pays » et du globe : chaque fiche complete
+    (devise, TVA, fuseau, regulateurs), les compteurs de matiere, et
+    `sur_config_service` verifie EN DIRECT — un pays present des deux cotes
+    est EN OPERATION (le point clignotant du globe). config-service muet ->
+    `null`, jamais un faux « non ».
     """
     surcouche, meta = await SurcoucheRepository().charger()
     referentiel = surcouche.appliquer(_geo())
@@ -821,60 +811,117 @@ async def lister_fiches_pays(
     }
 
 
-@router.post("/pays/fiche", status_code=201)
-async def creer_fiche_pays(
-    demande: FichePaysDemande,
+@router.post("/pays/{iso}/pousser")
+async def pousser_pays_en_operation(
+    iso: str,
     session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
-    """`C1` — creer un pays DANS LE LOADER (surcouche), fiche complete.
+    """`C1`/`US-B6` — mettre un pays du Loader EN OPERATION sur la plateforme.
 
-    Le geste principal que l'ecran n'avait pas (BUG-C1-02). Les invariants de
-    `ajouter_pays` s'appliquent : ISO2 unique, indicatif numerique, TVA
-    bornee, devise JAMAIS orpheline (fiche exigee si inconnue). Le pousser
-    vers config-service reste le geste volontaire d'`US-B6` (POST /pays) —
-    rien ne part d'ici.
+    LA DISTINCTION FONDAMENTALE (Yaniv, 22/08) : le Loader PORTE l'information
+    (il peut porter le globe entier) ; ce qui est EN OPERATION, c'est ce qui
+    existe sur config-service — aucun marqueur artificiel, l'etat operationnel
+    EST la presence la-bas, verifiee en direct.
+
+    Et LE LOADER SAIT QUOI ENVOYER — tout part de SA fiche, rien n'est
+    ressaisi : la DEVISE d'abord (creee sur la plateforme si absente, depuis
+    notre fiche complete), puis le PAYS avec les villes de notre referentiel.
+    GET-avant-POST des deux cotes : relancer ne double jamais, un pays deja
+    en operation repond « deja_en_operation », pas une erreur.
     """
+    from uuid import NAMESPACE_OID, uuid5
+
+    from app.clients.base import ErreurService
+    from app.repositories.audit_trail import AuditTrailRepository
+    from app.routes.admin_entites import RUN_ADMIN
+
     await refuser_si_run_en_cours()
 
-    depot = SurcoucheRepository()
-    surcouche, _ = await depot.charger()
-    try:
-        fiche = surcouche.ajouter_pays(
-            _geo(),
-            iso2=demande.iso2,
-            nom_fr=demande.nom_fr,
-            nom_en=demande.nom_en,
-            capitale=demande.capitale,
-            dial_code=demande.dial_code,
-            devise_iso=demande.devise_iso,
-            tva_percent=demande.tva_percent,
-            timezone=demande.timezone,
-            region_africa=demande.region_africa,
-            regulateur_telco=demande.regulateur_telco,
-            regulateur_finance=demande.regulateur_finance,
-            devise_nom=demande.devise_nom,
-            devise_decimales=demande.devise_decimales,
-            banque_centrale=demande.banque_centrale,
+    code = iso.strip().upper()
+    surcouche, _ = await SurcoucheRepository().charger()
+    referentiel = surcouche.appliquer(_geo())
+    fiche = referentiel.pays(code)
+    if fiche is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"pays {code!r} inconnu du Loader — on ne met en operation que "
+                "ce que le Loader porte : l'importer d'abord "
+                "(scripts/importer_referentiel_pays.py), puis le pousser."
+            ),
         )
-    except AjoutRefuse as refus:
-        raise HTTPException(status_code=422, detail=str(refus)) from refus
+    villes = sorted(
+        v.name for v in referentiel.villes.values() if v.country_iso2 == code
+    ) or [fiche.capitale]
+    fiche_devise = referentiel.devises.get(fiche.devise_iso)
 
-    meta = await depot.enregistrer(surcouche, par=session.email)
+    admin = _config_admin()
+    try:
+        audit = AuditTrailRepository()
+        entite = uuid5(NAMESPACE_OID, f"finzuu-pays:{code}")
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="Country",
+            entity_id=entite,
+            operation="CREATE",
+            cible="config-service POST /countries/create",
+            payload={"iso_name": code, "depuis": "fiche Loader", "par": session.email},
+        ) as suivi:
+            try:
+                devise_id = await admin.resoudre_devise(fiche.devise_iso)
+                devise_statut = "deja_en_operation"
+                if devise_id is None:
+                    fiche_dev, cree_devise = await admin.creer_devise_si_absent(
+                        {
+                            "name_en": fiche_devise.nom if fiche_devise else fiche.devise_iso,
+                            "name_fr": fiche_devise.nom if fiche_devise else fiche.devise_iso,
+                            "iso_name": fiche.devise_iso,
+                            "accepts_decimal": bool(
+                                fiche_devise and fiche_devise.decimales > 0
+                            ),
+                        }
+                    )
+                    devise_id = str(fiche_dev.get("id") or fiche_dev.get("_id") or "")
+                    devise_statut = "mise_en_operation" if cree_devise else "deja_en_operation"
+
+                fiche_pays, cree = await admin.creer_pays_si_absent(
+                    {
+                        "name_en": fiche.nom_en,
+                        "name_fr": fiche.nom_fr,
+                        "iso_name": code,
+                        "dial_code": fiche.dial_code,
+                        "region": fiche.region_africa or "Africa",
+                        "continent": "Africa",
+                        "cities": villes,
+                        "currencies": [devise_id],
+                        "telcos": [],
+                    }
+                )
+            except ErreurService as exc:
+                # Le REFUS COMPLET voyage (21/08, pays GN) — jamais un 502 muet.
+                suivi.echoue(f"HTTP {exc.status} : {exc.detail[:600]}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"config-service a refuse : HTTP {exc.status} — "
+                        f"{exc.detail[:600]}"
+                    ),
+                ) from exc
+            identifiant = str(fiche_pays.get("id") or fiche_pays.get("_id") or "")
+            suivi.reussi({"country_id": identifiant, "cree": cree})
+    finally:
+        await admin.fermer()
+
     return {
-        "pays": {
-            "iso2": fiche.iso2,
-            "nom_fr": fiche.nom_fr,
-            "devise_iso": fiche.devise_iso,
-            "tva_percent": fiche.tva_percent,
-        },
-        "surcouche": {"resume": surcouche.resume(), "version": meta["version"]},
-        "prochaines_etapes": [
-            "regions : POST /admin/referentiels/regions (US-B4)",
-            "villes : POST /admin/referentiels/villes",
-            "quartiers : POST /admin/referentiels/quartiers",
-            "telcos : POST /admin/referentiels/telcos (US-B7)",
-            "pousser vers config-service : POST /admin/referentiels/pays (US-B6)",
-        ],
+        "pays": {"iso2": code, "id": identifiant, "nom_fr": fiche.nom_fr},
+        "statut": "mis_en_operation" if cree else "deja_en_operation",
+        "devise": {"code": fiche.devise_iso, "statut": devise_statut},
+        "villes_envoyees": len(villes),
+        "note": (
+            "le pays est EN OPERATION — la geographie fine (regions, "
+            "quartiers) et la TVA restent la richesse du Loader, la "
+            "plateforme n'a aucun champ pour elles"
+        ),
     }
 
 
@@ -957,141 +1004,10 @@ MATIERE_REQUISE_PAYS: list[dict[str, str]] = [
 ]
 
 
-class CreerPays(BaseModel):
-    """`US-B6` COMPLET — creer un pays sur config-service (decision Yaniv
-    14/08). config-service EXPOSE `POST /countries/create` (c'est ainsi que
-    CM/CI/BF/SN ont ete crees) : le super-admin peut donc le faire, comme la
-    ville et le telco, avec NOS invariants.
-
-    Les telcos et la devise sont des REFERENCES : la devise par son code ISO
-    (resolue en UUID), les telcos par des UUID existants (crees au prealable
-    via `POST /telcos`). `extra="forbid"` : tout champ inconnu est un 422."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    iso_name: str = Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")
-    name_en: str = Field(min_length=2, max_length=60)
-    name_fr: str = Field(min_length=2, max_length=60)
-    dial_code: str = Field(min_length=1, max_length=5, pattern=r"^\d{1,5}$")
-    region: str = Field(min_length=2, max_length=40)
-    continent: str = Field(default="Africa", max_length=40)
-    devise_iso: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
-    cities: list[str] = Field(min_length=1, max_length=200)
-    telcos_ids: list[str] = Field(default_factory=list, max_length=20)
-
-
-@router.post("/pays", status_code=201)
-async def creer_pays(
-    demande: CreerPays,
-    session: Annotated[SessionAdmin, Depends(exige_admin)],
-) -> dict[str, Any]:
-    """`US-B6` COMPLET — creer un pays, comme la ville et le telco.
-
-    Le rite habituel + les invariants :
-      - verrou EF-55 (pas de creation pendant un run) ;
-      - la DEVISE est resolue en UUID ; inconnue -> 422 AVANT tout POST ;
-      - `GET`-avant-`POST` sur `iso_name` : le pays existe deja -> 409 avec
-        son id (config-service n'a AUCUNE unicite, c'est NOUS l'autorite) ;
-      - creation puis RELECTURE : la fiche rendue vient de config-service ;
-      - journalise sous RUN_ADMIN (write-ahead, trace « a nous »).
-
-    IMPORTANT — creer le pays le DECLARE sur config-service ; il ne l'ajoute
-    PAS au perimetre de GENERATION (EF-05 reste les 4 cibles). Generer des
-    CLIENTS pour ce pays exigerait la matiere interne (voir `matiere_pour_
-    generer` dans la reponse) : c'est un autre chantier.
-    """
-    from uuid import NAMESPACE_OID, uuid5
-
-    from app.clients.base import ErreurService
-    from app.repositories.audit_trail import AuditTrailRepository
-    from app.routes.admin_entites import RUN_ADMIN
-
-    await refuser_si_run_en_cours()
-
-    admin = _config_admin()
-    try:
-        devise_id = await admin.resoudre_devise(demande.devise_iso)
-        if devise_id is None:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"devise {demande.devise_iso!r} inconnue de config-service — "
-                    "aucun pays n'est cree. Devises attendues : XOF, XAF..."
-                ),
-            )
-
-        payload = {
-            "name_en": demande.name_en,
-            "name_fr": demande.name_fr,
-            "iso_name": demande.iso_name,
-            "dial_code": demande.dial_code,
-            "region": demande.region,
-            "continent": demande.continent,
-            "cities": [v.strip() for v in demande.cities if v.strip()],
-            "currencies": [devise_id],
-            "telcos": [str(t) for t in demande.telcos_ids],
-        }
-
-        audit = AuditTrailRepository()
-        entite = uuid5(NAMESPACE_OID, f"finzuu-pays:{demande.iso_name}")
-        async with audit.intention(
-            RUN_ADMIN,
-            entity_type="Country",
-            entity_id=entite,
-            operation="CREATE",
-            cible="config-service POST /countries/create",
-            payload={
-                "iso_name": demande.iso_name,
-                "name_en": demande.name_en,
-                "par": session.email,
-            },
-        ) as suivi:
-            try:
-                fiche, cree = await admin.creer_pays_si_absent(payload)
-            except ErreurService as exc:
-                # Le REFUS COMPLET voyage — 21/08 : la creation du pays GN a
-                # echoue deux fois en pleine presentation direction, et ce 502
-                # muet a rendu la cause indiagnosticable depuis l'ecran.
-                suivi.echoue(f"HTTP {exc.status} : {exc.detail[:600]}")
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"config-service a refuse la creation : HTTP {exc.status} "
-                        f"— {exc.detail[:600]}"
-                    ),
-                ) from exc
-            identifiant = str(fiche.get("id") or fiche.get("_id") or "")
-            if not cree:
-                suivi.echoue("existe deja")
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"le pays {demande.iso_name} EXISTE deja sur config-service "
-                        f"(id {identifiant}) — reutiliser, jamais doubler. Pour "
-                        f"l'activer/desactiver : PUT /admin/configuration/pays/"
-                        f"{demande.iso_name} (US-B3)."
-                    ),
-                )
-            suivi.reussi({"country_id": identifiant, "iso_name": demande.iso_name})
-    finally:
-        await admin.fermer()
-
-    return {
-        "pays": {
-            "id": identifiant,
-            "iso_name": demande.iso_name,
-            "name_fr": demande.name_fr,
-            "villes": len(payload["cities"]),
-            "telcos": len(payload["telcos"]),
-            "devise": demande.devise_iso,
-        },
-        "statut": "a_nous",
-        "note": (
-            "pays DECLARE sur config-service — il n'entre PAS dans le perimetre "
-            "de generation (EF-05 reste CM/CI/BF/SN)"
-        ),
-        "matiere_pour_generer": MATIERE_REQUISE_PAYS,
-    }
+# L'ancienne route POST /pays (US-B6, payload complet ressaisi vers
+# config-service) a ete CONSOLIDEE le 22/08 : creer = POST /pays (dans le
+# Loader), mettre en operation = POST /pays/{iso}/pousser (depuis NOTRE
+# fiche, rien a ressaisir). Un seul sens par verbe.
 
 
 class CreerDevise(BaseModel):

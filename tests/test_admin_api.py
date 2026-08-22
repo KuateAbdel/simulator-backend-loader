@@ -1465,8 +1465,25 @@ class TestUSD1CompanyALUnite:
                 rapport.licences_creees.append(company_id)
 
         monkeypatch.setattr(
-            admin_entites, "_executeur_organisation", lambda mode: _Executeur(mode)
+            admin_entites,
+            "_executeur_organisation",
+            lambda mode, referentiel=None: _Executeur(mode),
         )
+        # La porte operationnelle (22/08) verifie la presence sur
+        # config-service en direct : le double de lecture repond les 4 cibles.
+        from app.routes import admin_referentiels
+
+        class _LecturePays:
+            async def lister_pays(self):
+                return [
+                    {"_id": f"cfg-{code}", "iso_name": code}
+                    for code in ("CM", "CI", "BF", "SN")
+                ]
+
+            async def fermer(self):
+                return None
+
+        monkeypatch.setattr(admin_referentiels, "_config_lecture", lambda: _LecturePays())
         return appels
 
     async def test_l_apercu_compose_TOUT_depuis_3_champs_sans_ecrire(
@@ -2180,81 +2197,125 @@ class TestInventaireReconciliation:
             await registre.delete_many({})
 
 
-class TestUSB6CreationDePays:
-    """`US-B6` COMPLET (Yaniv 14/08) — creer un pays sur config-service, comme
-    la ville et le telco, avec NOS invariants. config-service EXPOSE
-    `POST /countries/create` (c'est ainsi que les 4 cibles ont ete creees)."""
 
-    _GABON: ClassVar[dict[str, Any]] = {
-        "iso_name": "GA", "name_en": "Gabon", "name_fr": "Gabon",
-        "dial_code": "241", "region": "Middle Africa", "continent": "Africa",
-        "devise_iso": "XAF", "cities": ["Libreville", "Port-Gentil"],
+async def _semer_fiche_pays(**champs: Any) -> None:
+    """Seme une fiche pays comme l'IMPORT BACKEND le fait — la seule porte
+    d'entree des pays depuis la decision direction du 22/08 (plus de POST)."""
+    from pathlib import Path as _Path
+
+    from app.repositories.surcouche import SurcoucheRepository
+    from app.services.geographie import charger_referentiel as _charger
+
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    surcouche.ajouter_pays(
+        _charger(_Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")), **champs
+    )
+    await depot.enregistrer(surcouche, par="import-test")
+
+
+class TestUSB6CreationDePays:
+    """CONSOLIDATION 22/08 — un seul sens par verbe : POST /pays CREE dans le
+    Loader ; POST /pays/{iso}/pousser MET EN OPERATION sur config-service,
+    depuis NOTRE fiche (rien n'est ressaisi — le Loader sait quoi envoyer)."""
+
+    _GABON_FICHE: ClassVar[dict[str, Any]] = {
+        "iso2": "GA", "nom_fr": "Gabon", "nom_en": "Gabon",
+        "capitale": "Libreville", "dial_code": "241", "devise_iso": "XAF",
+        "tva_percent": 18.0, "timezone": "Africa/Libreville",
+        "region_africa": "Middle Africa",
     }
 
-    async def test_creer_un_pays_neuf_reussit_et_part_a_config_service(
-        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
-    ) -> None:
+    async def _fiche_gabon(self, client: httpx.AsyncClient) -> dict[str, str]:
         entetes = await _session_complete(client)
-        reponse = await client.post(
-            "/admin/referentiels/pays", json=self._GABON, headers=entetes
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
         )
-        assert reponse.status_code == 201, reponse.text
-        corps = reponse.json()
-        assert corps["pays"]["iso_name"] == "GA"
-        assert corps["pays"]["devise"] == "XAF"
-        assert corps["statut"] == "a_nous"
-        assert len(_config_service_double["pays_crees"]) == 1, (
-            "le pays part REELLEMENT a config-service (POST /countries/create)"
-        )
-        envoye = _config_service_double["pays_crees"][0]
-        assert envoye["currencies"] == ["cur-xaf"], "la devise est resolue en UUID"
-        assert "EF-05" in corps["note"], "creer le pays ne l'ajoute PAS a la generation"
+        await _semer_fiche_pays(**self._GABON_FICHE)
+        return entetes
 
-    async def test_un_pays_qui_existe_deja_repond_409_jamais_un_double(
+    async def test_pousser_part_de_NOTRE_fiche_rien_ressaisi(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        entetes = await self._fiche_gabon(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays/GA/pousser", headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["statut"] == "mis_en_operation"
+        assert corps["devise"] == {"code": "XAF", "statut": "deja_en_operation"}
+        envoye = _config_service_double["pays_crees"][0]
+        assert envoye["iso_name"] == "GA"
+        assert envoye["dial_code"] == "241", "compose depuis la fiche du Loader"
+        assert envoye["currencies"] == ["cur-xaf"], "la devise est resolue en UUID"
+        assert envoye["cities"] == ["Libreville"], (
+            "sans villes en referentiel, la capitale de la fiche part — jamais vide"
+        )
+
+    async def test_pousser_un_pays_deja_en_operation_est_idempotent(
         self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
     ) -> None:
         entetes = await _session_complete(client)
         reponse = await client.post(
-            "/admin/referentiels/pays",
-            json={**self._GABON, "iso_name": "CM", "name_en": "Cameroon",
-                  "name_fr": "Cameroun", "dial_code": "237"},
-            headers=entetes,
+            "/admin/referentiels/pays/CM/pousser", headers=entetes
         )
-        assert reponse.status_code == 409, reponse.text
-        assert "EXISTE deja" in reponse.json()["detail"]
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json()["statut"] == "deja_en_operation"
         assert _config_service_double["pays_crees"] == [], "aucun doublon cree"
 
-    async def test_une_devise_inconnue_est_refusee_AVANT_tout_POST(
+    async def test_une_devise_absente_labas_est_CREEE_depuis_notre_fiche(
         self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
     ) -> None:
         entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="NG", nom_fr="Nigéria", nom_en="Nigeria", capitale="Abuja",
+            dial_code="234", devise_iso="NGN", tva_percent=7.5,
+            devise_nom="Naira", devise_decimales=2, banque_centrale="CBN",
+        )
         reponse = await client.post(
-            "/admin/referentiels/pays",
-            json={**self._GABON, "devise_iso": "USD"},
-            headers=entetes,
+            "/admin/referentiels/pays/NG/pousser", headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json()["devise"]["statut"] == "mise_en_operation"
+        assert _config_service_double["devises_creees"][0]["iso_name"] == "NGN"
+        assert _config_service_double["devises_creees"][0]["accepts_decimal"] is True
+
+    async def test_pousser_un_pays_inconnu_du_loader_est_un_422(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        reponse = await client.post(
+            "/admin/referentiels/pays/ZZ/pousser", headers=entetes
         )
         assert reponse.status_code == 422
-        assert "devise" in reponse.json()["detail"]
-        assert _config_service_double["pays_crees"] == [], "refus AVANT le POST"
+        assert "inconnu du Loader" in reponse.json()["detail"]
+        assert _config_service_double["pays_crees"] == [], "rien ne part"
 
-    async def test_la_creation_est_journalisee_sous_RUN_ADMIN(
+    async def test_la_mise_en_operation_est_journalisee_sous_RUN_ADMIN(
         self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
     ) -> None:
         from app.repositories.audit_trail import AuditTrailRepository
         from app.routes.admin_entites import RUN_ADMIN
 
         await _registre_vierge()
-        entetes = await _session_complete(client)
+        entetes = await self._fiche_gabon(client)
         reponse = await client.post(
-            "/admin/referentiels/pays", json=self._GABON, headers=entetes
+            "/admin/referentiels/pays/GA/pousser", headers=entetes
         )
-        assert reponse.status_code == 201
+        assert reponse.status_code == 200
         journal = await AuditTrailRepository().exporter_run(RUN_ADMIN)
         assert any(
             e.entity_type == "Country" and e.action == "INTENTION" for e in journal
-        ), "la creation d'un pays laisse SA trace write-ahead"
+        ), "la mise en operation laisse SA trace write-ahead"
 
-    async def test_le_verrou_EF_55_couvre_la_creation_de_pays(
+    async def test_le_verrou_EF_55_couvre_la_mise_en_operation(
         self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
     ) -> None:
         from datetime import date as _date
@@ -2274,28 +2335,15 @@ class TestUSB6CreationDePays:
         )
         try:
             reponse = await client.post(
-                "/admin/referentiels/pays", json=self._GABON, headers=entetes
+                "/admin/referentiels/pays/CM/pousser", headers=entetes
             )
             assert reponse.status_code == 409
             assert "EF-55" in reponse.json()["detail"]
         finally:
             await database.get_database().drop_collection("loader_runs")
 
-    async def test_un_iso_mal_forme_est_un_422_de_validation(
-        self, client: httpx.AsyncClient
-    ) -> None:
-        entetes = await _session_complete(client)
-        reponse = await client.post(
-            "/admin/referentiels/pays",
-            json={**self._GABON, "iso_name": "gabon"},
-            headers=entetes,
-        )
-        assert reponse.status_code == 422
-
     async def test_sans_jeton_401(self, client: httpx.AsyncClient) -> None:
-        reponse = await client.post(
-            "/admin/referentiels/pays", json={"code": "GA"}
-        )
+        reponse = await client.post("/admin/referentiels/pays/GA/pousser")
         assert reponse.status_code == 401
 
 
@@ -3944,7 +3992,25 @@ class TestDiffPayloadRelecture:
                 rapport.licences_creees.append(company_id)
 
         monkeypatch.setattr(
-            admin_entites, "_executeur_organisation", lambda mode: _Executeur(mode)
+            admin_entites,
+            "_executeur_organisation",
+            lambda mode, referentiel=None: _Executeur(mode),
+        )
+
+        class _LecturePays:
+            async def lister_pays(self):
+                return [
+                    {"_id": f"cfg-{code}", "iso_name": code}
+                    for code in ("CM", "CI", "BF", "SN")
+                ]
+
+            async def fermer(self):
+                return None
+
+        from app.routes import admin_referentiels
+
+        monkeypatch.setattr(
+            admin_referentiels, "_config_lecture", lambda: _LecturePays()
         )
         entetes = await _session_complete(client)
         reponse = await client.post(
@@ -4150,15 +4216,11 @@ class TestC1FichesPays:
         assert cm["completude"]["regions"] == 10
         assert cm["completude"]["telcos"] >= 3
 
-    async def test_creer_une_fiche_pays_puis_la_voir_partout(
+    async def test_une_fiche_importee_se_voit_partout(
         self, client: httpx.AsyncClient
     ) -> None:
         entetes = await self._preparer(client)
-        reponse = await client.post(
-            "/admin/referentiels/pays/fiche", json=self._EGYPTE, headers=entetes
-        )
-        assert reponse.status_code == 201, reponse.text
-        assert reponse.json()["pays"]["devise_iso"] == "EGP"
+        await _semer_fiche_pays(**self._EGYPTE)
 
         fiches = (
             await client.get("/admin/referentiels/pays", headers=entetes)
@@ -4176,28 +4238,23 @@ class TestC1FichesPays:
         eg_arbre = next(p for p in arbre if p["pays"] == "EG")
         assert eg_arbre["regions"] == []
 
-    async def test_un_doublon_de_fiche_est_refuse(
+    async def test_la_creation_manuelle_de_pays_n_existe_plus(
         self, client: httpx.AsyncClient
     ) -> None:
+        """Decision direction 22/08 : les pays entrent par l'IMPORT BACKEND
+        uniquement — l'ecran ne cree pas de pays, il les voit, les pousse en
+        operation, les retire."""
         entetes = await self._preparer(client)
-        assert (
-            await client.post(
-                "/admin/referentiels/pays/fiche", json=self._EGYPTE, headers=entetes
-            )
-        ).status_code == 201
-        second = await client.post(
-            "/admin/referentiels/pays/fiche", json=self._EGYPTE, headers=entetes
+        reponse = await client.post(
+            "/admin/referentiels/pays", json=self._EGYPTE, headers=entetes
         )
-        assert second.status_code == 422
-        assert "existe deja" in second.json()["detail"]
+        assert reponse.status_code == 405, reponse.text
 
     async def test_le_retrait_est_garde_puis_reversible(
         self, client: httpx.AsyncClient
     ) -> None:
         entetes = await self._preparer(client)
-        await client.post(
-            "/admin/referentiels/pays/fiche", json=self._EGYPTE, headers=entetes
-        )
+        await _semer_fiche_pays(**self._EGYPTE)
         await client.post(
             "/admin/referentiels/regions",
             json={"pays": "EG", "nom": "Le Caire"},

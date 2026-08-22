@@ -28,7 +28,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.cdc import NB_CLIENTS, PAYS_CIBLES
+from app.core.cdc import NB_CLIENTS
 from app.core.configuration import (
     DEFAUTS_CDC,
     PART_FEMMES_CDC,
@@ -205,7 +205,11 @@ async def modifier_configuration(
         if code not in configuration.pays:
             raise HTTPException(
                 status_code=422,
-                detail=f"pays {code!r} hors des cibles {sorted(PAYS_CIBLES)} (EF-05)",
+                detail=(
+                    f"pays {code!r} hors du perimetre configure "
+                    f"({sorted(configuration.pays)}) — l'admettre d'abord : "
+                    f"PUT /admin/configuration/pays/{code} (US-B3, porte EF-05)."
+                ),
             )
         _valider_fourchettes(code, surcharge)
         fiche = configuration.pays[code]
@@ -259,7 +263,40 @@ async def changer_etat_pays(
     configuration, _ = await depot.charger()
     cible = code.strip().upper()
     if cible not in configuration.pays:
-        raise HTTPException(status_code=404, detail=f"pays {cible!r} inconnu")
+        # 22/08 (Yaniv) — les 4 cibles etaient le PREMIER USAGE, pas une borne :
+        # un pays ABSENT de la configuration peut etre ADMIS au perimetre, a
+        # trois conditions verifiees a l'instant (jamais un marqueur) : fiche
+        # au Loader, EN OPERATION sur la plateforme, matiere GENERABLE —
+        # patronymes, telco, villes (porte commune) + au moins un quartier,
+        # car un Kiosque habite un quartier (D-03).
+        if not demande.actif:
+            raise HTTPException(
+                status_code=404,
+                detail=f"pays {cible!r} absent de la configuration — rien a desactiver",
+            )
+        from app.core.configuration import ConfigurationPays
+        from app.routes.admin_entites import (
+            _exiger_pays_operationnel,
+            _referentiel_applique,
+        )
+
+        referentiel = await _referentiel_applique()
+        await _exiger_pays_operationnel(cible, referentiel)
+        villes_du_pays = [
+            v.city_id for v in referentiel.villes.values() if v.country_iso2 == cible
+        ]
+        if not any(
+            q.city_id in set(villes_du_pays) for q in referentiel.quartiers.values()
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"pays {cible} : aucun quartier au referentiel — un Kiosque "
+                    "habite un quartier (D-03), ajouter la matiere d'abord "
+                    "(POST /admin/referentiels/quartiers)."
+                ),
+            )
+        configuration.pays[cible] = ConfigurationPays(code=cible)
 
     if demande.actif:
         configuration.pays[cible].reactiver()

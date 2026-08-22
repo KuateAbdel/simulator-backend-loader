@@ -341,7 +341,11 @@ class CompanyDemande(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type_company: Literal["IMF", "BANK", "MERCHANT", "FONDATION"]
-    pays: Literal["CM", "CI", "BF", "SN"]
+    #: 22/08 (Yaniv) — le verrou statique `Literal["CM","CI","BF","SN"]` est
+    #: RETIRE : les 4 pays etaient le PREMIER USAGE, jamais une constante de
+    #: conception. La regle vivante est `_exiger_pays_operationnel` : fiche au
+    #: Loader + EN OPERATION sur la plateforme + matiere de composition.
+    pays: str = Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")
     ville: str = Field(min_length=2, max_length=80)
     #: Raison sociale imposee — sinon le Loader la compose (patronyme reel +
     #: forme + secteur), exactement comme dans un run.
@@ -394,6 +398,70 @@ class OwnerOverride(BaseModel):
 CompanyDemande.model_rebuild()
 
 
+async def _referentiel_applique() -> Any:
+    """Le referentiel VIVANT — classeur + surcouche, jamais le classeur seul."""
+    from app.repositories.surcouche import SurcoucheRepository
+    from app.routes.admin_referentiels import _geo
+
+    surcouche, _ = await SurcoucheRepository().charger()
+    return surcouche.appliquer(_geo())
+
+
+async def _exiger_pays_operationnel(pays: str, referentiel: Any) -> None:
+    """La distinction du 22/08 (Yaniv) : le Loader PORTE l'information — il
+    peut porter le globe entier — mais l'OPERATION est definie par ce qui
+    existe sur la plateforme. Aucun marqueur artificiel : l'etat operationnel
+    EST la presence sur config-service, verifiee en direct.
+
+    Trois exigences, TOUTES verifiees et TOUTES nommees dans le meme 422 —
+    le refus dit quoi faire, jamais un mur :
+      1. la fiche pays existe au Loader ;
+      2. le pays est EN OPERATION (present sur config-service) ;
+      3. la matiere de composition existe : patronymes, telco, villes.
+    """
+    from app.routes.admin_referentiels import _country_id
+    from app.services.generateur import PATRONYMES_PAR_PAYS
+
+    code = pays.strip().upper()
+    if referentiel.pays(code) is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"pays {code!r} inconnu du Loader — creer sa fiche d'abord "
+                "(POST /admin/referentiels/pays)."
+            ),
+        )
+    manques: list[str] = []
+    try:
+        await _country_id(code)
+    except ValueError:
+        manques.append(
+            "pas EN OPERATION sur la plateforme — le pousser d'abord "
+            f"(POST /admin/referentiels/pays/{code}/pousser)"
+        )
+    except Exception as erreur:
+        # config-service muet : on ne cree pas une company a l'aveugle — le
+        # zero-trust vaut aussi pour l'indisponibilite.
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"config-service injoignable — impossible de verifier que "
+                f"{code} est en operation ({type(erreur).__name__})"
+            ),
+        ) from erreur
+    if code not in PATRONYMES_PAR_PAYS:
+        manques.append("aucun patronyme pour composer un dirigeant (matiere generateur)")
+    if not referentiel.telcos_du_pays(code):
+        manques.append("aucun operateur telecom — pas de telephone composable (US-B7)")
+    if not any(v.country_iso2 == code for v in referentiel.villes.values()):
+        manques.append("aucune ville au referentiel (US-B4)")
+    if manques:
+        raise HTTPException(
+            status_code=422,
+            detail=f"pays {code} : " + " ; ".join(manques),
+        )
+
+
 async def _resoudre_territoire(pays: str, ville: str) -> tuple[str, str, str | None]:
     """(region, ville, quartier|None) — depuis le referentiel FUSIONNE avec la
     surcouche : une ville ajoutee par US-B4 est immediatement utilisable ici.
@@ -426,8 +494,14 @@ async def _resoudre_territoire(pays: str, ville: str) -> tuple[str, str, str | N
     )
 
 
-def _executeur_organisation(mode: Any) -> Any:
-    """Fabrique de l'executeur Organisation — doublee dans les tests."""
+def _executeur_organisation(mode: Any, referentiel: Any | None = None) -> Any:
+    """Fabrique de l'executeur Organisation — doublee dans les tests.
+
+    22/08 : accepte le referentiel APPLIQUE (classeur + surcouche) — le
+    classeur seul ignorait tout telco ou ville ajoutes par le Super-Admin.
+    `None` conserve l'ancien comportement (classeur), pour les appels du
+    module qui ne composent pas de company.
+    """
     from datetime import date
 
     from app.clients.account_service import AccountServiceClient
@@ -441,7 +515,7 @@ def _executeur_organisation(mode: Any) -> Any:
     return ExecuteurOrganisation(
         run_id=RUN_ADMIN,
         mode=mode,
-        referentiel=_geo(),
+        referentiel=referentiel if referentiel is not None else _geo(),
         statique=_statique(),
         # Ancre sur le run SENTINELLE + la MEME regle de reference que le
         # moteur (fin de fenetre configuree, sinon aujourd'hui). AUDIT 13/08 :
@@ -474,6 +548,8 @@ async def _composer_company(
         RapportOrganisation,
     )
 
+    referentiel = await _referentiel_applique()
+    await _exiger_pays_operationnel(demande.pays, referentiel)
     region, ville, quartier = await _resoudre_territoire(demande.pays, demande.ville)
     type_company = CompanyType[demande.type_company]
     est_imf = type_company is CompanyType.IMF
@@ -504,7 +580,7 @@ async def _composer_company(
         else None
     )
 
-    executeur = _executeur_organisation(mode)
+    executeur = _executeur_organisation(mode, referentiel=referentiel)
     rapport = RapportOrganisation(mode=mode)
     try:
         fiche = await executeur.creer_company(

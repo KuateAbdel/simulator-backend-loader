@@ -505,6 +505,38 @@ désormais les pays SANS régions (l'écran n'affichait que 24/48) · BUG-C1-04
 `DELETE /surcouche/{id}` expose la réversibilité CFG-03 (gardes anti-orphelin,
 classeur immuable → 404).
 
+## D-octies. LA DOCTRINE OPÉRATIONNELLE (22/08, Yaniv) — plus AUCUN verrou statique
+
+**Le principe posé par Yaniv** : le Loader PORTE l'information (il peut porter
+le globe) ; ce qui est EN OPÉRATION, c'est ce qui existe sur la plateforme —
+aucun marqueur artificiel, l'état opérationnel EST la présence sur
+config-service, vérifiée en direct. Les 4 pays cibles étaient le PREMIER
+USAGE, jamais une constante de conception. Système fluide, dynamique à
+l'extrême, MAIS tous les invariants de la vraie vie tenus (EF-02 intact).
+
+**Verrous statiques levés** : `Literal["CM","CI","BF","SN"]` de la company à
+l'unité → porte dynamique `_exiger_pays_operationnel` (fiche au Loader + EN
+OPÉRATION + matière : patronymes, telco, villes — refus 422 qui NOMME chaque
+manque, 503 si config-service muet : zéro-trust, on ne crée pas à l'aveugle) ·
+US-B3 admet un pays HORS des 4 au périmètre (mêmes conditions + ≥1 quartier,
+D-03) · la planification Organisation étend l'ordre CDC (les rangs des 4 ne
+bougent pas — ENF-15) · `valider_nationalite` paramétrable (défaut = 4) ·
+l'écart au CDC DIT toute extension de périmètre (CR-09 honnête) · l'exécuteur
+company reçoit le référentiel APPLIQUÉ (classeur+surcouche, plus le classeur
+seul).
+
+**Consolidation des routes pays (décision : « des doublons, on arrête »)** +
+**suppression de la création manuelle** (« pas de l'automatisation, c'est
+lourd ») : les pays entrent dans le Loader UNIQUEMENT par l'import backend
+(fichiers versionnés → script, invariants ligne à ligne). Surface finale :
+`GET /pays` (fiches+complétude+opération — matière du globe, points
+clignotants = présents des deux côtés) · `POST /pays/{iso}/pousser` (mise en
+opération depuis NOTRE fiche : devise créée là-bas si absente, villes du
+référentiel — rien n'est ressaisi, refus complet relayé, idempotent) ·
+`DELETE /surcouche/{id}` · US-B4/B7 régions/villes/quartiers/telcos INTACTS.
+L'ancienne `POST /pays` (payload ressaisi vers config-service) est supprimée.
+Tests réécrits : 1062.
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |

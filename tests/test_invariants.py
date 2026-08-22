@@ -123,9 +123,16 @@ class TestEtatCivil:
         with pytest.raises(InvariantViole, match="situation familiale"):
             valider_situation_familiale("CELIBATAIRE")
 
-    def test_nationalite_hors_pays_cibles_refusee(self) -> None:
-        with pytest.raises(InvariantViole, match="pays cibles"):
+    def test_nationalite_hors_perimetre_refusee(self) -> None:
+        with pytest.raises(InvariantViole, match="hors du perimetre"):
             valider_nationalite("FR")
+
+    def test_le_perimetre_est_parametrable_les_4_restent_le_defaut(self) -> None:
+        """22/08 — les 4 cibles sont le DEFAUT (premier usage), pas une borne :
+        l'appelant qui connait le perimetre ACTIF du run le passe."""
+        assert valider_nationalite("GN", pays_valides=("CM", "GN")) == "GN"
+        with pytest.raises(InvariantViole, match="hors du perimetre"):
+            valider_nationalite("GN")
 
     def test_nationalite_minuscule_normalisee(self) -> None:
         """Le serveur accepte `cm` en 201 la ou `ZZ` est refuse : la validation

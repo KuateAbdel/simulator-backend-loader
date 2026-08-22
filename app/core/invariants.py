@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Collection
 from datetime import date, datetime
 from typing import Final
 
@@ -214,18 +215,23 @@ def valider_situation_familiale(situation: str) -> str:
     return valeur
 
 
-def valider_nationalite(code: str) -> str:
-    """Code ISO 3166-1 alpha-2, en MAJUSCULES, et dans les 4 pays cibles.
+def valider_nationalite(code: str, pays_valides: Collection[str] | None = None) -> str:
+    """Code ISO 3166-1 alpha-2, en MAJUSCULES, et dans le PERIMETRE du run.
 
     Le serveur valide bien l'ISO — mais **sans tenir compte de la casse** :
     `cm` passe en 201 la ou `ZZ` est refuse (mesure 09/08). La base accumule
     donc `CM` et `cm`. Et rien ne l'empeche d'accepter un 5e pays.
+
+    22/08 (Yaniv) : le perimetre n'est plus une constante — les 4 cibles sont
+    le DEFAUT (premier usage), et l'appelant qui connait le perimetre ACTIF du
+    run le passe explicitement. L'invariant reste : hors perimetre = rejete.
     """
+    valides = tuple(pays_valides) if pays_valides is not None else PAYS_CIBLES
     valeur = str(code).strip().upper()
-    if valeur not in PAYS_CIBLES:
+    if valeur not in valides:
         raise InvariantViole(
-            f"nationalite '{code}' hors des 4 pays cibles {list(PAYS_CIBLES)} — `EF-05` : "
-            "toute operation ciblant un pays absent du referentiel est rejetee."
+            f"nationalite '{code}' hors du perimetre {sorted(valides)} — `EF-05` : "
+            "toute operation ciblant un pays absent du perimetre est rejetee."
         )
     return valeur
 

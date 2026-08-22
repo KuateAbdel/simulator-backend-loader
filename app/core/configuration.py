@@ -337,6 +337,14 @@ class ConfigurationExecution:
         for code in self.pays_inactifs:
             motif = self.pays[code].motif_inactivite
             ecarts.append(f"pays {code} desactive ({motif}) — OBJ-01 exige les 4 pays")
+        # 22/08 — le perimetre peut DEPASSER les 4 cibles (admission US-B3).
+        # C'est un choix volontaire, pas une erreur : mais le rapport le DIT,
+        # sinon CR-09 comparerait un run elargi au contrat des 4.
+        for code in sorted(set(self.pays_actifs) - set(PAYS_CIBLES)):
+            ecarts.append(
+                f"pays {code} actif HORS des 4 cibles du CDC — extension "
+                "volontaire du perimetre (admise par la porte US-B3)"
+            )
 
         if self.nb_clients != NB_CLIENTS:
             ecarts.append(
