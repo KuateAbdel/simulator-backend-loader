@@ -96,7 +96,9 @@ async def importer(villes_txt: Path, admin1_txt: Path, par: str, a_blanc: bool) 
                 admin1[(cc, code)] = champs[2] or champs[1]
 
         # index de l'existant, par nom normalise
-        regions_existantes: dict[tuple[str, str], object] = {}
+        from app.services.geographie import Region
+
+        regions_existantes: dict[tuple[str, str], Region] = {}
         for region in referentiel.regions.values():
             regions_existantes[(region.country_iso2, normaliser(region.name))] = region
         villes_existantes: dict[tuple[str, str], bool] = {}
@@ -125,15 +127,13 @@ async def importer(villes_txt: Path, admin1_txt: Path, par: str, a_blanc: bool) 
             population = int(champs[14] or 0)
 
             nom_region = admin1.get((cc, champs[10]))
-            region = None
-            if nom_region:
-                region = regions_existantes.get((cc, normaliser(nom_region)))
-                if region is not None:
-                    stats["reprises"] += 1
-            if region is None:
-                if not nom_region:
-                    refus.append(f"{cc}/{nom} : admin1 {champs[10]!r} inconnu — ville sautee")
-                    continue
+            if not nom_region:
+                refus.append(f"{cc}/{nom} : admin1 {champs[10]!r} inconnu — ville sautee")
+                continue
+            region: Region | None = regions_existantes.get((cc, normaliser(nom_region)))
+            if region is not None:
+                stats["reprises"] += 1
+            else:
                 try:
                     region = surcouche.ajouter_region(base, pays=cc, nom=nom_region)
                     regions_existantes[(cc, normaliser(nom_region))] = region
@@ -144,7 +144,7 @@ async def importer(villes_txt: Path, admin1_txt: Path, par: str, a_blanc: bool) 
             try:
                 surcouche.ajouter_ville(
                     base,
-                    region_id=region.region_id,  # type: ignore[union-attr]
+                    region_id=region.region_id,
                     nom=nom,
                     latitude=lat,
                     longitude=lon,
