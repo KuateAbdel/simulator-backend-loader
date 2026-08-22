@@ -2198,6 +2198,26 @@ class TestInventaireReconciliation:
 
 
 
+
+async def _semer_telco(iso: str, nom: str, court: str, motif: str, part: float,
+                       exemple: str) -> None:
+    """Equipe un pays de test d'un operateur — la porte d'operation exige au
+    moins un telco composable (calibrage 22/08)."""
+    from pathlib import Path as _Path
+
+    from app.repositories.surcouche import SurcoucheRepository
+    from app.services.geographie import charger_referentiel as _charger
+
+    depot = SurcoucheRepository()
+    surcouche, _ = await depot.charger()
+    surcouche.ajouter_telco(
+        _charger(_Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")),
+        pays=iso, network_name=nom, short_name=court, regex_msisdn=motif,
+        part_marche=part, exemple_msisdn=exemple,
+    )
+    await depot.enregistrer(surcouche, par="import-test")
+
+
 async def _semer_fiche_pays(**champs: Any) -> None:
     """Seme une fiche pays comme l'IMPORT BACKEND le fait — la seule porte
     d'entree des pays depuis la decision direction du 22/08 (plus de POST)."""
@@ -2234,24 +2254,19 @@ class TestUSB6CreationDePays:
         await _semer_fiche_pays(**self._GABON_FICHE)
         return entetes
 
-    async def test_pousser_part_de_NOTRE_fiche_rien_ressaisi(
+    async def test_un_pays_sans_telco_ne_se_pousse_PAS(
         self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
     ) -> None:
+        """Porte de completude (22/08) : EN OPERATION = UTILISABLE. Sans
+        operateur, aucun numero composable (EF-27) — on ne pousse pas une
+        coquille vide. Le refus NOMME la matiere manquante."""
         entetes = await self._fiche_gabon(client)
         reponse = await client.post(
             "/admin/referentiels/pays/GA/pousser", headers=entetes
         )
-        assert reponse.status_code == 200, reponse.text
-        corps = reponse.json()
-        assert corps["statut"] == "mis_en_operation"
-        assert corps["devise"] == {"code": "XAF", "statut": "deja_en_operation"}
-        envoye = _config_service_double["pays_crees"][0]
-        assert envoye["iso_name"] == "GA"
-        assert envoye["dial_code"] == "241", "compose depuis la fiche du Loader"
-        assert envoye["currencies"] == ["cur-xaf"], "la devise est resolue en UUID"
-        assert envoye["cities"] == ["Libreville"], (
-            "sans villes en referentiel, la capitale de la fiche part — jamais vide"
-        )
+        assert reponse.status_code == 422, reponse.text
+        assert "AUCUN operateur telecom" in reponse.json()["detail"]
+        assert _config_service_double["pays_crees"] == [], "rien ne part"
 
     async def test_pousser_fait_l_aller_COMPLET_devise_pays_villes_telcos(
         self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
@@ -2329,6 +2344,9 @@ class TestUSB6CreationDePays:
             dial_code="234", devise_iso="NGN", tva_percent=7.5,
             devise_nom="Naira", devise_decimales=2, banque_centrale="CBN",
         )
+        await _semer_telco(
+            "NG", "MTN Nigeria", "MTN NG", r"^234(803\d{7})$", 36.0, "2348031234567"
+        )
         reponse = await client.post(
             "/admin/referentiels/pays/NG/pousser", headers=entetes
         )
@@ -2359,6 +2377,10 @@ class TestUSB6CreationDePays:
 
         await _registre_vierge()
         entetes = await self._fiche_gabon(client)
+        await _semer_telco(
+            "GA", "Airtel Gabon", "Airtel GA", r"^241(0[2467]\d{6})$", 55.0,
+            "24102123456"
+        )
         reponse = await client.post(
             "/admin/referentiels/pays/GA/pousser", headers=entetes
         )

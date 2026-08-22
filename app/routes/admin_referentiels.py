@@ -871,6 +871,21 @@ async def pousser_pays_en_operation(
     ) or [fiche.capitale]
     fiche_devise = referentiel.devises.get(fiche.devise_iso)
     telcos_locaux = referentiel.telcos_du_pays(code)
+    # PORTE DE COMPLETUDE (22/08, recommandation QA validee par Yaniv) :
+    # EN OPERATION veut dire UTILISABLE. Un pays sans operateur ne compose
+    # aucun numero (EF-27) et n'onboarde personne — on ne pousse pas une
+    # coquille vide. Minimum viable : devise (garantie plus bas) + >= 1
+    # ville + >= 1 telco au plan composable.
+    if not telcos_locaux:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"pays {code} : AUCUN operateur telecom au referentiel — un "
+                "pays en operation sans telco ne peut composer aucun numero "
+                "(EF-27). Charger sa matiere telco d'abord (plan composable "
+                "+ part de marche, US-B7)."
+            ),
+        )
 
     echecs: list[str] = []
     admin = _config_admin()
@@ -983,10 +998,27 @@ async def pousser_pays_en_operation(
     finally:
         await admin.fermer()
 
+    # AVERTISSEMENTS de credibilite — NON bloquants, toujours DITS (calibrage
+    # 22/08) : un seul operateur ou des parts sommant sous 50 % operent, mais
+    # ne ressemblent a aucun marche africain — un bailleur le verrait.
+    avertissements: list[str] = []
+    if len(telcos_locaux) < 2:
+        avertissements.append(
+            f"{code} : un seul operateur au referentiel — marche peu credible, "
+            "completer la matiere telco des que possible"
+        )
+    somme_parts = sum(t.part_marche for t in telcos_locaux)
+    if somme_parts < 50:
+        avertissements.append(
+            f"{code} : parts de marche cumulees {somme_parts:.0f} % < 50 % — "
+            "la distribution des clients par operateur sera peu realiste"
+        )
+
     return {
         "pays": {"iso2": code, "id": identifiant, "nom_fr": fiche.nom_fr},
         "statut": "mis_en_operation" if cree else "deja_en_operation",
         "devise": {"code": fiche.devise_iso, "statut": devise_statut},
+        "avertissements": avertissements,
         "villes_envoyees": len(villes) if cree else villes_completees,
         "telcos": telcos_statuts,
         "echecs": echecs,
