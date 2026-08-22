@@ -29,48 +29,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-import unicodedata
 from dataclasses import replace
 from pathlib import Path
 
 from app.core.database import close, connect, ensure_indexes
 from app.repositories.surcouche import SurcoucheRepository
 from app.services.geographie import Region, charger_referentiel
+from scripts.normalisation_geo import cle_toponyme as cle
+from scripts.normalisation_geo import est_francaise
 
 CLASSEUR = Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")
-
-#: Traduction des mots administratifs/directionnels anglais -> francais.
-#: Uniquement des equivalences OFFICIELLES de toponymie — pas d'invention.
-TRADUCTIONS = {
-    "north": "nord", "south": "sud", "east": "est", "west": "ouest",
-    "northern": "nord", "southern": "sud", "eastern": "est", "western": "ouest",
-    "far": "extreme", "extreme": "extreme", "upper": "haut", "lower": "bas",
-    "central": "centre", "centre": "centre", "center": "centre",
-    "autonomous": "autonome", "district": "district", "island": "ile",
-    "lake": "lac", "river": "fleuve",
-}
-#: Mots vides retires (liaison), pour que « District Autonome d'Abidjan »
-#: et « Abidjan Autonomous District » donnent la meme cle.
-VIDES = {"de", "du", "des", "la", "le", "les", "of", "the", "d", "l",
-         "region", "province", "state"}
-
-
-def cle(nom: str) -> str:
-    """Cle de fusion : sans accents, traduite, sans mots vides, ordre trie."""
-    plat = "".join(
-        c for c in unicodedata.normalize("NFD", nom) if unicodedata.category(c) != "Mn"
-    ).lower().replace("-", " ").replace("'", " ")
-    mots = [TRADUCTIONS.get(m, m) for m in plat.split() if m not in VIDES]
-    return " ".join(sorted(mots))
-
-
-def est_francaise(nom: str) -> bool:
-    """La forme dont les mots sont deja francais (aucun mot traduit)."""
-    plat = "".join(
-        c for c in unicodedata.normalize("NFD", nom) if unicodedata.category(c) != "Mn"
-    ).lower().replace("-", " ").replace("'", " ")
-    return all(TRADUCTIONS.get(m, m) == m for m in plat.split() if m not in VIDES)
-
 
 async def executer(par: str, a_blanc: bool) -> int:
     base = charger_referentiel(CLASSEUR)
@@ -141,7 +109,7 @@ async def executer(par: str, a_blanc: bool) -> int:
         # VERIFICATION apres ecriture : plus aucun groupe > 1
         relue, _ = await depot.charger()
         verif = relue.appliquer(base)
-        restants = {}
+        restants: dict[tuple[str, str], list[str]] = {}
         for region in verif.regions.values():
             restants.setdefault((region.country_iso2, cle(region.name)), []).append(region.name)
         doublons_restants = {k: v for k, v in restants.items() if len(v) > 1}

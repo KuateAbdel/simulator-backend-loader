@@ -29,33 +29,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-import unicodedata
 from pathlib import Path
 
 from app.core.database import close, connect, ensure_indexes
 from app.repositories.surcouche import SurcoucheRepository
 from app.services.geographie import charger_referentiel
 from app.services.surcouche_referentiel import AjoutRefuse
+from scripts.normalisation_geo import cle_toponyme
 
 CLASSEUR = Path("docs/reference/Loader_Base_FinZuu_v1_1.xlsx")
 
-#: Mots generiques que GeoNames accole aux subdivisions et que nos libelles
-#: n'ont pas — retires AVANT comparaison, jamais des libelles stockes.
-MOTS_GENERIQUES = {
-    "region", "province", "district", "state", "county", "prefecture",
-    "governorate", "division", "area", "zone", "city", "municipality",
-    "department", "departement", "wilaya", "regional", "de", "du",
-    "la", "le", "of", "the",
-}
-
-
-def normaliser(nom: str) -> str:
-    """Cle de comparaison : sans accents, sans casse, sans mots generiques."""
-    sans_accents = "".join(
-        c for c in unicodedata.normalize("NFD", nom) if unicodedata.category(c) != "Mn"
-    )
-    mots = [m for m in sans_accents.lower().replace("-", " ").split() if m not in MOTS_GENERIQUES]
-    return " ".join(mots) or sans_accents.lower().strip()
+# La normalisation vit dans scripts/normalisation_geo.py — LA norme
+# partagee : cle TRADUITE (regle de geographe, 22/08) pour qu'un doublon
+# de traduction ne puisse plus jamais NAITRE a l'ingestion.
+normaliser = cle_toponyme
 
 
 def poids(population: int, capitale: bool) -> float:
