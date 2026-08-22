@@ -417,6 +417,7 @@ async def executer(
             registre=registre,
             audit=audit,
             perimetre_lending=configuration.perimetre_lending,
+            rapport_geo=referentiel.rapport,
         ).executer()
 
     async def _staff() -> RapportEtape:
@@ -474,6 +475,7 @@ async def executer(
             registre=registre,
             audit=audit,
             perimetre_lending=configuration.perimetre_lending,
+            rapport_geo=referentiel.rapport,
         ).executer()
         # `US-E3` — les mesures structurees partent avec le run, comme le
         # rapport texte : le dashboard les sert sans requeter FinZuu.

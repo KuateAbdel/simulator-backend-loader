@@ -59,6 +59,7 @@ from app.repositories import (
     LendersRegistryRepository,
     OrgHierarchyRepository,
 )
+from app.services.geographie import RapportGeographique
 
 
 class Verdict(StrEnum):
@@ -147,12 +148,19 @@ class ControleRecette:
         #: `CAT 11` — le perimetre du run. Un critere que le run n'a pas
         #: PROMIS de tenir est HORS PERIMETRE, pas NON VERIFIABLE.
         perimetre_lending: bool = False,
+        #: `EF-06` — le rapport de couverture du referentiel REELLEMENT
+        #: applique (classeur + surcouche). Audit du 22/08 : CR-01 portait des
+        #: comptes CODES EN DUR (« 51 regions · 50 villes ») devenus faux des
+        #: le premier ajout de surcouche — un rapport de recette qui invente
+        #: ses chiffres n'en est pas un.
+        rapport_geo: RapportGeographique | None = None,
     ) -> None:
         self.run_id = run_id
         self._hierarchie = hierarchie
         self._registre = registre
         self._audit = audit
         self._perimetre_lending = perimetre_lending
+        self._rapport_geo = rapport_geo
 
     async def executer(self) -> RapportRecette:
         rapport = RapportRecette(run_id=self.run_id)
@@ -392,7 +400,16 @@ class ControleRecette:
                 "CR-01",
                 "geographie complete et echantillonnable",
                 Verdict.TENU,
-                "51 regions · 50 villes · 82 quartiers · 0 orphelin (verifie au chargement)",
+                (
+                    f"{len(self._rapport_geo.pays)} pays · "
+                    f"{self._rapport_geo.nb_regions} regions · "
+                    f"{self._rapport_geo.nb_villes} villes · "
+                    f"{self._rapport_geo.nb_quartiers} quartiers · "
+                    f"{len(self._rapport_geo.orphelins)} orphelin(s) "
+                    "(referentiel applique du run, classeur + surcouche)"
+                )
+                if self._rapport_geo is not None
+                else "verifie au chargement (rapport EF-06 non transmis)",
             ),
             ResultatCritere(
                 "CR-03",
