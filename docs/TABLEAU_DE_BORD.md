@@ -537,6 +537,47 @@ référentiel — rien n'est ressaisi, refus complet relayé, idempotent) ·
 L'ancienne `POST /pays` (payload ressaisi vers config-service) est supprimée.
 Tests réécrits : 1062.
 
+## D-nonies. LE GLOBE AFRIQUE + complément de géographie (22/08 soir)
+
+**Globe en PROD dans l'écran Géographie** (frontend `dda65bb`→`d042a10`) :
+fond Natural Earth 1:50m (frontières réelles — les tracés Google sont
+propriétaires), tokens FinZuu, i18n FR/EN, tooltips, reduced-motion, états
+VIVANTS depuis `GET /pays` — un pays qui clignote est EN OPÉRATION (présent
+des deux côtés, vérifié en direct). **Le dynamisme s'est prouvé seul : le
+globe affiche 5 pays en opération, pas 4 — il a détecté CV (Cabo Verde),
+présent sur config-service depuis avant nous** (recon 14/08 : « ca/CV en
+plus des 4 »). QA navigateur prod : login réel, 0 erreur console, un bug
+visuel attrapé et corrigé (token `--background` inexistant → pays hors
+référentiel rendus noirs).
+
+**Complément de géographie « connaissance sûre »**
+(`scripts/completer_geographie.py`, commit `033664d`) : 24 pays Est/Sud/MR
++146 régions (découpages officiels — 12 pays au découpage COMPLET),
++157 villes GPS réels, +60 quartiers officiels (CBD Nairobi, Kariakoo,
+Bole, Sandton…) ; + les régions manquantes de l'audit (AO 2024, GQ
+Djibloho, ML Taoudénit/Ménaka). Local v11, serveur v21. **État prod :
+48 pays · 456 régions · 669 villes · 271 quartiers · plus AUCUN pays sans
+géographie.** Reste hors matière : telcos (parts de marché à demander),
+patronymes (C1 lot 2), fichiers `_2` de la direction à venir.
+
+## D-decies. GeoNames + le globe final (22/08, fin de journée)
+
+**Source de vérité installée : GeoNames** (geonames.org, CC-BY — le gazetier
+mondial) : subdivisions admin1 officielles + toutes les villes ≥ 15 000 hab,
+GPS et population. Extraits 48 pays versionnés (`docs/reference/geonames/`),
+importeur à fusion soignée (`importer_geonames.py` : régions RÉUTILISÉES par
+nom normalisé — 2311 correspondances, 170 créées ; 549 villes déjà connues
+reconnues). **PROD v22 : 48 pays · 626 régions · 3 148 villes ·
+271 quartiers — 2 920 villes aux coordonnées réelles.** 2 sauts déclarés
+(admin1 ET/28 hors fichier).
+
+**Globe finalisé en prod** (frontend `5e15101`) : marquages EXACTS de
+l'artefact validé (mer bleue, vert clignotant, ambre, anneaux — palette
+scopée clair+sombre, la page garde le chrome FinZuu) + vue table repliable
+des fiches (état/devise/TVA/complétude, i18n). Dynamisme prouvé : le globe
+a détecté seul CV en opération (présent sur config-service depuis la recon
+du 14/08). QA navigateur prod : 0 erreur console.
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |
