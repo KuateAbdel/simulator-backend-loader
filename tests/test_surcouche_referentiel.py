@@ -373,3 +373,39 @@ class TestPaysC1:
         ajouts = surcouche.ajouts()
         assert ajouts["pays"] == {"GN": "Guinée"}
         assert ajouts["devises"] == {"GNF": "Guinean Franc"}
+
+
+class TestRetraitTelco:
+    """BUG attrape par la batterie PROD du 22/08 : le retrait d'un telco
+    repondait « n'est pas un ajout de la surcouche » — et bloquait a jamais
+    le retrait du pays qui le portait (garde anti-orphelin sans issue)."""
+
+    def test_un_telco_ajoute_se_retire(self, base: ReferentielGeo) -> None:
+        surcouche = SurcoucheReferentiel()
+        telco = surcouche.ajouter_telco(
+            base, pays="CM", network_name="Nexttel", short_name="Nextt CM",
+            regex_msisdn=r"^237(66\d{7})$", part_marche=5.0,
+            exemple_msisdn="237661234567",
+        )
+        assert surcouche.retirer(telco.telco_id) is True
+        assert surcouche.vide
+
+    def test_le_pays_redevient_retirable_apres_son_telco(
+        self, base: ReferentielGeo
+    ) -> None:
+        surcouche = SurcoucheReferentiel()
+        surcouche.ajouter_pays(
+            base, iso2="EG", nom_fr="Égypte", nom_en="Egypt", capitale="Le Caire",
+            dial_code="20", devise_iso="EGP", tva_percent=14.0,
+            devise_nom="Egyptian Pound", devise_decimales=2,
+        )
+        telco = surcouche.ajouter_telco(
+            base, pays="EG", network_name="Vodafone Egypt", short_name="Voda EG",
+            regex_msisdn=r"^20(10\d{8})$", part_marche=40.0,
+            exemple_msisdn="201012345678",
+        )
+        with pytest.raises(AjoutRefuse, match="porte encore"):
+            surcouche.retirer("EG")
+        assert surcouche.retirer(telco.telco_id) is True
+        assert surcouche.retirer("EG") is True
+        assert surcouche.vide

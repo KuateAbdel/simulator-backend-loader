@@ -713,6 +713,14 @@ class SurcoucheReferentiel:
             del self.villes[identifiant]
         elif identifiant in self.quartiers:
             del self.quartiers[identifiant]
+        elif identifiant in self.telcos:
+            # BUG attrape par la batterie prod du 22/08 : un telco ajoute
+            # (`US-B7`) repondait « n'est pas un ajout de la surcouche » au
+            # retrait — la reversibilite CFG-03 le couvrait partout sauf ici,
+            # et un pays portant ce telco devenait IRRETIRABLE (garde
+            # anti-orphelin sans issue). Un telco n'a aucun enfant : retrait
+            # direct.
+            del self.telcos[identifiant]
         else:
             return False
         self.journal.append(f"retrait de {identifiant}")
