@@ -271,7 +271,7 @@ class ExecuteurStaff:
         except InvariantViole as erreur:
             # Refuse AVANT le reseau. Ce n'est pas un echec serveur : c'est la
             # couche anti-corruption qui fonctionne.
-            rapport.refuses_avant_reseau.append((etiquette, str(erreur)[:200]))
+            rapport.refuses_avant_reseau.append((etiquette, str(erreur)[:600]))
             return
 
         if not self.ecriture_reelle:
@@ -294,7 +294,7 @@ class ExecuteurStaff:
                 groupes=[role],
             )
         except Exception as erreur:
-            motif = f"{type(erreur).__name__}: {erreur}"[:200]
+            motif = f"{type(erreur).__name__}: {erreur}"[:600]
             logger.warning("staff %s en echec : %s", etiquette, motif)
             rapport.echoues.append((etiquette, motif))
             return

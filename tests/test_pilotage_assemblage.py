@@ -129,6 +129,7 @@ async def test_AU5_le_moteur_ENTIER_s_assemble_a_vide(base_de_test: None) -> Non
 
     run_id = uuid4()
     lignes: list[str] = []
+    users = _UsersLecture()
     code = await executer(
         RunMode.DRY_RUN,
         run_id=run_id,
@@ -136,7 +137,7 @@ async def test_AU5_le_moteur_ENTIER_s_assemble_a_vide(base_de_test: None) -> Non
         sortie=lignes.append,
         gerer_connexion=False,
         clients_http=ClientsHTTP(
-            users=_UsersLecture(),
+            users=users,
             faker=_fermable(tex.FauxFaker()),
             clients=_fermable(tex.FauxClientService()),
             companies=_LectureVide(),
@@ -160,6 +161,9 @@ async def test_AU5_le_moteur_ENTIER_s_assemble_a_vide(base_de_test: None) -> Non
     assert "STATUT" in rapport
     assert "aucune intention orpheline" in rapport, "la reconciliation est CLOSE"
     assert "CM : 40/40" in rapport, "le perimetre borne est respecte"
+    # La lecon du 21/08 : les adresses deja prises sur user-service sont semees
+    # AVANT toute emission — en DRY_RUN aussi, memes dependances que le reel.
+    assert "lister_emails" in users.appels, "INV-USR-02 est global — semence obligatoire"
 
 
 async def test_AU5_le_verrou_EF55_refuse_au_niveau_du_MOTEUR(

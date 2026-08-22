@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import random
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from hashlib import sha256
@@ -741,12 +742,27 @@ class Generateur:
             "l'execution ; emettre un doublon rendrait un HTTP 400 et perdrait le client."
         )
 
+    def reserver_emails(self, deja_prises: Iterable[str]) -> None:
+        """Seme les adresses DEJA PRISES sur la plateforme — avant toute emission.
+
+        `INV-USR-02` est global a user-service, pas local au run : sans cette
+        semence, `email()` regenerait a l'identique une adresse posee par un
+        chargement anterieur (le 400 « Identity already exists » qui a coute
+        4 companies au run REAL du 21/08). Semees ici, ces adresses declenchent
+        le meme suffixe deterministe que les collisions internes au run.
+        """
+        for adresse in deja_prises:
+            adresse = adresse.strip().lower()
+            if adresse:
+                self._emails_emis.add(adresse)
+
     def email(self, first_name: str, last_name: str) -> str:
         """Adresse unique par run, sur un domaine qui n'existe pas.
 
         L'unicite est garantie ici et non deleguee au serveur : user-service ne
         valide pas le format des courriels (INV-USR-22) mais impose leur unicite
-        (INV-USR-02).
+        (INV-USR-02) — et elle est GLOBALE : voir `reserver_emails`, seme au
+        lancement avec l'existant de la plateforme.
         """
         base = f"{_slug(first_name)}.{_slug(last_name)}"
         candidat = f"{base}@{DOMAINE_EMAIL}"

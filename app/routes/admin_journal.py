@@ -30,12 +30,21 @@ router = APIRouter(prefix="/admin/journal", tags=["admin — journal"])
 _CLES_ACTEUR = ("par", "cree_par", "modifie_par")
 
 
-def _vue(entree: Any) -> dict[str, Any]:
-    """La vue publique d'une entree — l'essentiel du « qui/quoi/quand »."""
+def _vue(entree: Any, resultat: dict[str, Any] | None) -> dict[str, Any]:
+    """La vue publique d'une entree — le « qui/quoi/quand » ET SON ISSUE.
+
+    21/08 : les deux creations refusees du pays GN s'affichaient comme des
+    CREATE ordinaires. Une intention sans son issue est une demi-verite —
+    l'ecran doit dire si le geste a abouti, et pourquoi sinon."""
     apres = entree.after or {}
     payload = apres.get("payload") or {}
     acteur = next((payload[c] for c in _CLES_ACTEUR if payload.get(c)), None)
     details = {k: v for k, v in payload.items() if k not in _CLES_ACTEUR}
+    if resultat is None:
+        issue, motif = "en_cours", None
+    else:
+        issue = str(resultat.get("statut", ""))
+        motif = resultat.get("motif")
     return {
         "quand": entree.timestamp.isoformat()
         if hasattr(entree.timestamp, "isoformat")
@@ -44,6 +53,8 @@ def _vue(entree: Any) -> dict[str, Any]:
         "entite": entree.entity_type,
         "cible": apres.get("cible", ""),
         "acteur": acteur,
+        "issue": issue,
+        "motif": motif,
         "details": details,
     }
 
@@ -56,10 +67,11 @@ async def lister_journal(
     """Les dernieres actions d'administration, les plus recentes d'abord."""
     entrees = await AuditTrailRepository().lister_admin(limite)
     return {
-        "entrees": [_vue(e) for e in entrees],
+        "entrees": [_vue(entree, resultat) for entree, resultat in entrees],
         "total": len(entrees),
         "note": (
             "actions d'administration (gestion des comptes, rôles, entités hors "
-            "run) — les plus récentes d'abord, lecture seule"
+            "run) — les plus récentes d'abord, avec l'issue de chaque geste, "
+            "lecture seule"
         ),
     }

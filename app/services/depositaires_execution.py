@@ -49,6 +49,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
+from pymongo.errors import DuplicateKeyError
+
 from app.clients.base import ErreurService
 from app.clients.contracts import ProductType
 from app.clients.depositary_service import COMPTES_DEPOSITAIRE, DepositaryServiceClient
@@ -124,6 +126,15 @@ class RapportDepositaires:
     kiosques_crees: list[str] = field(default_factory=list)
     kiosques_sautes: list[tuple[str, str]] = field(default_factory=list)
     kiosques_echoues: list[tuple[str, str]] = field(default_factory=list)
+    #: Les reseaux ENTIERS non deroules parce que leur IMF n'existe pas —
+    #: consequence d'un echec de l'etape Organisation (UC-07 : une Company en
+    #: echec ne stoppe pas le run), JAMAIS reattribues a une autre IMF. Le
+    #: 21/08, cette reattribution silencieuse (modulo) a produit deux Branches
+    #: pour la meme company dans la meme region et tue le premier run REAL.
+    reseaux_sautes: list[tuple[str, str]] = field(default_factory=list)
+    #: Ecritures de hierarchie refusees par les index d'unicite Mongo — le
+    #: garde-fou a fait son travail ; ici on le DIT au lieu de mourir dessus.
+    hierarchie_echouee: list[tuple[str, str]] = field(default_factory=list)
     souscriptions_creees: int = 0
     souscriptions_sautees: int = 0
     souscriptions_echouees: list[tuple[str, str]] = field(default_factory=list)
@@ -146,8 +157,8 @@ class RapportDepositaires:
         abouti alors que le plan prevoyait quelque chose : c'est alors
         systemique, pas anecdotique.
         """
-        echecs = self.kiosques_echoues + self.souscriptions_echouees
-        if not echecs:
+        echecs = self.kiosques_echoues + self.souscriptions_echouees + self.hierarchie_echouee
+        if not echecs and not self.reseaux_sautes:
             return RunStatus.COMPLETED
         if not self.kiosques_crees:
             return RunStatus.FAILED
@@ -171,7 +182,11 @@ class RapportDepositaires:
             lignes.append(f"  ECARTE {nom} : {motif}")
         for nom, motif in self.kiosques_sautes:
             lignes.append(f"  SAUTE  {nom} : {motif}")
+        for nom, motif in self.reseaux_sautes:
+            lignes.append(f"  ECHEC  {nom} : {motif}")
         for nom, motif in self.kiosques_echoues + self.souscriptions_echouees:
+            lignes.append(f"  ECHEC  {nom} : {motif}")
+        for nom, motif in self.hierarchie_echouee:
             lignes.append(f"  ECHEC  {nom} : {motif}")
         return "\n".join(lignes)
 
@@ -330,7 +345,7 @@ class ExecuteurDepositaires:
             # On ne rejoue pas : un 4xx designe notre payload, le repeter le
             # repeterait. Le detail serveur est tronque — il fuit des traces
             # Python (ANO-CPY-LEAK-07), on ne le parse jamais.
-            motif = f"HTTP {exc.status} : {exc.detail[:160]}"
+            motif = f"HTTP {exc.status} : {exc.detail[:600]}"
             rapport.kiosques_echoues.append((nom, motif))
             logger.warning("Kiosque %s en echec, poursuite : %s", nom, motif)
             return None
@@ -418,7 +433,7 @@ class ExecuteurDepositaires:
                     depositary_id, produit.product_id, type_produit=produit.type_produit
                 )
             except ErreurService as exc:
-                motif = f"HTTP {exc.status} : {exc.detail[:160]}"
+                motif = f"HTTP {exc.status} : {exc.detail[:600]}"
                 rapport.souscriptions_echouees.append((f"{nom_kiosque} -> {produit.nom}", motif))
                 continue
             except ValueError as exc:
@@ -461,34 +476,65 @@ class ExecuteurDepositaires:
                 )
                 continue
 
+            # LE PLAN DIT A QUI APPARTIENT CHAQUE BRANCHE — PAR SON RANG.
+            #
+            # Le plan partitionne les QUARTIERS entre les IMF et chaque Branche
+            # porte son `imf_rang`. Chaque IMF a donc une Branche par region ou
+            # elle opere et une Agence par ville — exactement ce que le Manuel
+            # decrit d'une Agence, « point de commercialisation distant du
+            # headquarter ».
+            #
+            # CRASH DU 21/08 (premier run REAL) : la version precedente faisait
+            # `porteuses[imf_rang % len(porteuses)]` en croyant « proteger » le
+            # cas d'une Organisation partielle. Avec 14 IMF creees sur 18
+            # planifiees, le modulo REPLIAIT deux rangs sur la meme company —
+            # deux Branches pour la meme IMF dans la meme region, `E11000` sur
+            # notre propre index, run mort. La regle est desormais celle
+            # d'UC-07, sans invention : le reseau d'une IMF absente est SAUTE
+            # et DECLARE — jamais reattribue, une IMF concurrente n'herite pas
+            # des guichets d'une autre.
+            par_rang = {porteuse.imf_rang: porteuse for porteuse in porteuses}
             for plan_branche in plan_pays.branches:
-                # LE PLAN DIT DESORMAIS A QUI APPARTIENT CHAQUE BRANCHE.
-                #
-                # Avant : `porteuses[rang % len(porteuses)]` — un tourniquet, qui
-                # donnait a chaque IMF une ou deux regions et pas un reseau. Le
-                # plan partitionne maintenant les QUARTIERS entre les IMF, et
-                # chaque Branche porte son `imf_rang`. Chaque IMF a donc une
-                # Branche par region ou elle opere et une Agence par ville —
-                # exactement ce que le Manuel decrit d'une Agence, « point de
-                # commercialisation distant du headquarter ».
-                #
-                # Le modulo protege le cas ou l'etape Organisation aurait produit
-                # moins d'IMF que le plan n'en prevoyait (UC-07, cas alternatif :
-                # une Company en echec ne stoppe pas le run).
-                company = porteuses[plan_branche.imf_rang % len(porteuses)]
+                company_ou_absente = par_rang.get(plan_branche.imf_rang)
                 region = self._referentiel.region(plan_branche.region_id)
                 nom_region = region.name if region else plan_branche.region_id
+                if company_ou_absente is None:
+                    nb_kiosques = sum(len(a.kiosques) for a in plan_branche.agences)
+                    rapport.reseaux_sautes.append(
+                        (
+                            f"{plan_pays.country_code} region {nom_region}",
+                            f"IMF de rang {plan_branche.imf_rang} absente (echec a "
+                            f"l'etape Organisation) — reseau saute : 1 Branche, "
+                            f"{len(plan_branche.agences)} Agence(s), "
+                            f"{nb_kiosques} Kiosque(s) non crees (UC-07)",
+                        )
+                    )
+                    continue
+                company = company_ou_absente
                 nom_branche = self._generateur.nom_branche(nom_region, plan_pays.country_code)
 
                 branche_id: UUID | None = None
                 if self.ecriture_reelle:
-                    branche = await self._hierarchie.ajouter_branche(
-                        run_id=self.run_id,
-                        company_id=company.company_id,
-                        name=nom_branche,
-                        country_code=plan_pays.country_code,
-                        region_id=plan_branche.region_id,
-                    )
+                    try:
+                        branche = await self._hierarchie.ajouter_branche(
+                            run_id=self.run_id,
+                            company_id=company.company_id,
+                            name=nom_branche,
+                            country_code=plan_pays.country_code,
+                            region_id=plan_branche.region_id,
+                        )
+                    except DuplicateKeyError as exc:
+                        # L'index d'unicite a refuse — c'est son role. On le
+                        # DIT et on poursuit : mourir ici masquerait la cause
+                        # et sacrifierait les reseaux suivants.
+                        rapport.hierarchie_echouee.append(
+                            (
+                                nom_branche,
+                                f"Branche refusee par l'index d'unicite "
+                                f"(run, company, region) : {exc.details or exc}",
+                            )
+                        )
+                        continue
                     branche_id = branche.id
                 rapport.branches_creees.append(nom_branche)
 
@@ -499,14 +545,24 @@ class ExecuteurDepositaires:
 
                     agence_id: UUID | None = None
                     if self.ecriture_reelle and branche_id is not None:
-                        agence = await self._hierarchie.ajouter_agence(
-                            run_id=self.run_id,
-                            branche_id=branche_id,
-                            company_id=company.company_id,
-                            name=nom_agence,
-                            country_code=plan_pays.country_code,
-                            city_id=plan_agence.city_id,
-                        )
+                        try:
+                            agence = await self._hierarchie.ajouter_agence(
+                                run_id=self.run_id,
+                                branche_id=branche_id,
+                                company_id=company.company_id,
+                                name=nom_agence,
+                                country_code=plan_pays.country_code,
+                                city_id=plan_agence.city_id,
+                            )
+                        except DuplicateKeyError as exc:
+                            rapport.hierarchie_echouee.append(
+                                (
+                                    nom_agence,
+                                    f"Agence refusee par l'index d'unicite "
+                                    f"(run, company, ville) : {exc.details or exc}",
+                                )
+                            )
+                            continue
                         agence_id = agence.id
                     rapport.agences_creees.append(nom_agence)
 

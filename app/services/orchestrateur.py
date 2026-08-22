@@ -63,6 +63,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from traceback import format_exc
 from typing import Any, Final, Protocol
 from uuid import UUID
 
@@ -135,6 +136,12 @@ class ResultatEtape:
     issue: Issue
     detail: str = ""
     duree_s: float = 0.0
+    #: Le RESUME COMPLET du module — persiste avec le checkpoint depuis le
+    #: 21/08. `detail` reste la ligne courte (l'etiquette d'un tableau) ; mais
+    #: le premier run REAL a montre qu'on ne diagnostique RIEN avec 160
+    #: caracteres : les trois causes ont du etre re-prouvees a la main faute
+    #: d'avoir persiste les messages entiers.
+    resume_complet: str = ""
 
     @property
     def bloquante(self) -> bool:
@@ -324,18 +331,27 @@ class Orchestrateur:
         except Exception as erreur:
             # Une exception qui traverse un executeur est un defaut de CE
             # module, pas du run. On l'isole ici pour que les autres etapes
-            # restent interpretables — et on ne la rejoue pas.
+            # restent interpretables — et on ne la rejoue pas. La trace
+            # COMPLETE part dans `resume_complet` : le 21/08, le E11000
+            # tronque a masque la cle en collision, donc la cause.
             duree = (datetime.now(UTC) - debut).total_seconds()
-            motif = f"{type(erreur).__name__}: {erreur}"[:200]
+            motif = f"{type(erreur).__name__}: {erreur}"[:600]
             logger.exception("etape %s en exception", etape)
-            return ResultatEtape(etape, Issue.FAILED, motif, duree)
+            return ResultatEtape(
+                etape,
+                Issue.FAILED,
+                motif,
+                duree,
+                resume_complet=f"{type(erreur).__name__}: {erreur}\n\n{format_exc()}",
+            )
 
         duree = (datetime.now(UTC) - debut).total_seconds()
         issue = {
             RunStatus.COMPLETED: Issue.COMPLETED,
             RunStatus.PARTIAL: Issue.PARTIAL,
         }.get(rapport_module.statut, Issue.FAILED)
-        return ResultatEtape(etape, issue, _essentiel(rapport_module.resume()), duree)
+        resume = rapport_module.resume()
+        return ResultatEtape(etape, issue, _essentiel(resume), duree, resume_complet=resume)
 
     @staticmethod
     def _resume_utile(texte: str) -> str:
@@ -358,6 +374,9 @@ class Orchestrateur:
                 "detail": resultat.detail,
                 "duree_s": round(resultat.duree_s, 2),
                 "mode": self.mode.value,
+                # Le rapport ENTIER du module — 21/08 : une ligne de 160
+                # caracteres ne permet aucun diagnostic apres coup.
+                "resume": resultat.resume_complet,
             },
         )
 

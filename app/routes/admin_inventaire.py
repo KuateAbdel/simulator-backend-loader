@@ -92,7 +92,7 @@ async def groupes(
 @router.delete("/groupes/{groupe_id}")
 async def supprimer_groupe(
     groupe_id: Annotated[str, Path(min_length=1, max_length=64)],
-    _: Annotated[SessionAdmin, Depends(exige_super_admin)],
+    session: Annotated[SessionAdmin, Depends(exige_super_admin)],
 ) -> dict[str, Any]:
     """Suppression INDIVIDUELLE d'un de NOS groupes — la seule action.
 
@@ -136,7 +136,7 @@ async def supprimer_groupe(
             entity_id=uuid_stable(groupe_id),
             operation="DELETE",
             cible="user-service",
-            payload={"name": nom},
+            payload={"name": nom, "par": session.email},
         ) as suivi:
             try:
                 await client.supprimer_groupe(groupe_id)
@@ -257,7 +257,7 @@ class DemandeAdoption(BaseModel):
 @router.post("/groupes/adoption")
 async def adopter_groupes(
     demande: DemandeAdoption,
-    _: Annotated[SessionAdmin, Depends(exige_admin)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Adopte au registre des groupes DEJA presents sur user-service.
 
@@ -299,7 +299,7 @@ async def adopter_groupes(
             entity_id=uuid_stable(gid),
             operation="ADOPTION",
             cible="registre Loader — groupe preexistant reconnu notre",
-            payload={"name": nom},
+            payload={"name": nom, "par": session.email},
         ) as suivi:
             suivi.reussi({"group_id": gid, "name": nom})
         issues.append({"id": gid, "nom": nom, "issue": "adopte"})
@@ -332,7 +332,7 @@ class EtatDepositaireDemande(BaseModel):
 async def changer_etat_depositaire(
     depositaire_id: Annotated[str, Path(min_length=1, max_length=64)],
     demande: EtatDepositaireDemande,
-    _: Annotated[SessionAdmin, Depends(exige_admin)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Active/desactive un depositaire LA-BAS — avec la verite D-DEP-8.
 
@@ -372,7 +372,12 @@ async def changer_etat_depositaire(
             entity_id=uuid_stable(depositaire_id),
             operation="UPDATE",
             cible="depositary-service PATCH /status",
-            payload={"name": nom, "actif": demande.actif, "motif": demande.motif},
+            payload={
+                "name": nom,
+                "actif": demande.actif,
+                "motif": demande.motif,
+                "par": session.email,
+            },
         ) as suivi:
             try:
                 await client.changer_statut(depositaire_id, demande.actif)

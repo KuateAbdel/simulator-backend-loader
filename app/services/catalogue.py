@@ -140,6 +140,20 @@ class ProduitCollecte:
     #: leurs initiales (« Compte Epargne Entreprise » / « Collecte Cacao »), un
     #: code declare ne collisionne jamais en silence.
     code: str = ""
+    #: LE PRIX DE LA MESURE — le 422 du 21/08 (premier run REAL).
+    #:
+    #: product-service refuse une policy `PRODUCT` dont `measure_price` vaut 0 :
+    #: « The fields measure and measure_price are required for PRODUCT
+    #: collection policy » (message COMPLET, reproduit sur piece le 21/08 —
+    #: leur validation traite 0 comme absent, anomalie remontee par ailleurs).
+    #: Nous envoyions 0.0 en dur : « Warrantage Cerealier » et « Collecte Cacao
+    #: Cooperative » ne pouvaient JAMAIS etre crees.
+    #:
+    #: Comme `measure` (`D-PRD-8`), le prix est un CHOIX METIER explicite, en
+    #: francs CFA par kilogramme : une collecte en nature sans prix de mesure
+    #: ne peut valoriser aucun depot. `0.0` reste la valeur des `CASH`, ou la
+    #: mesure ne se paie pas — le serveur l'accepte, mesure du meme jour.
+    prix_mesure: float = 0.0
 
     def __post_init__(self) -> None:
         """Un `CASH_DAT` sans terme n'est pas un depot a terme, et un `CASH`
@@ -157,6 +171,12 @@ class ProduitCollecte:
                 f"{self.nom!r} : `code` absent — sans lui, `short_name` serait "
                 "VIDE et la double cle d'unicite (ANO-PRD-UNIQ-01) perdrait "
                 "sa seconde branche."
+            )
+        if (self.policy_type is PolicyType.PRODUCT) and self.prix_mesure <= 0:
+            raise ValueError(
+                f"{self.nom!r} : policy_type=PRODUCT exige `prix_mesure` > 0 — "
+                "product-service refuse measure_price=0 en 422 (mesure du "
+                "21/08) et une collecte en nature sans prix ne valorise rien."
             )
 
     @property
@@ -255,6 +275,9 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         500000.0,
         0.0,
         code="WAR_IND",
+        # Mil/sorgho au prix officiel campagne sahelienne : ~240 FCFA/kg
+        # (SONAGESS Burkina, ordre de grandeur 2024-2026).
+        prix_mesure=240.0,
     ),
     # D-PRD-8 : `measure` toujours choisi explicitement. Le cacao se pese —
     # KILOGRAM est un choix metier, pas la valeur que la WebApp injecte en dur.
@@ -267,6 +290,8 @@ CATALOGUE_COLLECT: Final[tuple[ProduitCollecte, ...]] = (
         10000000.0,
         0.0,
         code="CACAO_CORP",
+        # Cacao bord champ, prix garanti CI campagne 2024/25 : 1800 FCFA/kg.
+        prix_mesure=1800.0,
     ),
 )
 
@@ -423,6 +448,8 @@ def policy_collect(produit: ProduitCollecte) -> dict[str, Any]:
 
     `measure` est TOUJOURS explicite (D-PRD-8) : la WebApp l'injecte en dur a
     KILOGRAM sans que l'operateur le sache, on ne reproduit pas ce defaut.
+    `measure_price` aussi, depuis le 422 du 21/08 : product-service refuse 0
+    pour une policy PRODUCT — le prix vient du produit, jamais d'un defaut.
     """
     return {
         "name": produit.nom,
@@ -430,7 +457,7 @@ def policy_collect(produit: ProduitCollecte) -> dict[str, Any]:
         "interest_type": "MONTHLY",
         "interest_rate": produit.taux,
         "measure": produit.measure.value,
-        "measure_price": 0.0,
+        "measure_price": produit.prix_mesure,
         "amount_min": produit.montant_min,
         "amount_max": produit.montant_max,
         "penalty_type": "PERCENT",

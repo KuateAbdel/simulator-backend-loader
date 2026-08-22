@@ -50,6 +50,18 @@ class CompanyPorteuse:
     nom: str
     country_code: str
     devise: str
+    #: Le RANG DE PLAN de cette IMF dans son pays — la cle qui la relie aux
+    #: `PlanBranche.imf_rang` qui lui appartiennent.
+    #:
+    #: LE CRASH DU 21/08 (premier run REAL en production) : l'executeur des
+    #: Depositaires retrouvait la porteuse par `porteuses[imf_rang %
+    #: len(porteuses)]`. Quand l'etape Organisation ne cree que 14 IMF sur les
+    #: 18 planifiees (collisions d'identite), le modulo REPLIE deux rangs
+    #: distincts sur la meme company — deux Branches pour la meme IMF dans la
+    #: meme region, `E11000` sur `uniq_branche_par_company_region_run`, run
+    #: mort. Le rang est donc porte ICI, par la porteuse elle-meme : une IMF
+    #: manquante laisse un rang absent, jamais un rang reattribue.
+    imf_rang: int = 0
 
 
 @dataclass(frozen=True, slots=True)

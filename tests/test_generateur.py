@@ -138,6 +138,23 @@ class TestUnicite:
         """Aucune adresse generee ne doit pouvoir atteindre une vraie boite."""
         assert generateur.email("Ines", "Tamadou").endswith(".local")
 
+    def test_une_adresse_deja_prise_sur_la_plateforme_n_est_jamais_reemise(self) -> None:
+        """LE 400 DU 21/08 — `INV-USR-02` est GLOBAL a user-service, pas local
+        au run : `mbarga.mbarga@...` existait depuis un chargement anterieur et
+        le run l'a regeneree a l'identique. Semee via `reserver_emails`, la meme
+        adresse doit basculer sur le suffixe deterministe, jamais repartir."""
+        naif = Generateur(RUN_ID)
+        adresse_prise = naif.email("Mbarga", "Mbarga")  # ce qu'un run naif emettrait
+
+        seme = Generateur(RUN_ID)
+        seme.reserver_emails({adresse_prise, "", "  AUTRE@EXEMPLE.LOCAL  "})
+        emise = seme.email("Mbarga", "Mbarga")
+
+        assert emise != adresse_prise
+        assert emise.startswith("mbarga.mbarga2@")
+        # La normalisation vaut aussi pour la casse et les espaces semes.
+        assert "autre@exemple.local" in seme._emails_emis
+
 
 class TestReproductibilite:
     def test_meme_run_id_meme_resultat(self) -> None:

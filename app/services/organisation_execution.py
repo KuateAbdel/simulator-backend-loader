@@ -358,6 +358,10 @@ class ExecuteurOrganisation:
         telephone: str,
         rapport: RapportOrganisation,
         est_imf: bool = False,
+        #: Le rang de plan de l'IMF dans son pays — voyage avec la porteuse
+        #: jusqu'aux Depositaires (crash du 21/08 : sans lui, un rang manquant
+        #: etait recree par modulo sur une autre company).
+        imf_rang: int = 0,
         raison_imposee: str | None = None,
         #: Override operateur (US-D1 editable, 17/08) : industries/secteurs
         #: CHOISIS dans le referentiel via les listes deroulantes de l'ecran.
@@ -464,7 +468,9 @@ class ExecuteurOrganisation:
                 # Identifiant fictif : en DRY_RUN les Depositaires ne doivent
                 # RIEN ecrire, mais ils doivent pouvoir derouler leur plan pour
                 # que le rapport a blanc soit complet.
-                rapport.porteuses.append(CompanyPorteuse(uuid4(), raison, pays, devise))
+                rapport.porteuses.append(
+                    CompanyPorteuse(uuid4(), raison, pays, devise, imf_rang=imf_rang)
+                )
             logger.info("[DRY_RUN] Company %s (%s, %s) — payload valide", raison, pays, devise)
             # US-D1 (15/08) : l'apercu montre la MATIERE composee — tout est
             # deja calcule ici, la fiche a blanc n'a aucune raison d'etre
@@ -510,7 +516,7 @@ class ExecuteurOrganisation:
         except ErreurService as exc:
             # ANO-CPY-BUG-06 et consorts : on journalise et on poursuit.
             # Le detail serveur est tronque — il fuit des traces Python.
-            motif = f"HTTP {exc.status} : {exc.detail[:160]}"
+            motif = f"HTTP {exc.status} : {exc.detail[:600]}"
             rapport.companies_echouees.append((raison, motif))
             logger.warning("Company %s en echec, poursuite : %s", raison, motif)
             return None
@@ -525,7 +531,9 @@ class ExecuteurOrganisation:
             # Seules les IMF portent une hierarchie (`UC-09`) — un bailleur de
             # fonds n'a pas de guichet de quartier. L'identifiant voyage avec
             # le rapport : la suite de la chaine ne doit pas le redecouvrir.
-            rapport.porteuses.append(CompanyPorteuse(UUID(company_id), raison, pays, devise))
+            rapport.porteuses.append(
+                CompanyPorteuse(UUID(company_id), raison, pays, devise, imf_rang=imf_rang)
+            )
 
         # D-CMP-2 verifie APRES coup, jamais presume.
         if self._companies.identifiant_owner(company):
@@ -594,7 +602,7 @@ class ExecuteurOrganisation:
                 company_id=company_id,
             )
         except ErreurService as exc:
-            rapport.admins_echoues.append((short_name, f"HTTP {exc.status} : {exc.detail[:160]}"))
+            rapport.admins_echoues.append((short_name, f"HTTP {exc.status} : {exc.detail[:600]}"))
             return
         rapport.admins_crees.append(email)
 
@@ -617,8 +625,8 @@ class ExecuteurOrganisation:
         try:
             await self._comptes.crediter(payload)
         except ErreurService as exc:
-            rapport.comptes_echoues.append((f"{nom}/dotation CAPITAL", exc.detail[:160]))
-            logger.warning("Dotation CAPITAL de %s en echec : %s", nom, exc.detail[:160])
+            rapport.comptes_echoues.append((f"{nom}/dotation CAPITAL", exc.detail[:600]))
+            logger.warning("Dotation CAPITAL de %s en echec : %s", nom, exc.detail[:600])
             return
 
         reel = await self._comptes.solde(capital_id)
@@ -660,7 +668,7 @@ class ExecuteurOrganisation:
             await self._companies.creer_licence(company_id, packages, debut, fin)
             rapport.licences_creees.append(company_id)
         except ErreurService as exc:
-            rapport.companies_echouees.append((f"licence {company_id}", exc.detail[:160]))
+            rapport.companies_echouees.append((f"licence {company_id}", exc.detail[:600]))
 
     # ----------------------------------------------------------------------
     # UC-08 et UC-10 — Lenders et leurs 4 comptes
@@ -718,7 +726,7 @@ class ExecuteurOrganisation:
             try:
                 cree = await self._comptes.creer_compte(payload)
             except ErreurService as exc:
-                rapport.comptes_echoues.append((f"{nom}/{role}", exc.detail[:160]))
+                rapport.comptes_echoues.append((f"{nom}/{role}", exc.detail[:600]))
                 continue
             identifiant = self._comptes.identifiant(cree)
             if identifiant:
@@ -882,6 +890,9 @@ class ExecuteurOrganisation:
                     telephone=self._telephone_du_pays(pays, index),
                     rapport=rapport,
                     est_imf=est_imf,
+                    # Les IMF du pays sont les indices 0..nb_imf-1, dans l'ordre
+                    # du plan : l'index EST le rang (`PlanBranche.imf_rang`).
+                    imf_rang=index,
                 )
                 if company is None:
                     continue

@@ -363,7 +363,7 @@ class ExecuteurCatalogue:
                 # On ne rejoue pas : un 4xx designe notre payload, le repeter le
                 # repeterait. Le detail est tronque — les messages fuient des
                 # traces Python (`ANO-CPY-LEAK-07`), on ne les parse jamais.
-                motif = f"HTTP {exc.status} : {exc.detail[:160]}"
+                motif = f"HTTP {exc.status} : {exc.detail[:600]}"
                 suivi.echoue(motif)
                 rapport.echoues.append((nom, motif))
                 logger.warning("produit %s en echec, poursuite : %s", nom, motif)

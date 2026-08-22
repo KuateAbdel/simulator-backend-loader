@@ -82,7 +82,9 @@ async def _country_id(pays: str) -> str:
     raise ValueError(f"pays {pays!r} introuvable sur config-service")
 
 
-async def _envoyer_config_service(action: str, cible_locale: str, operation: Any) -> dict[str, Any]:
+async def _envoyer_config_service(
+    action: str, cible_locale: str, operation: Any, par: str | None = None
+) -> dict[str, Any]:
     """L'ALLER COMPLET (13/08, Yaniv) : enregistre chez nous PUIS envoye a
     config-service. L'ordre est le write-ahead : notre trace d'abord. Un echec
     d'envoi laisse l'ajout LOCAL en place et se DIT — jamais silencieux, et
@@ -100,7 +102,7 @@ async def _envoyer_config_service(action: str, cible_locale: str, operation: Any
             entity_id=uuid5(NAMESPACE_OID, f"{action}:{cible_locale}"),
             operation="UPDATE",
             cible="config-service",
-            payload={"action": action, "cible": cible_locale},
+            payload={"action": action, "cible": cible_locale, "par": par},
         ) as suivi:
             fiche = await operation()
             suivi.reussi({"resultat": "envoye"})
@@ -108,7 +110,7 @@ async def _envoyer_config_service(action: str, cible_locale: str, operation: Any
     except Exception as erreur:
         return {
             "statut": "echec — l'ajout LOCAL reste en place, renvoyer plus tard",
-            "motif": f"{type(erreur).__name__}: {str(erreur)[:160]}",
+            "motif": f"{type(erreur).__name__}: {str(erreur)[:600]}",
         }
 
 
@@ -234,7 +236,9 @@ async def ajouter_ville(
         async def _envoi() -> Any:
             return await admin.ajouter_ville(await _country_id(pays_cible), ville.name)
 
-        envoi = await _envoyer_config_service("ajouter_ville", ville.name, _envoi)
+        envoi = await _envoyer_config_service(
+            "ajouter_ville", ville.name, _envoi, par=session.email
+        )
     finally:
         await admin.fermer()
 
@@ -353,7 +357,9 @@ async def ajouter_telco(
                 await _country_id(telco.country_iso2), str(identifiant)
             )
 
-        envoi = await _envoyer_config_service("ajouter_telco", telco.network_name, _envoi)
+        envoi = await _envoyer_config_service(
+            "ajouter_telco", telco.network_name, _envoi, par=session.email
+        )
     finally:
         await admin.fermer()
 
@@ -836,15 +842,25 @@ async def creer_pays(
             entity_id=entite,
             operation="CREATE",
             cible="config-service POST /countries/create",
-            payload={"iso_name": demande.iso_name, "name_en": demande.name_en},
+            payload={
+                "iso_name": demande.iso_name,
+                "name_en": demande.name_en,
+                "par": session.email,
+            },
         ) as suivi:
             try:
                 fiche, cree = await admin.creer_pays_si_absent(payload)
             except ErreurService as exc:
-                suivi.echoue(f"HTTP {exc.status}")
+                # Le REFUS COMPLET voyage — 21/08 : la creation du pays GN a
+                # echoue deux fois en pleine presentation direction, et ce 502
+                # muet a rendu la cause indiagnosticable depuis l'ecran.
+                suivi.echoue(f"HTTP {exc.status} : {exc.detail[:600]}")
                 raise HTTPException(
                     status_code=502,
-                    detail=f"config-service a refuse la creation : HTTP {exc.status}",
+                    detail=(
+                        f"config-service a refuse la creation : HTTP {exc.status} "
+                        f"— {exc.detail[:600]}"
+                    ),
                 ) from exc
             identifiant = str(fiche.get("id") or fiche.get("_id") or "")
             if not cree:
@@ -927,15 +943,21 @@ async def creer_devise(
             entity_id=entite,
             operation="CREATE",
             cible="config-service POST /currencies/create",
-            payload={"iso_name": demande.iso_name},
+            payload={"iso_name": demande.iso_name, "par": session.email},
         ) as suivi:
             try:
                 fiche, cree = await admin.creer_devise_si_absent(payload)
             except ErreurService as exc:
-                suivi.echoue(f"HTTP {exc.status}")
+                # Le REFUS COMPLET voyage — 21/08 : la creation du pays GN a
+                # echoue deux fois en pleine presentation direction, et ce 502
+                # muet a rendu la cause indiagnosticable depuis l'ecran.
+                suivi.echoue(f"HTTP {exc.status} : {exc.detail[:600]}")
                 raise HTTPException(
                     status_code=502,
-                    detail=f"config-service a refuse la creation : HTTP {exc.status}",
+                    detail=(
+                        f"config-service a refuse la creation : HTTP {exc.status} "
+                        f"— {exc.detail[:600]}"
+                    ),
                 ) from exc
             identifiant = str(fiche.get("id") or fiche.get("_id") or "")
             if not cree:
@@ -1195,7 +1217,7 @@ async def telcos_config(
 async def changer_etat_telco(
     telco_id: Annotated[str, Path(min_length=1, max_length=64)],
     demande: EtatRessourceDemande,
-    _: Annotated[SessionAdmin, Depends(exige_admin)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Active/desactive un operateur LA-BAS — la garde parle avant le reseau.
 
@@ -1230,7 +1252,12 @@ async def changer_etat_telco(
             entity_id=uuid_stable(telco_id),
             operation="UPDATE",
             cible="config-service PATCH /telcos/(de)activate",
-            payload={"name": nom, "actif": demande.actif, "motif": demande.motif},
+            payload={
+                "name": nom,
+                "actif": demande.actif,
+                "motif": demande.motif,
+                "par": session.email,
+            },
         ) as suivi:
             try:
                 if demande.actif:

@@ -153,13 +153,15 @@ def _composer(demande: ProduitDemande) -> tuple[ProduitCollecte, dict[str, Any]]
             demande.taux,
             duree_mois=demande.duree_mois,
             code=demande.code,
+            # Le prix de mesure de l'OPERATEUR entre dans le produit AVANT la
+            # garde `__post_init__` : un PRODUCT sans prix est refuse ici en
+            # 422 nomme, jamais decouvert sur product-service (21/08).
+            prix_mesure=demande.measure_price or 0.0,
         )
     except ValueError as erreur:
         raise HTTPException(status_code=422, detail=[str(erreur)]) from erreur
 
     policy = policy_collect(produit)
-    if demande.measure_price is not None:
-        policy["measure_price"] = demande.measure_price
     payload = {
         "type": ProductType.COLLECT.value,
         "name": produit.nom_recherche,
@@ -277,7 +279,7 @@ async def creer_produit(
             entity_id=uuid5(NAMESPACE_OID, produit.marqueur),
             operation="CREATE",
             cible="product-service",
-            payload={"name": produit.nom, "short_name": produit.marqueur},
+            payload={"name": produit.nom, "short_name": produit.marqueur, "par": session.email},
         ) as suivi:
             try:
                 reponse = await client.creer_produit(payload)
@@ -678,7 +680,7 @@ class GroupeDemande(BaseModel):
 @router.post("/groupes", status_code=201)
 async def creer_groupe(
     demande: GroupeDemande,
-    _: Annotated[SessionAdmin, Depends(exige_admin)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Creation d'un groupe a l'unite — et le Loader SAIT quoi envoyer.
 
@@ -740,7 +742,7 @@ async def creer_groupe(
             entity_id=entite,
             operation="CREATE",
             cible="user-service POST /api/v1/groupes/create",
-            payload={"name": demande.nom, "tag": demande.tag},
+            payload={"name": demande.nom, "tag": demande.tag, "par": session.email},
         ) as suivi:
             try:
                 reponse = await client.creer_groupe(
@@ -1016,7 +1018,7 @@ async def apercu_depositaire(
 @router.post("/depositaires", status_code=201)
 async def creer_depositaire(
     demande: DepositaireDemande,
-    _: Annotated[SessionAdmin, Depends(exige_admin)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """`US-D3` etape 2 — gardes re-jouees, write-ahead, POST, RELECTURE.
 
@@ -1039,7 +1041,7 @@ async def creer_depositaire(
             entity_id=uuid5(NAMESPACE_OID, f"finzuu-depositaire:{marqueur}"),
             operation="CREATE",
             cible="depositary-service POST /api/v1/depositaries/create",
-            payload={"name": marqueur, "company_id": demande.company_id},
+            payload={"name": marqueur, "company_id": demande.company_id, "par": session.email},
         ) as suivi:
             try:
                 reponse = await client.creer(
@@ -1151,7 +1153,7 @@ async def licences_de_company(
 async def creer_licence_company(
     company_id: str,
     demande: LicenceDemande,
-    _: Annotated[SessionAdmin, Depends(exige_admin)],
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
 ) -> dict[str, Any]:
     """Attribue une licence a une company A NOUS — le geste exact du run.
 
@@ -1188,7 +1190,11 @@ async def creer_licence_company(
             entity_id=uuid5(NAMESPACE_OID, f"finzuu-licence:{company_id}"),
             operation="CREATE",
             cible="company-service POST /api/v1/licenses/",
-            payload={"company_id": company_id, "packages": list(demande.packages)},
+            payload={
+                "company_id": company_id,
+                "packages": list(demande.packages),
+                "par": session.email,
+            },
         ) as suivi:
             try:
                 await client.creer_licence(

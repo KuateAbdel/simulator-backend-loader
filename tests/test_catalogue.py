@@ -148,6 +148,36 @@ class TestPolicyEmbarquee:
         for payload in payloads_collect():
             assert payload["policy"]["measure"] in ("KILOGRAM", "LITER")
 
+    def test_une_policy_PRODUCT_porte_un_prix_de_mesure_reel(self) -> None:
+        """LE 422 DU 21/08 — premier run REAL : product-service refuse
+        `measure_price: 0` pour une policy PRODUCT (« The fields measure and
+        measure_price are required for PRODUCT collection policy », reproduit
+        sur piece). Warrantage et Cacao partaient a 0.0 en dur : ils ne
+        pouvaient JAMAIS etre crees. Le prix est desormais un choix metier du
+        catalogue, comme `measure`."""
+        for payload in payloads_collect():
+            policy = payload["policy"]
+            if policy["type"] == "PRODUCT":
+                assert policy["measure_price"] > 0, payload["name"]
+            else:
+                assert policy["measure_price"] == 0.0, payload["name"]
+
+    def test_un_PRODUCT_sans_prix_de_mesure_est_refuse_a_la_construction(self) -> None:
+        """L'incoherence meurt ICI, jamais en 422 sur un service sans DELETE."""
+        from app.services.catalogue import ProduitCollecte
+
+        with pytest.raises(ValueError, match="prix_mesure"):
+            ProduitCollecte(
+                "Collecte Test",
+                PolicyType.PRODUCT,
+                ProductCategory.INDIVIDUAL,
+                PolicyMeasure.KILOGRAM,
+                100.0,
+                1000.0,
+                0.0,
+                code="TEST_IND",
+            )
+
 
 class TestCatalogueCollect:
     """D-PRD-9 — croisement PolicyType x Category, noms reels."""

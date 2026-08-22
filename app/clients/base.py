@@ -395,7 +395,7 @@ class ClientFinZuu:
                         service="user-service",
                         action="refresh",
                         statut="refuse",
-                        detail={"motif": erreur.detail[:200]},
+                        detail={"motif": erreur.detail[:600]},
                     )
                     session.refresh = None
                     session.refresh_expire_le = None

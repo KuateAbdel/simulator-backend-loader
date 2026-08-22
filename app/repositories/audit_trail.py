@@ -227,11 +227,20 @@ class AuditTrailRepository(RepositoryBase):
         curseur = self.collection.find({"run_id": str(run_id)}).sort("timestamp", 1)
         return [AuditTrailEntry.model_validate(d) async for d in curseur]
 
-    async def lister_admin(self, limite: int = 200) -> list[AuditTrailEntry]:
+    async def lister_admin(
+        self, limite: int = 200
+    ) -> list[tuple[AuditTrailEntry, dict[str, Any] | None]]:
         """Le journal « qui a fait quoi, quand » des actions d'ADMINISTRATION :
         les dernieres INTENTIONS sous le run sentinelle RUN_ADMIN (UUID int=0),
-        les plus recentes d'abord. Borne a `limite` — la pagination fine est
-        cote UI (comme les autres listes du Loader)."""
+        les plus recentes d'abord, CHACUNE JOINTE A SON RESULTAT.
+
+        La jointure date du 21/08 : les deux creations du pays GN, refusees par
+        config-service en pleine presentation direction, s'affichaient comme
+        des CREATE ordinaires — le journal montrait l'intention et taisait
+        l'echec. `None` = intention encore ouverte (ou orpheline).
+
+        Borne a `limite` — la pagination fine est cote UI (comme les autres
+        listes du Loader)."""
         curseur = (
             self.collection.find(
                 {"run_id": str(UUID(int=0)), "action": ACTION_INTENTION}
@@ -239,7 +248,21 @@ class AuditTrailRepository(RepositoryBase):
             .sort("timestamp", -1)
             .limit(limite)
         )
-        return [AuditTrailEntry.model_validate(d) async for d in curseur]
+        intentions = [AuditTrailEntry.model_validate(d) async for d in curseur]
+        issues: dict[str, dict[str, Any]] = {
+            str((document.get("before") or {}).get("intention_id")): dict(
+                document.get("after") or {}
+            )
+            async for document in self.collection.find(
+                {
+                    "run_id": str(UUID(int=0)),
+                    "action": ACTION_RESULTAT,
+                    "before.intention_id": {"$in": [str(e.id) for e in intentions]},
+                },
+                {"before": 1, "after": 1},
+            )
+        }
+        return [(entree, issues.get(str(entree.id))) for entree in intentions]
 
     async def compter_par_type(self, run_id: UUID) -> dict[str, int]:
         """Statistiques de fin d'execution (EF-61)."""

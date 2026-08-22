@@ -316,7 +316,7 @@ class ExecuteurRoles:
             try:
                 reponse = await self._creer_journalise(role, attribuees)
             except Exception as erreur:
-                motif = f"{type(erreur).__name__}: {erreur}"[:200]
+                motif = f"{type(erreur).__name__}: {erreur}"[:600]
                 logger.warning("role %s en echec : %s", role.nom, motif)
                 rapport.echoues.append((role.nom, motif))
                 continue

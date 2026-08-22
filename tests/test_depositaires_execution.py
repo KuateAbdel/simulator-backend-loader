@@ -20,6 +20,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from pymongo.errors import DuplicateKeyError
 
 from app.clients.base import ErreurService
 from app.clients.contracts import ProductType
@@ -100,9 +101,18 @@ class HierarchieMuette:
     def __init__(self, *, quartiers_deja_pris: set[str] | None = None) -> None:
         self.ecritures = 0
         self.kiosques: list[str] = []
+        #: (company_id, region_id) des Branches ecrites — la doublure applique
+        #: l'index unique `uniq_branche_par_company_region_run` comme Mongo :
+        #: c'est lui qui a tue le run REAL du 21/08, un test qui ne le rejoue
+        #: pas ne protege rien.
+        self.branches_posees: set[tuple[str, str]] = set()
         self._pris = quartiers_deja_pris or set()
 
     async def ajouter_branche(self, **kwargs: Any) -> Any:
+        cle = (str(kwargs["company_id"]), str(kwargs["region_id"]))
+        if cle in self.branches_posees:
+            raise DuplicateKeyError("E11000 duplicate key error (doublure d'index)")
+        self.branches_posees.add(cle)
         self.ecritures += 1
         return _Noeud()
 
@@ -153,11 +163,31 @@ def _executeur(
     return executeur, client, arbre, audit
 
 
-def _porteuses() -> dict[str, list[CompanyPorteuse]]:
-    devises = {"CM": "XAF", "CI": "XOF", "BF": "XOF", "SN": "XOF"}
+_DEVISES = {"CM": "XAF", "CI": "XOF", "BF": "XOF", "SN": "XOF"}
+
+
+def _porteuses(plan: Any = None) -> dict[str, list[CompanyPorteuse]]:
+    """Une porteuse PAR RANG du plan — le contrat reel depuis le 21/08.
+
+    Sans plan (tests unitaires hors `executer`), une seule IMF de rang 0.
+    """
+    if plan is None:
+        return {
+            pays: [CompanyPorteuse(uuid4(), f"IMF {pays}", pays, devise)]
+            for pays, devise in _DEVISES.items()
+        }
     return {
-        pays: [CompanyPorteuse(uuid4(), f"DEMO_IMF {pays}", pays, devise)]
-        for pays, devise in devises.items()
+        plan_pays.country_code: [
+            CompanyPorteuse(
+                uuid4(),
+                f"IMF {plan_pays.country_code} {rang}",
+                plan_pays.country_code,
+                _DEVISES[plan_pays.country_code],
+                imf_rang=rang,
+            )
+            for rang in range(plan_pays.nb_imf)
+        ]
+        for plan_pays in plan.pays
     }
 
 
@@ -261,7 +291,7 @@ async def test_dry_run_n_ecrit_ni_sur_le_serveur_ni_dans_la_hierarchie() -> None
     executeur, client, arbre, audit = _executeur(RunMode.DRY_RUN)
     plan = planifier(_geo(), RUN_ID)
 
-    rapport = await executeur.executer(plan, _porteuses(), [EPARGNE])
+    rapport = await executeur.executer(plan, _porteuses(plan), [EPARGNE])
 
     assert client.creations == 0
     assert client.souscriptions == []
@@ -283,7 +313,7 @@ async def test_un_quartier_n_heberge_qu_un_seul_kiosque() -> None:
     executeur, _, _, _ = _executeur(RunMode.DRY_RUN)
     plan = planifier(_geo(), RUN_ID)
 
-    rapport = await executeur.executer(plan, _porteuses(), [EPARGNE])
+    rapport = await executeur.executer(plan, _porteuses(plan), [EPARGNE])
 
     prevus = len(rapport.kiosques_crees)
     assert prevus == len(executeur.quartiers_occupes)  # un quartier = un Kiosque
@@ -301,7 +331,7 @@ async def test_un_kiosque_deja_present_est_saute_et_non_recree() -> None:
     executeur, client, _, _ = _executeur(RunMode.REAL, depositaires=ClientAvecExistant())
     plan = planifier(_geo(), RUN_ID)
 
-    rapport = await executeur.executer(plan, _porteuses(), [EPARGNE])
+    rapport = await executeur.executer(plan, _porteuses(plan), [EPARGNE])
 
     assert client.creations == 0
     assert rapport.kiosques_crees == []
@@ -318,7 +348,7 @@ async def test_un_kiosque_en_echec_ne_stoppe_pas_le_reseau() -> None:
     executeur, _, _, _ = _executeur(RunMode.REAL, depositaires=DepositaireClientDefaillant())
     plan = planifier(_geo(), RUN_ID)
 
-    rapport = await executeur.executer(plan, _porteuses(), [EPARGNE])
+    rapport = await executeur.executer(plan, _porteuses(plan), [EPARGNE])
 
     assert rapport.kiosques_echoues
     assert rapport.kiosques_crees == []
@@ -339,3 +369,63 @@ async def test_un_pays_sans_imf_est_saute_sans_etre_un_echec() -> None:
     assert rapport.kiosques_echoues == []
     assert len(rapport.kiosques_sautes) == len(plan.pays)
     assert all("aucune IMF" in motif for _, motif in rapport.kiosques_sautes)
+
+
+# -- Le crash du 21/08 : une Organisation PARTIELLE ne doit ni dupliquer
+# -- ni tuer le run -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_le_reseau_d_une_imf_manquante_est_saute_jamais_reattribue() -> None:
+    """REJEU DU CRASH DU PREMIER RUN REAL (21/08, prod).
+
+    L'Organisation n'a cree que 14 IMF sur 18 : les rangs manquants etaient
+    REPLIES par modulo sur les IMF survivantes -> deux Branches pour la meme
+    company dans la meme region -> `E11000` -> run mort a DEPOSITAIRES.
+
+    Le contrat depuis : le reseau d'une IMF absente est SAUTE et DECLARE.
+    La doublure d'hierarchie applique le meme index unique que Mongo — si la
+    reattribution revenait, ce test mourrait exactement comme la prod.
+    """
+    executeur, client, _arbre, _ = _executeur(RunMode.REAL)
+    plan = planifier(_geo(), RUN_ID)
+    porteuses = _porteuses(plan)
+    # On ampute le rang 0 de CHAQUE pays : le pire cas mesurable — chaque pays
+    # a au moins un reseau planifie sans porteuse.
+    ampute = {pays: [p for p in liste if p.imf_rang != 0] for pays, liste in porteuses.items()}
+
+    rapport = await executeur.executer(plan, ampute, [EPARGNE])
+
+    # 1. Pas de crash, et AUCUN doublon (company, region) n'a atteint l'index.
+    assert rapport.reseaux_sautes
+    assert rapport.hierarchie_echouee == []
+    # 2. Chaque reseau saute est declare avec son rang et son ampleur.
+    assert all("rang 0" in motif for _, motif in rapport.reseaux_sautes)
+    assert all("Kiosque(s) non crees" in motif for _, motif in rapport.reseaux_sautes)
+    # 3. Les reseaux des IMF survivantes sont bien deroules, eux.
+    assert rapport.branches_creees
+    assert client.creations > 0
+    # 4. Une degradation declaree n'est pas un run propre : PARTIAL.
+    assert rapport.statut is RunStatus.PARTIAL
+
+
+@pytest.mark.asyncio
+async def test_une_branche_dupliquee_est_un_echec_nomme_pas_un_crash() -> None:
+    """Defense en profondeur : meme si un doublon atteignait l'index, le run
+    doit le RAPPORTER et poursuivre — plus jamais une `DuplicateKeyError` brute
+    qui interrompt tout (c'est elle qui a masque la cause reelle le 21/08)."""
+
+    class HierarchieDejaOccupee(HierarchieMuette):
+        async def ajouter_branche(self, **kwargs: Any) -> Any:
+            raise DuplicateKeyError("E11000 duplicate key error (doublure)")
+
+    executeur, _, _, _ = _executeur(RunMode.REAL, hierarchie=HierarchieDejaOccupee())
+    plan = planifier(_geo(), RUN_ID)
+
+    rapport = await executeur.executer(plan, _porteuses(plan), [EPARGNE])
+
+    assert rapport.hierarchie_echouee
+    assert all("index d'unicite" in motif for _, motif in rapport.hierarchie_echouee)
+    assert rapport.branches_creees == []
+    # Rien n'a abouti alors que le plan prevoyait tout : systemique -> FAILED.
+    assert rapport.statut is RunStatus.FAILED

@@ -63,6 +63,21 @@ class UserServiceClient:
                 return utilisateur
         return None
 
+    async def lister_emails(self) -> set[str]:
+        """TOUTES les adresses deja prises sur user-service, normalisees.
+
+        `INV-USR-02` est GLOBAL a la plateforme, pas local au run : le premier
+        run REAL (21/08) est mort d'avoir regenere `mbarga.mbarga@...` — une
+        adresse posee par une company d'un chargement anterieur, invisible du
+        registre. Une seule lecture au lancement, et le generateur ne peut
+        plus emettre une adresse deja prise ou que ce soit.
+        """
+        return {
+            adresse
+            for utilisateur in await self._client.lister_tout("/api/v1/users/")
+            if (adresse := str(utilisateur.get("email", "")).strip().lower())
+        }
+
     async def creer_utilisateur_applicatif(
         self,
         *,

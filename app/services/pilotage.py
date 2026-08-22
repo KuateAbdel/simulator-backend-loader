@@ -255,6 +255,19 @@ async def executer(
     depositaires = paquet.depositaires
     identites = paquet.identites
 
+    # `INV-USR-02` EST GLOBAL, PAS LOCAL AU RUN — la lecon du 21/08.
+    #
+    # Le premier run REAL est mort d'avoir regenere `mbarga.mbarga@...`, une
+    # adresse posee par un chargement ANTERIEUR au registre : le generateur ne
+    # garantissait l'unicite des emails qu'en memoire du run. On seme donc ici,
+    # avant toute emission, la totalite des adresses deja prises sur
+    # user-service — une seule lecture, et owners, staff comme clients heritent
+    # du meme suffixe deterministe en cas de collision. Lecture faite AUSSI en
+    # DRY_RUN : un essai a blanc qui n'exerce pas les memes dependances que le
+    # reel n'est pas un essai a blanc (regle du 09/08) — et son rapport doit
+    # annoncer les adresses que le REAL emettra vraiment.
+    generateur.reserver_emails(await users.lister_emails())
+
     audit = AuditTrailRepository()
     registre = LendersRegistryRepository()
     hierarchie = OrgHierarchyRepository()

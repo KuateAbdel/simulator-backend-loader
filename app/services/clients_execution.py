@@ -1407,7 +1407,7 @@ class ExecuteurClients:
                 if len(retenus) >= reste:
                     break
                 if isinstance(tirage, PaysSansSource | ErreurService):
-                    rapport.refuses_avant_reseau.append((pays, str(tirage)[:200]))
+                    rapport.refuses_avant_reseau.append((pays, str(tirage)[:600]))
                     return
                 if isinstance(tirage, BaseException) or tirage is None:
                     quota.ecarter("faker muet")
@@ -1500,7 +1500,7 @@ class ExecuteurClients:
             gagnes = 0
             for (faker, _, reservation), issue in zip(retenus, issues, strict=True):
                 if isinstance(issue, BaseException):
-                    rapport.echoues.append((faker.client_id, str(issue)[:200]))
+                    rapport.echoues.append((faker.client_id, str(issue)[:600]))
                     issue = None
                 if issue is not None:
                     gagnes += 1
@@ -1589,7 +1589,7 @@ class ExecuteurClients:
                 statique=self._statique,
             )
         except CompositionImpossible as erreur:
-            rapport.refuses_avant_reseau.append((faker.client_id, str(erreur)[:200]))
+            rapport.refuses_avant_reseau.append((faker.client_id, str(erreur)[:600]))
             return None
 
         # `EF-67` / `UC-01` — le profil vient de la RESERVATION, pas d'un tirage
@@ -1675,7 +1675,7 @@ class ExecuteurClients:
                 language=compose.langue,
             )
         except (OnboardingNonConforme, ErreurService) as erreur:
-            rapport.echoues.append((faker.client_id, str(erreur)[:200]))
+            rapport.echoues.append((faker.client_id, str(erreur)[:600]))
             return None
 
         # LE SECOND TEMPS DU WRITE-AHEAD — defaut trouve le 11/08 EN ECRIVANT LES
