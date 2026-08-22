@@ -54,7 +54,9 @@ from typing import Any
 
 from app.services.geographie import (
     City,
+    Devise,
     District,
+    Pays,
     RapportGeographique,
     ReferentielGeo,
     Region,
@@ -84,6 +86,15 @@ class SurcoucheReferentiel:
     referentiel identique a l'original.
     """
 
+    #: `C1` (22/08, exigence Yaniv apres le fichier Import_pays du boss) — les
+    #: PAYS ajoutes par le Super-Admin, fiche COMPLETE (devise, TVA, fuseau,
+    #: regulateurs). Le Loader est le System of Record : un pays vit d'abord
+    #: ICI ; le pousser vers config-service (US-B6) reste un geste volontaire
+    #: et distinct. Cle : code ISO2.
+    pays: dict[str, Pays] = field(default_factory=dict)
+    #: Les devises qu'aucune ligne du classeur ne porte (GNF, NGN, GHS...) —
+    #: forgees a l'ajout du pays qui les declare, jamais orphelines.
+    devises: dict[str, Devise] = field(default_factory=dict)
     regions: dict[str, Region] = field(default_factory=dict)
     villes: dict[str, City] = field(default_factory=dict)
     quartiers: dict[str, District] = field(default_factory=dict)
@@ -115,6 +126,111 @@ class SurcoucheReferentiel:
 
     # -- Ajouts, avec les invariants EF-02 -----------------------------------
 
+    def ajouter_pays(
+        self,
+        base: ReferentielGeo,
+        *,
+        iso2: str,
+        nom_fr: str,
+        nom_en: str,
+        capitale: str,
+        dial_code: str,
+        devise_iso: str,
+        tva_percent: float,
+        timezone: str = "",
+        region_africa: str = "",
+        regulateur_telco: str = "",
+        regulateur_finance: str = "",
+        devise_nom: str = "",
+        devise_decimales: int = 0,
+        banque_centrale: str = "",
+    ) -> Pays:
+        """`C1` — un pays COMPLET dans le referentiel du Loader.
+
+        C'etait l'« autre operation » que `ajouter_region` promettait depuis le
+        14/08 sans qu'elle existe. Le Loader est plus riche que config-service
+        (TVA, fuseau, devise liee, regulateurs — autant de champs que le
+        serveur n'a pas) : le pays nait donc ICI, et le pousser vers
+        config-service reste le geste volontaire d'`US-B6`.
+
+        INVARIANTS, la meme doctrine que villes et telcos :
+
+        1. ISO2 sur deux lettres majuscules, UNIQUE — classeur (les 4 cibles)
+           ET surcouche. Un doublon rendrait `pays_index` arbitraire.
+        2. L'indicatif est numerique (1 a 5 chiffres) — il prefixe chaque
+           MSISDN compose, un indicatif corrompu fausserait 2000 numeros.
+        3. La TVA est un pourcentage plausible [0, 40] — elle part dans le
+           champ `vat` des Policies de collecte, un 422 differe sinon.
+        4. La DEVISE n'est jamais orpheline : connue du classeur ou de la
+           surcouche, sinon sa fiche complete (nom + decimales) est exigee
+           dans le meme geste et forgee avec le pays.
+        """
+        code = str(iso2).strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", code):
+            raise AjoutRefuse(f"pays {iso2!r} : le code ISO2 est deux lettres (ex. GN).")
+        if base.pays(code) is not None or code in self.pays:
+            raise AjoutRefuse(
+                f"pays {code} existe deja (classeur ou surcouche) — reutiliser, jamais doubler."
+            )
+        fr, en = str(nom_fr).strip(), str(nom_en).strip()
+        if not fr or not en:
+            raise AjoutRefuse(f"pays {code} : les noms francais ET anglais sont requis.")
+        indicatif = str(dial_code).strip().lstrip("+")
+        if not re.fullmatch(r"\d{1,5}", indicatif):
+            raise AjoutRefuse(
+                f"pays {code} : indicatif {dial_code!r} invalide — 1 a 5 chiffres, "
+                "il prefixe chaque MSISDN compose."
+            )
+        if not 0 <= float(tva_percent) <= 40:
+            raise AjoutRefuse(
+                f"pays {code} : TVA {tva_percent} hors de [0, 40] % — elle part "
+                "dans le champ `vat` des Policies de collecte."
+            )
+        code_devise = str(devise_iso).strip().upper()
+        if not re.fullmatch(r"[A-Z]{3}", code_devise):
+            raise AjoutRefuse(f"pays {code} : devise {devise_iso!r} — code ISO 4217 attendu.")
+        if code_devise not in base.devises and code_devise not in self.devises:
+            nom_devise = str(devise_nom).strip()
+            if not nom_devise:
+                raise AjoutRefuse(
+                    f"pays {code} : devise {code_devise} inconnue du referentiel — "
+                    "fournir sa fiche (devise_nom, devise_decimales) dans le meme "
+                    "geste, une devise n'est jamais orpheline."
+                )
+            if not 0 <= int(devise_decimales) <= 4:
+                raise AjoutRefuse(
+                    f"devise {code_devise} : {devise_decimales} decimales hors de [0, 4]."
+                )
+            self.devises[code_devise] = Devise(
+                code=code_devise,
+                nom=nom_devise,
+                decimales=int(devise_decimales),
+                banque_centrale=str(banque_centrale).strip(),
+                pays=frozenset({code}),
+            )
+            self.journal.append(f"devise {code_devise} ({nom_devise}) forgee pour {code}")
+
+        fiche = Pays(
+            iso2=code,
+            nom_fr=fr,
+            nom_en=en,
+            capitale=str(capitale).strip(),
+            dial_code=indicatif,
+            devise_iso=code_devise,
+            tva_percent=float(tva_percent),
+            timezone=str(timezone).strip(),
+            region_africa=str(region_africa).strip(),
+            regulateur_telco=str(regulateur_telco).strip(),
+            regulateur_finance=str(regulateur_finance).strip(),
+        )
+        self.pays[code] = fiche
+        self.journal.append(f"pays {fr!r} ({code}) ajoute — devise {code_devise}")
+        return fiche
+
+    def _pays_connu(self, base: ReferentielGeo, code: str) -> Pays | None:
+        """Classeur ET surcouche — le meme double regard que `_toutes_villes`."""
+        return base.pays(code) or self.pays.get(code)
+
     def ajouter_region(
         self,
         base: ReferentielGeo,
@@ -130,10 +246,10 @@ class SurcoucheReferentiel:
         n'a aucune notion de region administrative.
         """
         code = str(pays).strip().upper()
-        if base.pays(code) is None:
+        if self._pays_connu(base, code) is None:
             raise AjoutRefuse(
                 f"region {nom!r} : pays {code!r} absent du referentiel — EF-02 exige un "
-                "Country parent. Ajouter un pays est une autre operation."
+                "Country parent. L'ajouter d'abord (`ajouter_pays`, C1)."
             )
         libelle = str(nom).strip()
         if not libelle:
@@ -425,8 +541,11 @@ class SurcoucheReferentiel:
            INV-18 etendu a l'ecriture : un marche a 130 % n'existe pas.
         """
         code = str(pays).strip().upper()
-        if base.pays(code) is None:
-            raise AjoutRefuse(f"telco {network_name!r} : pays {code!r} hors des cibles — EF-05.")
+        if self._pays_connu(base, code) is None:
+            raise AjoutRefuse(
+                f"telco {network_name!r} : pays {code!r} absent du referentiel — "
+                "EF-05. L'ajouter d'abord (`ajouter_pays`, C1)."
+            )
         nom = str(network_name).strip()
         court = str(short_name).strip()
         if not nom or not court:
@@ -552,6 +671,30 @@ class SurcoucheReferentiel:
         **dans la surcouche** — meme discipline que les references inverses de
         `AdministrationConfigService`.
         """
+        if identifiant.strip().upper() in self.pays:
+            code = identifiant.strip().upper()
+            enfants = (
+                [r.region_id for r in self.regions.values() if r.country_iso2 == code]
+                + [v.city_id for v in self.villes.values() if v.country_iso2 == code]
+                + [t.telco_id for t in self.telcos.values() if t.country_iso2 == code]
+            )
+            if enfants:
+                raise AjoutRefuse(
+                    f"pays {code} porte encore {len(enfants)} ajout(s) — "
+                    "retirer regions, villes et telcos d'abord"
+                )
+            devise = self.pays[code].devise_iso
+            del self.pays[code]
+            # La devise forgee pour ce pays part avec lui si plus personne ne
+            # la porte — une devise n'est jamais orpheline, a l'ajout comme au
+            # retrait.
+            if devise in self.devises and not any(
+                p.devise_iso == devise for p in self.pays.values()
+            ):
+                del self.devises[devise]
+                self.journal.append(f"devise {devise} retiree avec son dernier pays")
+            self.journal.append(f"retrait du pays {code}")
+            return True
         if identifiant in self.regions:
             enfants = [v.city_id for v in self.villes.values() if v.region_id == identifiant]
             if enfants:
@@ -585,12 +728,12 @@ class SurcoucheReferentiel:
         verite.
         """
         rapport = RapportGeographique(
-            pays=list(base.rapport.pays),
+            pays=list(base.rapport.pays) + sorted(self.pays),
             nb_regions=len(base.regions) + len(self.regions),
             nb_villes=len(base.villes) + len(self.villes),
             nb_quartiers=len(base.quartiers) + len(self.quartiers),
             nb_telcos=base.rapport.nb_telcos + len(self.telcos),
-            nb_devises=base.rapport.nb_devises,
+            nb_devises=base.rapport.nb_devises + len(self.devises),
             orphelins=list(base.rapport.orphelins),
         )
         return ReferentielGeo(
@@ -599,8 +742,8 @@ class SurcoucheReferentiel:
             quartiers={**base.quartiers, **self.quartiers},
             rapport=rapport,
             telcos={**base.telcos, **self.telcos},
-            devises=base.devises,
-            pays_index=base.pays_index,
+            devises={**base.devises, **self.devises},
+            pays_index={**base.pays_index, **self.pays},
         )
 
     # -- Tracabilite --------------------------------------------------------
@@ -608,7 +751,9 @@ class SurcoucheReferentiel:
     @property
     def vide(self) -> bool:
         return not (
-            self.regions
+            self.pays
+            or self.devises
+            or self.regions
             or self.villes
             or self.quartiers
             or self.telcos
@@ -626,6 +771,8 @@ class SurcoucheReferentiel:
         un resultat different. La surcouche fait partie de la configuration.
         """
         return {
+            "pays": {code: p.nom_fr for code, p in sorted(self.pays.items())},
+            "devises": {code: d.nom for code, d in sorted(self.devises.items())},
             "regions": {i: r.name for i, r in sorted(self.regions.items())},
             "villes": {i: v.name for i, v in sorted(self.villes.items())},
             "quartiers": {i: q.name for i, q in sorted(self.quartiers.items())},
@@ -643,8 +790,9 @@ class SurcoucheReferentiel:
         if self.vide:
             return "Surcouche : aucun ajout — le referentiel est celui du classeur"
         return (
-            f"Surcouche : {len(self.regions)} region(s) · {len(self.villes)} ville(s) · "
-            f"{len(self.quartiers)} quartier(s) · {len(self.telcos)} telco(s) — "
+            f"Surcouche : {len(self.pays)} pays · {len(self.regions)} region(s) · "
+            f"{len(self.villes)} ville(s) · {len(self.quartiers)} quartier(s) · "
+            f"{len(self.telcos)} telco(s) · {len(self.devises)} devise(s) — "
             "le classeur n'a pas ete modifie"
         )
 

@@ -248,3 +248,128 @@ class TestSurcoucheCatalogueGenerative:
         # le retrait nettoie AUSSI la liaison
         base.retirer_secteur(label="GreenFintech")
         assert "GreenFintech" not in base.secteurs_types
+
+
+class TestPaysC1:
+    """`C1` (22/08) — le pays nait dans le LOADER, fiche complete.
+
+    L'« autre operation » que `ajouter_region` promettait depuis le 14/08.
+    Le Loader est le System of Record : plus riche que config-service (TVA,
+    fuseau, devise liee), il garde tout et ne pousse vers config-service que
+    sur le geste volontaire d'US-B6.
+    """
+
+    def _guinee(self, surcouche: SurcoucheReferentiel, base: ReferentielGeo):
+        return surcouche.ajouter_pays(
+            base,
+            iso2="GN",
+            nom_fr="Guinée",
+            nom_en="Guinea",
+            capitale="Conakry",
+            dial_code="224",
+            devise_iso="GNF",
+            tva_percent=18.0,
+            timezone="Africa/Conakry",
+            region_africa="Western Africa",
+            devise_nom="Guinean Franc",
+            devise_decimales=0,
+            banque_centrale="BCRG",
+        )
+
+    def test_un_pays_complet_s_ajoute_avec_sa_devise_forgee(self, base: ReferentielGeo) -> None:
+        surcouche = SurcoucheReferentiel()
+        fiche = self._guinee(surcouche, base)
+        assert fiche.iso2 == "GN"
+        assert fiche.tva_percent == 18.0
+        assert "GNF" in surcouche.devises
+        assert surcouche.devises["GNF"].pays == frozenset({"GN"})
+
+    def test_un_doublon_du_classeur_est_refuse(self, base: ReferentielGeo) -> None:
+        with pytest.raises(AjoutRefuse, match="existe deja"):
+            SurcoucheReferentiel().ajouter_pays(
+                base, iso2="CM", nom_fr="Cameroun", nom_en="Cameroon",
+                capitale="Yaoundé", dial_code="237", devise_iso="XAF", tva_percent=19.25,
+            )
+
+    def test_une_devise_inconnue_sans_fiche_est_refusee(self, base: ReferentielGeo) -> None:
+        with pytest.raises(AjoutRefuse, match="jamais orpheline"):
+            SurcoucheReferentiel().ajouter_pays(
+                base, iso2="NG", nom_fr="Nigéria", nom_en="Nigeria",
+                capitale="Abuja", dial_code="234", devise_iso="NGN", tva_percent=7.5,
+            )
+
+    def test_une_devise_du_classeur_n_exige_pas_de_fiche(self, base: ReferentielGeo) -> None:
+        surcouche = SurcoucheReferentiel()
+        fiche = surcouche.ajouter_pays(
+            base, iso2="TG", nom_fr="Togo", nom_en="Togo",
+            capitale="Lomé", dial_code="228", devise_iso="XOF", tva_percent=18.0,
+        )
+        assert fiche.devise_iso == "XOF"
+        assert not surcouche.devises  # rien a forger, XOF est au classeur
+
+    def test_l_indicatif_et_la_tva_sont_bornes(self, base: ReferentielGeo) -> None:
+        with pytest.raises(AjoutRefuse, match="indicatif"):
+            SurcoucheReferentiel().ajouter_pays(
+                base, iso2="GH", nom_fr="Ghana", nom_en="Ghana",
+                capitale="Accra", dial_code="+abc", devise_iso="XOF", tva_percent=15.0,
+            )
+        with pytest.raises(AjoutRefuse, match="TVA"):
+            SurcoucheReferentiel().ajouter_pays(
+                base, iso2="GH", nom_fr="Ghana", nom_en="Ghana",
+                capitale="Accra", dial_code="233", devise_iso="XOF", tva_percent=55.0,
+            )
+
+    def test_la_chaine_complete_s_enchaine_sur_un_pays_ajoute(self, base: ReferentielGeo) -> None:
+        """Pays -> region -> ville -> quartier -> telco, tout en surcouche.
+
+        C'est LE deverrouillage : avant C1, `ajouter_region` repondait
+        « pays absent du referentiel » et la chaine mourait la."""
+        surcouche = SurcoucheReferentiel()
+        self._guinee(surcouche, base)
+        region = surcouche.ajouter_region(base, pays="GN", nom="Conakry")
+        ville = surcouche.ajouter_ville(base, region_id=region.region_id, nom="Kaloum")
+        quartier = surcouche.ajouter_quartier(base, city_id=ville.city_id, nom="Sandervalia")
+        telco = surcouche.ajouter_telco(
+            base, pays="GN", network_name="Orange Guinee", short_name="Orange GN",
+            regex_msisdn=r"^224(6\d{7})$", part_marche=55.0,
+            exemple_msisdn="22462345678",
+        )
+        assert quartier.city_id == ville.city_id
+        assert telco.country_iso2 == "GN"
+
+    def test_le_referentiel_applique_connait_le_pays_et_sa_devise(
+        self, base: ReferentielGeo
+    ) -> None:
+        surcouche = SurcoucheReferentiel()
+        self._guinee(surcouche, base)
+        enrichi = surcouche.appliquer(base)
+        assert enrichi.pays("GN") is not None
+        assert enrichi.tva_du_pays("GN") == 18.0
+        assert enrichi.devise_du_pays("GN").code == "GNF"
+        assert "GN" in enrichi.rapport.pays
+        # et l'original n'a pas bouge — le classeur est immuable
+        assert base.pays("GN") is None
+        assert "GNF" not in base.devises
+
+    def test_un_pays_portant_des_enfants_ne_se_retire_pas(self, base: ReferentielGeo) -> None:
+        surcouche = SurcoucheReferentiel()
+        self._guinee(surcouche, base)
+        surcouche.ajouter_region(base, pays="GN", nom="Conakry")
+        with pytest.raises(AjoutRefuse, match="porte encore"):
+            surcouche.retirer("GN")
+
+    def test_le_retrait_du_dernier_pays_emporte_sa_devise_forgee(
+        self, base: ReferentielGeo
+    ) -> None:
+        surcouche = SurcoucheReferentiel()
+        self._guinee(surcouche, base)
+        assert surcouche.retirer("GN") is True
+        assert "GNF" not in surcouche.devises
+        assert surcouche.vide
+
+    def test_les_ajouts_portent_le_pays_pour_l_empreinte(self, base: ReferentielGeo) -> None:
+        surcouche = SurcoucheReferentiel()
+        self._guinee(surcouche, base)
+        ajouts = surcouche.ajouts()
+        assert ajouts["pays"] == {"GN": "Guinée"}
+        assert ajouts["devises"] == {"GNF": "Guinean Franc"}

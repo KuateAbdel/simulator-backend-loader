@@ -1,0 +1,564 @@
+Country_ISO,Pays_FR,Country_EN,Region_FR,Region_EN,Ville_FR,City_EN,Population_Estimee_Ville
+BJ,Benin,Benin,Littoral,Littoral,Cotonou,Cotonou,700000
+BJ,Benin,Benin,Oueme,Oueme,Porto-Novo (capitale),Porto-Novo (capital),300000
+BJ,Benin,Benin,Atlantique,Atlantique,Abomey-Calavi,Abomey-Calavi,655000
+BJ,Benin,Benin,Borgou,Borgou,Parakou,Parakou,255000
+BJ,Benin,Benin,Donga,Donga,Djougou,Djougou,267000
+BJ,Benin,Benin,Zou,Zou,Bohicon,Bohicon,149000
+BJ,Benin,Benin,Alibori,Alibori,Kandi,Kandi,128000
+BJ,Benin,Benin,Mono,Mono,Lokossa,Lokossa,106000
+BJ,Benin,Benin,Atacora,Atacora,Natitingou,Natitingou,104000
+BJ,Benin,Benin,Borgou,Borgou,Nikki,Nikki,99000
+BJ,Benin,Benin,Atlantique,Atlantique,Ouidah,Ouidah,94000
+BJ,Benin,Benin,Zou,Zou,Abomey,Abomey,91000
+BJ,Benin,Benin,Alibori,Alibori,Malanville,Malanville,82000
+BJ,Benin,Benin,Plateau,Plateau,Pobe,Pobe,82000
+BF,Burkina Faso,Burkina Faso,Centre,Centre,Ouagadougou (capitale),Ouagadougou (capital),2700000
+BF,Burkina Faso,Burkina Faso,Hauts-Bassins,Hauts-Bassins,Bobo-Dioulasso,Bobo-Dioulasso,1000000
+BF,Burkina Faso,Burkina Faso,Centre-Ouest,Centre-Ouest,Koudougou,Koudougou,168000
+BF,Burkina Faso,Burkina Faso,Cascades,Cascades,Banfora,Banfora,136000
+BF,Burkina Faso,Burkina Faso,Nord,North,Ouahigouya,Ouahigouya,124000
+BF,Burkina Faso,Burkina Faso,Centre-Nord,Centre-Nord,Kaya,Kaya,121000
+BF,Burkina Faso,Burkina Faso,Centre-Est,Centre-Est,Tenkodogo,Tenkodogo,71000
+BF,Burkina Faso,Burkina Faso,Est,East,Fada N'Gourma,Fada N'Gourma,67000
+BF,Burkina Faso,Burkina Faso,Boucle du Mouhoun,Boucle du Mouhoun,Dedougou,Dedougou,55000
+BF,Burkina Faso,Burkina Faso,Sahel,Sahel,Dori,Dori,50000
+CV,Cap-Vert,Cabo Verde,Santiago,Santiago,Praia (capitale),Praia (capital),159000
+CV,Cap-Vert,Cabo Verde,Sao Vicente,Sao Vicente,Mindelo,Mindelo,70000
+CV,Cap-Vert,Cabo Verde,Sal,Sal,Santa Maria,Santa Maria,26000
+CV,Cap-Vert,Cabo Verde,Santiago,Santiago,Assomada,Assomada,45000
+CV,Cap-Vert,Cabo Verde,Santiago,Santiago,Pedra Badejo,Pedra Badejo,16000
+CV,Cap-Vert,Cabo Verde,Santiago,Santiago,Tarrafal,Tarrafal,12000
+CV,Cap-Vert,Cabo Verde,Sal,Sal,Espargos,Espargos,25000
+CV,Cap-Vert,Cabo Verde,Santo Antao,Santo Antao,Porto Novo,Porto Novo,17000
+CV,Cap-Vert,Cabo Verde,Fogo,Fogo,Sao Filipe,Sao Filipe,9000
+CV,Cap-Vert,Cabo Verde,Boa Vista,Boa Vista,Sal Rei,Sal Rei,6000
+CI,Cote d'Ivoire,Ivory Coast,Lagunes,Lagunes,Abidjan,Abidjan,5600000
+CI,Cote d'Ivoire,Ivory Coast,District de Yamoussoukro,Yamoussoukro District,Yamoussoukro (capitale),Yamoussoukro (capital),423000
+CI,Cote d'Ivoire,Ivory Coast,Vallee du Bandama,Bandama Valley,Bouake,Bouake,740000
+CI,Cote d'Ivoire,Ivory Coast,Goh,Goh,Gagnoa,Gagnoa,277000
+CI,Cote d'Ivoire,Ivory Coast,Savanes,Savanes,Korhogo,Korhogo,441000
+CI,Cote d'Ivoire,Ivory Coast,Haut-Sassandra,Haut-Sassandra,Daloa,Daloa,420000
+CI,Cote d'Ivoire,Ivory Coast,Bas-Sassandra,Bas-Sassandra,San-Pedro,San-Pedro,391000
+CI,Cote d'Ivoire,Ivory Coast,Tonkpi,Tonkpi,Man,Man,189000
+CI,Cote d'Ivoire,Ivory Coast,Nawa,Nawa,Soubre,Soubre,175000
+CI,Cote d'Ivoire,Ivory Coast,Lagunes,Lagunes,Anyama,Anyama,149000
+CI,Cote d'Ivoire,Ivory Coast,Gontougo,Gontougo,Bondoukou,Bondoukou,142000
+GM,Gambie,Gambia,West Coast,West Coast,Serekunda,Serekunda,340000
+GM,Gambie,Gambia,West Coast,West Coast,Brikama,Brikama,112000
+GM,Gambie,Gambia,Banjul,Banjul,Banjul (capitale),Banjul (capital),35000
+GM,Gambie,Gambia,Kanifing,Kanifing,Bakau,Bakau,43000
+GM,Gambie,Gambia,North Bank,North Bank,Farafenni,Farafenni,29000
+GM,Gambie,Gambia,West Coast,West Coast,Lamin,Lamin,28000
+GM,Gambie,Gambia,Lower River,Lower River,Soma,Soma,20000
+GM,Gambie,Gambia,Upper River,Upper River,Basse Santa Su,Basse Santa Su,19000
+GM,Gambie,Gambia,West Coast,West Coast,Gunjur,Gunjur,15000
+GM,Gambie,Gambia,West Coast,West Coast,Sukuta,Sukuta,13000
+GH,Ghana,Ghana,Greater Accra,Greater Accra,Accra (capitale),Accra (capital),2600000
+GH,Ghana,Ghana,Ashanti,Ashanti,Kumasi,Kumasi,2000000
+GH,Ghana,Ghana,Northern,Northern,Tamale,Tamale,950000
+GH,Ghana,Ghana,Western,Western,Sekondi-Takoradi,Sekondi-Takoradi,445000
+GH,Ghana,Ghana,Greater Accra,Greater Accra,Tema,Tema,300000
+GH,Ghana,Ghana,Ashanti,Ashanti,Obuasi,Obuasi,180000
+GH,Ghana,Ghana,Central,Central,Cape Coast,Cape Coast,169000
+GH,Ghana,Ghana,Eastern,Eastern,Koforidua,Koforidua,183000
+GH,Ghana,Ghana,Volta,Volta,Ho,Ho,180000
+GH,Ghana,Ghana,Greater Accra,Greater Accra,Madina,Madina,150000
+GH,Ghana,Ghana,Upper East,Upper East,Bolgatanga,Bolgatanga,131000
+GH,Ghana,Ghana,Upper West,Upper West,Wa,Wa,127000
+GN,Guinee,Guinea,Conakry,Conakry,Conakry (capitale),Conakry (capital),2000000
+GN,Guinee,Guinea,Nzerekore,Nzerekore,Nzerekore,Nzerekore,220000
+GN,Guinee,Guinea,Kankan,Kankan,Kankan,Kankan,370000
+GN,Guinee,Guinea,Kindia,Kindia,Maneah,Maneah,167000
+GN,Guinee,Guinea,Boke,Boke,Dubreka,Dubreka,157000
+GN,Guinee,Guinea,Kindia,Kindia,Kindia,Kindia,139000
+GN,Guinee,Guinea,Kankan,Kankan,Siguiri,Siguiri,127000
+GN,Guinee,Guinea,Faranah,Faranah,Kissidougou,Kissidougou,100000
+GN,Guinee,Guinea,Labe,Labe,Labe,Labe,93000
+GN,Guinee,Guinea,Boke,Boke,Kamsar,Kamsar,83000
+GN,Guinee,Guinea,Mamou,Mamou,Mamou,Mamou,68000
+GN,Guinee,Guinea,Faranah,Faranah,Faranah,Faranah,60000
+GW,Guinee-Bissau,Guinea-Bissau,Bissau,Bissau,Bissau (capitale),Bissau (capital),500000
+GW,Guinee-Bissau,Guinea-Bissau,Bafata,Bafata,Bafata,Bafata,30000
+GW,Guinee-Bissau,Guinea-Bissau,Gabu,Gabu,Gabu,Gabu,44000
+GW,Guinee-Bissau,Guinea-Bissau,Cacheu,Cacheu,Canchungo,Canchungo,12000
+GW,Guinee-Bissau,Guinea-Bissau,Oio,Oio,Bissora,Bissora,10000
+GW,Guinee-Bissau,Guinea-Bissau,Oio,Oio,Farim,Farim,9000
+GW,Guinee-Bissau,Guinea-Bissau,Oio,Oio,Mansoa,Mansoa,8000
+GW,Guinee-Bissau,Guinea-Bissau,Quinara,Quinara,Buba,Buba,8000
+GW,Guinee-Bissau,Guinea-Bissau,Cacheu,Cacheu,Cacheu,Cacheu,6000
+GW,Guinee-Bissau,Guinea-Bissau,Biombo,Biombo,Quinhamel,Quinhamel,6000
+LR,Liberia,Liberia,Montserrado,Montserrado,Monrovia (capitale),Monrovia (capital),1500000
+LR,Liberia,Liberia,Nimba,Nimba,Ganta,Ganta,50000
+LR,Liberia,Liberia,Bong,Bong,Gbarnga,Gbarnga,57000
+LR,Liberia,Liberia,Margibi,Margibi,Kakata,Kakata,50000
+LR,Liberia,Liberia,Grand Bassa,Grand Bassa,Buchanan,Buchanan,45000
+LR,Liberia,Liberia,Lofa,Lofa,Voinjama,Voinjama,38000
+LR,Liberia,Liberia,Grand Gedeh,Grand Gedeh,Zwedru,Zwedru,30000
+LR,Liberia,Liberia,Maryland,Maryland,Harper,Harper,30000
+LR,Liberia,Liberia,Montserrado,Montserrado,Bensonville,Bensonville,25000
+LR,Liberia,Liberia,Grand Cape Mount,Grand Cape Mount,Robertsport,Robertsport,10000
+ML,Mali,Mali,District de Bamako,Bamako District,Bamako (capitale),Bamako (capital),2700000
+ML,Mali,Mali,Sikasso,Sikasso,Sikasso,Sikasso,230000
+ML,Mali,Mali,Segou,Segou,Segou,Segou,140000
+ML,Mali,Mali,Koulikoro,Koulikoro,Kalabancoro,Kalabancoro,167000
+ML,Mali,Mali,Sikasso,Sikasso,Koutiala,Koutiala,138000
+ML,Mali,Mali,Kayes,Kayes,Kayes,Kayes,127000
+ML,Mali,Mali,Koulikoro,Koulikoro,Kati,Kati,115000
+ML,Mali,Mali,Mopti,Mopti,Mopti,Mopti,114000
+ML,Mali,Mali,Gao,Gao,Gao,Gao,86000
+ML,Mali,Mali,Tombouctou,Tombouctou,Tombouctou,Timbuktu,55000
+NE,Niger,Niger,Niamey,Niamey,Niamey (capitale),Niamey (capital),1500000
+NE,Niger,Niger,Zinder,Zinder,Zinder,Zinder,500000
+NE,Niger,Niger,Maradi,Maradi,Maradi,Maradi,460000
+NE,Niger,Niger,Tahoua,Tahoua,Tahoua,Tahoua,150000
+NE,Niger,Niger,Agadez,Agadez,Agadez,Agadez,120000
+NE,Niger,Niger,Agadez,Agadez,Arlit,Arlit,80000
+NE,Niger,Niger,Dosso,Dosso,Dosso,Dosso,75000
+NE,Niger,Niger,Tahoua,Tahoua,Birni-N'Konni,Birni-N'Konni,70000
+NE,Niger,Niger,Diffa,Diffa,Diffa,Diffa,60000
+NE,Niger,Niger,Dosso,Dosso,Gaya,Gaya,40000
+NE,Niger,Niger,Tillaberi,Tillaberi,Tillaberi,Tillaberi,30000
+NG,Nigeria,Nigeria,Lagos,Lagos,Lagos,Lagos,9000000
+NG,Nigeria,Nigeria,Territoire de la Capitale Federale,Federal Capital Territory,Abuja (capitale),Abuja (capital),3600000
+NG,Nigeria,Nigeria,Kano,Kano,Kano,Kano,4000000
+NG,Nigeria,Nigeria,Rivers,Rivers,Port Harcourt,Port Harcourt,1900000
+NG,Nigeria,Nigeria,Oyo,Oyo,Ibadan,Ibadan,3600000
+NG,Nigeria,Nigeria,Kaduna,Kaduna,Kaduna,Kaduna,1850000
+NG,Nigeria,Nigeria,Edo,Edo,Benin City,Benin City,1300000
+NG,Nigeria,Nigeria,Borno,Borno,Maiduguri,Maiduguri,1100000
+NG,Nigeria,Nigeria,Kwara,Kwara,Ilorin,Ilorin,1080000
+NG,Nigeria,Nigeria,Sokoto,Sokoto,Sokoto,Sokoto,1040000
+NG,Nigeria,Nigeria,Plateau,Plateau,Jos,Jos,1040000
+NG,Nigeria,Nigeria,Kaduna,Kaduna,Zaria,Zaria,980000
+NG,Nigeria,Nigeria,Enugu,Enugu,Enugu,Enugu,950000
+NG,Nigeria,Nigeria,Delta,Delta,Warri,Warri,910000
+NG,Nigeria,Nigeria,Anambra,Anambra,Onitsha,Onitsha,750000
+SN,Senegal,Senegal,Dakar,Dakar,Dakar (capitale),Dakar (capital),1998000
+SN,Senegal,Senegal,Thies,Thies,Thies,Thies,240000
+SN,Senegal,Senegal,Diourbel,Diourbel,Touba,Touba,1000000
+SN,Senegal,Senegal,Dakar,Dakar,Rufisque,Rufisque,187000
+SN,Senegal,Senegal,Kaolack,Kaolack,Kaolack,Kaolack,174000
+SN,Senegal,Senegal,Thies,Thies,Mbour,M'Bour,171000
+SN,Senegal,Senegal,Ziguinchor,Ziguinchor,Ziguinchor,Ziguinchor,162000
+SN,Senegal,Senegal,Saint-Louis,Saint-Louis,Saint-Louis,Saint-Louis,131000
+SN,Senegal,Senegal,Diourbel,Diourbel,Diourbel,Diourbel,94000
+SN,Senegal,Senegal,Louga,Louga,Louga,Louga,78000
+SN,Senegal,Senegal,Tambacounda,Tambacounda,Tambacounda,Tambacounda,75000
+SN,Senegal,Senegal,Kolda,Kolda,Kolda,Kolda,58000
+SN,Senegal,Senegal,Diourbel,Diourbel,Mbacke,Mbacke,57000
+SL,Sierra Leone,Sierra Leone,Western Area,Western Area,Freetown (capitale),Freetown (capital),1200000
+SL,Sierra Leone,Sierra Leone,Sud,Southern,Bo,Bo,175000
+SL,Sierra Leone,Sierra Leone,Est,Eastern,Kenema,Kenema,200000
+SL,Sierra Leone,Sierra Leone,Nord,Northern,Makeni,Makeni,130000
+SL,Sierra Leone,Sierra Leone,Est,Eastern,Koidu,Koidu,130000
+SL,Sierra Leone,Sierra Leone,Nord-Ouest,North West,Port Loko,Port Loko,35000
+SL,Sierra Leone,Sierra Leone,Western Area,Western Area,Waterloo,Waterloo,50000
+SL,Sierra Leone,Sierra Leone,Nord-Ouest,North West,Lunsar,Lunsar,40000
+SL,Sierra Leone,Sierra Leone,Nord,Northern,Kabala,Kabala,15000
+SL,Sierra Leone,Sierra Leone,Est,Eastern,Kailahun,Kailahun,13000
+TG,Togo,Togo,Maritime,Maritime,Lome (capitale),Lome (capital),1800000
+TG,Togo,Togo,Kara,Kara,Kara,Kara,120000
+TG,Togo,Togo,Centrale,Centrale,Sokode,Sokode,190000
+TG,Togo,Togo,Plateaux,Plateaux,Kpalime,Kpalime,75000
+TG,Togo,Togo,Plateaux,Plateaux,Atakpame,Atakpame,80000
+TG,Togo,Togo,Savanes,Savanes,Dapaong,Dapaong,58000
+TG,Togo,Togo,Maritime,Maritime,Tsevie,Tsevie,40000
+TG,Togo,Togo,Maritime,Maritime,Aneho,Aneho,30000
+TG,Togo,Togo,Kara,Kara,Bassar,Bassar,20000
+TG,Togo,Togo,Savanes,Savanes,Mango,Mango,30000
+AO,Angola,Angola,Luanda,Luanda,Luanda (capitale),Luanda (capital),2800000
+AO,Angola,Angola,Huambo,Huambo,Huambo,Huambo,800000
+AO,Angola,Angola,Cabinda,Cabinda,Cabinda,Cabinda,378000
+AO,Angola,Angola,Benguela,Benguela,Lobito,Lobito,324000
+AO,Angola,Angola,Benguela,Benguela,Benguela,Benguela,555000
+AO,Angola,Angola,Huila,Huila,Lubango,Lubango,500000
+AO,Angola,Angola,Malanje,Malanje,Malanje,Malanje,200000
+AO,Angola,Angola,Bie,Bie,Kuito,Kuito,200000
+AO,Angola,Angola,Uige,Uige,Uige,Uige,300000
+AO,Angola,Angola,Zaire,Zaire,Soyo,Soyo,150000
+AO,Angola,Angola,Namibe,Namibe,Namibe,Namibe,200000
+AO,Angola,Angola,Lunda Sul,Lunda Sul,Saurimo,Saurimo,150000
+CM,Cameroun,Cameroon,Littoral,Littoral,Douala,Douala,2500000
+CM,Cameroun,Cameroon,Centre,Centre,Yaounde (capitale),Yaounde (capital),2100000
+CM,Cameroun,Cameroon,Nord,North,Garoua,Garoua,437000
+CM,Cameroun,Cameroon,Extreme-Nord,Far North,Kousseri,Kousseri,436000
+CM,Cameroun,Cameroon,Nord-Ouest,Northwest,Bamenda,Bamenda,394000
+CM,Cameroun,Cameroon,Extreme-Nord,Far North,Maroua,Maroua,320000
+CM,Cameroun,Cameroon,Ouest,West,Bafoussam,Bafoussam,291000
+CM,Cameroun,Cameroon,Est,East,Bertoua,Bertoua,218000
+CM,Cameroun,Cameroon,Littoral,Littoral,Edea,Edea,203000
+CM,Cameroun,Cameroon,Littoral,Littoral,Loum,Loum,177000
+CM,Cameroun,Cameroon,Sud-Ouest,Southwest,Kumba,Kumba,144000
+CM,Cameroun,Cameroon,Ouest,West,Foumban,Foumban,93000
+CM,Cameroun,Cameroon,Sud,South,Ebolowa,Ebolowa,88000
+CF,Republique Centrafricaine,Central African Republic,Bangui,Bangui,Bangui (capitale),Bangui (capital),900000
+CF,Republique Centrafricaine,Central African Republic,Ombella-M'Poko,Ombella-M'Poko,Bimbo,Bimbo,350000
+CF,Republique Centrafricaine,Central African Republic,Mambere-Kadei,Mambere-Kadei,Berberati,Berberati,80000
+CF,Republique Centrafricaine,Central African Republic,Mambere-Kadei,Mambere-Kadei,Carnot,Carnot,50000
+CF,Republique Centrafricaine,Central African Republic,Ouaka,Ouaka,Bambari,Bambari,50000
+CF,Republique Centrafricaine,Central African Republic,Nana-Mambere,Nana-Mambere,Bouar,Bouar,40000
+CF,Republique Centrafricaine,Central African Republic,Ouham,Ouham,Bossangoa,Bossangoa,40000
+CF,Republique Centrafricaine,Central African Republic,Haute-Kotto,Haute-Kotto,Bria,Bria,35000
+CF,Republique Centrafricaine,Central African Republic,Nana-Grebizi,Nana-Grebizi,Kaga-Bandoro,Kaga-Bandoro,20000
+TD,Tchad,Chad,N'Djamena,N'Djamena,N'Djamena (capitale),N'Djamena (capital),1500000
+TD,Tchad,Chad,Logone Occidental,Logone Occidental,Moundou,Moundou,180000
+TD,Tchad,Chad,Moyen-Chari,Moyen-Chari,Sarh,Sarh,170000
+TD,Tchad,Chad,Ouaddai,Ouaddai,Abeche,Abeche,107000
+TD,Tchad,Chad,Tandjile,Tandjile,Kelo,Kelo,103000
+TD,Tchad,Chad,Mandoul,Mandoul,Koumra,Koumra,91000
+TD,Tchad,Chad,Mayo-Kebbi Ouest,Mayo-Kebbi West,Pala,Pala,90000
+TD,Tchad,Chad,Salamat,Salamat,Am Timan,Am Timan,66000
+TD,Tchad,Chad,Mayo-Kebbi Est,Mayo-Kebbi East,Bongor,Bongor,64000
+TD,Tchad,Chad,Guera,Guera,Mongo,Mongo,58000
+TD,Tchad,Chad,Logone Oriental,Logone Oriental,Doba,Doba,52000
+TD,Tchad,Chad,Borkou,Borkou,Faya-Largeau,Faya-Largeau,42000
+CG,Congo,Republic of the Congo,Brazzaville,Brazzaville,Brazzaville (capitale),Brazzaville (capital),1800000
+CG,Congo,Republic of the Congo,Pointe-Noire,Pointe-Noire,Pointe-Noire,Pointe-Noire,715000
+CG,Congo,Republic of the Congo,Niari,Niari,Dolisie,Dolisie,110000
+CG,Congo,Republic of the Congo,Bouenza,Bouenza,Nkayi,Nkayi,70000
+CG,Congo,Republic of the Congo,Sangha,Sangha,Ouesso,Ouesso,35000
+CG,Congo,Republic of the Congo,Likouala,Likouala,Impfondo,Impfondo,30000
+CG,Congo,Republic of the Congo,Bouenza,Bouenza,Madingou,Madingou,20000
+CG,Congo,Republic of the Congo,Plateaux,Plateaux,Gamboma,Gamboma,20000
+CG,Congo,Republic of the Congo,Lekoumou,Lekoumou,Sibiti,Sibiti,20000
+CG,Congo,Republic of the Congo,Plateaux,Plateaux,Djambala,Djambala,15000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Kinshasa,Kinshasa,Kinshasa (capitale),Kinshasa (capital),17000000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Kasai-Oriental,Kasai-Oriental,Mbuji-Mayi,Mbuji-Mayi,3300000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Haut-Katanga,Haut-Katanga,Lubumbashi,Lubumbashi,3200000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Kasai-Central,Kasai-Central,Kananga,Kananga,1900000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Tshopo,Tshopo,Kisangani,Kisangani,1600000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Nord-Kivu,North Kivu,Goma,Goma,1500000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Sud-Kivu,South Kivu,Bukavu,Bukavu,1000000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Lualaba,Lualaba,Kolwezi,Kolwezi,800000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Haut-Katanga,Haut-Katanga,Likasi,Likasi,600000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Kasai,Kasai,Tshikapa,Tshikapa,600000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Kongo Central,Kongo Central,Matadi,Matadi,400000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Sud-Kivu,South Kivu,Uvira,Uvira,300000
+GQ,Guinee Equatoriale,Equatorial Guinea,Bioko Norte,Bioko Norte,Malabo (capitale),Malabo (capital),156000
+GQ,Guinee Equatoriale,Equatorial Guinea,Litoral,Litoral,Bata,Bata,173000
+GQ,Guinee Equatoriale,Equatorial Guinea,Kie-Ntem,Kie-Ntem,Ebebiyin,Ebebiyin,25000
+GQ,Guinee Equatoriale,Equatorial Guinea,Wele-Nzas,Wele-Nzas,Mongomo,Mongomo,53000
+GQ,Guinee Equatoriale,Equatorial Guinea,Wele-Nzas,Wele-Nzas,Aconibe,Aconibe,11000
+GQ,Guinee Equatoriale,Equatorial Guinea,Bioko Sur,Bioko Sur,Luba,Luba,9000
+GQ,Guinee Equatoriale,Equatorial Guinea,Centro Sur,Centro Sur,Evinayong,Evinayong,8000
+GA,Gabon,Gabon,Estuaire,Estuaire,Libreville (capitale),Libreville (capital),797000
+GA,Gabon,Gabon,Ogooue-Maritime,Ogooue-Maritime,Port-Gentil,Port-Gentil,136000
+GA,Gabon,Gabon,Haut-Ogooue,Haut-Ogooue,Franceville,Franceville,110000
+GA,Gabon,Gabon,Woleu-Ntem,Woleu-Ntem,Oyem,Oyem,60000
+GA,Gabon,Gabon,Haut-Ogooue,Haut-Ogooue,Moanda,Moanda,50000
+GA,Gabon,Gabon,Moyen-Ogooue,Moyen-Ogooue,Lambarene,Lambarene,40000
+GA,Gabon,Gabon,Nyanga,Nyanga,Tchibanga,Tchibanga,30000
+GA,Gabon,Gabon,Ogooue-Ivindo,Ogooue-Ivindo,Makokou,Makokou,25000
+GA,Gabon,Gabon,Ogooue-Lolo,Ogooue-Lolo,Koulamoutou,Koulamoutou,16000
+ST,Sao Tome-et-Principe,Sao Tome and Principe,Agua Grande,Agua Grande,Sao Tome (capitale),Sao Tome (capital),72000
+ST,Sao Tome-et-Principe,Sao Tome and Principe,Me-Zochi,Me-Zochi,Trindade,Trindade,15000
+ST,Sao Tome-et-Principe,Sao Tome and Principe,Cantagalo,Cantagalo,Santana,Santana,8000
+ST,Sao Tome-et-Principe,Sao Tome and Principe,Lemba,Lemba,Neves,Neves,8000
+ST,Sao Tome-et-Principe,Sao Tome and Principe,Lobata,Lobata,Guadalupe,Guadalupe,8000
+ST,Sao Tome-et-Principe,Sao Tome and Principe,Principe,Principe,Santo Antonio,Santo Antonio,8000
+BJ,Benin,Benin,Collines,Collines,Dassa-Zoume,Dassa-Zoume,80000
+BJ,Benin,Benin,Couffo,Couffo,Aplahoue,Aplahoue,30000
+BF,Burkina Faso,Burkina Faso,Centre-Sud,Centre-Sud,Manga,Manga,30000
+BF,Burkina Faso,Burkina Faso,Plateau-Central,Plateau-Central,Ziniare,Ziniare,25000
+BF,Burkina Faso,Burkina Faso,Sud-Ouest,Sud-Ouest,Gaoua,Gaoua,30000
+CV,Cap-Vert,Cabo Verde,Sao Nicolau,Sao Nicolau,Ribeira Brava,Ribeira Brava,5000
+CV,Cap-Vert,Cabo Verde,Maio,Maio,Vila do Maio,Vila do Maio,5000
+CV,Cap-Vert,Cabo Verde,Brava,Brava,Nova Sintra,Nova Sintra,3000
+CI,Cote d'Ivoire,Ivory Coast,Agneby-Tiassa,Agneby-Tiassa,Agboville,Agboville,90000
+CI,Cote d'Ivoire,Ivory Coast,Marahoue,Marahoue,Bouafle,Bouafle,80000
+CI,Cote d'Ivoire,Ivory Coast,Indenie-Djuablin,Indenie-Djuablin,Abengourou,Abengourou,95000
+CI,Cote d'Ivoire,Ivory Coast,Sud-Comoe,Sud-Comoe,Aboisso,Aboisso,85000
+CI,Cote d'Ivoire,Ivory Coast,Worodougou,Worodougou,Seguela,Seguela,60000
+CI,Cote d'Ivoire,Ivory Coast,Hambol,Hambol,Katiola,Katiola,70000
+CI,Cote d'Ivoire,Ivory Coast,Guemon,Guemon,Duekoue,Duekoue,75000
+CI,Cote d'Ivoire,Ivory Coast,La Me,La Me,Adzope,Adzope,65000
+GM,Gambie,Gambia,Central River,Central River,Janjanbureh,Janjanbureh,5000
+GH,Ghana,Ghana,Ahafo,Ahafo,Goaso,Goaso,35000
+GH,Ghana,Ghana,Bono,Bono,Sunyani,Sunyani,130000
+GH,Ghana,Ghana,Bono East,Bono East,Techiman,Techiman,110000
+GH,Ghana,Ghana,North East,North East,Nalerigu,Nalerigu,15000
+GH,Ghana,Ghana,Oti,Oti,Dambai,Dambai,10000
+GH,Ghana,Ghana,Savannah,Savannah,Damongo,Damongo,35000
+GH,Ghana,Ghana,Western North,Western North,Sefwi Wiawso,Sefwi Wiawso,50000
+GN,Guinee,Guinea,Boke,Boke,Boke,Boke,60000
+GN,Guinee,Guinea,Labe,Labe,Pita,Pita,40000
+GW,Guinee-Bissau,Guinea-Bissau,Bolama,Bolama,Bolama,Bolama,10000
+GW,Guinee-Bissau,Guinea-Bissau,Tombali,Tombali,Catio,Catio,30000
+LR,Liberia,Liberia,Bomi,Bomi,Tubmanburg,Tubmanburg,25000
+LR,Liberia,Liberia,Gbarpolu,Gbarpolu,Bopolu,Bopolu,10000
+LR,Liberia,Liberia,Grand Kru,Grand Kru,Barclayville,Barclayville,10000
+LR,Liberia,Liberia,River Cess,River Cess,Cestos City,Cestos City,10000
+LR,Liberia,Liberia,River Gee,River Gee,Fish Town,Fish Town,10000
+LR,Liberia,Liberia,Sinoe,Sinoe,Greenville,Greenville,20000
+ML,Mali,Mali,Kidal,Kidal,Kidal,Kidal,30000
+NE,Niger,Niger,Maradi,Maradi,Madarounfa,Madarounfa,30000
+NE,Niger,Niger,Zinder,Zinder,Magaria,Magaria,40000
+NG,Nigeria,Nigeria,Abia,Abia,Umuahia,Umuahia,400000
+NG,Nigeria,Nigeria,Adamawa,Adamawa,Yola,Yola,400000
+NG,Nigeria,Nigeria,Akwa Ibom,Akwa Ibom,Uyo,Uyo,500000
+NG,Nigeria,Nigeria,Bauchi,Bauchi,Bauchi,Bauchi,700000
+NG,Nigeria,Nigeria,Bayelsa,Bayelsa,Yenagoa,Yenagoa,500000
+NG,Nigeria,Nigeria,Benue,Benue,Makurdi,Makurdi,500000
+NG,Nigeria,Nigeria,Cross River,Cross River,Calabar,Calabar,600000
+NG,Nigeria,Nigeria,Ebonyi,Ebonyi,Abakaliki,Abakaliki,400000
+NG,Nigeria,Nigeria,Ekiti,Ekiti,Ado-Ekiti,Ado-Ekiti,500000
+NG,Nigeria,Nigeria,Gombe,Gombe,Gombe,Gombe,500000
+NG,Nigeria,Nigeria,Imo,Imo,Owerri,Owerri,900000
+NG,Nigeria,Nigeria,Jigawa,Jigawa,Dutse,Dutse,250000
+NG,Nigeria,Nigeria,Katsina,Katsina,Katsina,Katsina,500000
+NG,Nigeria,Nigeria,Kebbi,Kebbi,Birnin Kebbi,Birnin Kebbi,150000
+NG,Nigeria,Nigeria,Kogi,Kogi,Lokoja,Lokoja,250000
+NG,Nigeria,Nigeria,Nasarawa,Nasarawa,Lafia,Lafia,350000
+NG,Nigeria,Nigeria,Niger,Niger,Minna,Minna,450000
+NG,Nigeria,Nigeria,Ogun,Ogun,Abeokuta,Abeokuta,600000
+NG,Nigeria,Nigeria,Ondo,Ondo,Akure,Akure,500000
+NG,Nigeria,Nigeria,Osun,Osun,Osogbo,Osogbo,350000
+NG,Nigeria,Nigeria,Taraba,Taraba,Jalingo,Jalingo,150000
+NG,Nigeria,Nigeria,Yobe,Yobe,Damaturu,Damaturu,150000
+NG,Nigeria,Nigeria,Zamfara,Zamfara,Gusau,Gusau,450000
+SN,Senegal,Senegal,Fatick,Fatick,Fatick,Fatick,30000
+SN,Senegal,Senegal,Kaffrine,Kaffrine,Kaffrine,Kaffrine,40000
+SN,Senegal,Senegal,Kedougou,Kedougou,Kedougou,Kedougou,25000
+SN,Senegal,Senegal,Matam,Matam,Matam,Matam,25000
+SN,Senegal,Senegal,Sedhiou,Sedhiou,Sedhiou,Sedhiou,30000
+TG,Togo,Togo,Maritime,Maritime,Aflao,Aflao,15000
+TG,Togo,Togo,Kara,Kara,Niamtougou,Niamtougou,20000
+AO,Angola,Angola,Bengo,Bengo,Caxito,Caxito,50000
+AO,Angola,Angola,Cuando Cubango,Cuando Cubango,Menongue,Menongue,90000
+AO,Angola,Angola,Cuanza Norte,Cuanza Norte,N'dalatando,N'dalatando,380000
+AO,Angola,Angola,Cuanza Sul,Cuanza Sul,Sumbe,Sumbe,50000
+AO,Angola,Angola,Cunene,Cunene,Ondjiva,Ondjiva,40000
+AO,Angola,Angola,Lunda Norte,Lunda Norte,Dundo,Dundo,100000
+AO,Angola,Angola,Moxico,Moxico,Luena,Luena,50000
+CM,Cameroun,Cameroon,Adamaoua,Adamawa,Ngaoundere,Ngaoundere,300000
+CF,Republique Centrafricaine,Central African Republic,Bamingui-Bangoran,Bamingui-Bangoran,Ndele,Ndele,15000
+CF,Republique Centrafricaine,Central African Republic,Basse-Kotto,Basse-Kotto,Mobaye,Mobaye,20000
+CF,Republique Centrafricaine,Central African Republic,Haut-Mbomou,Haut-Mbomou,Obo,Obo,10000
+CF,Republique Centrafricaine,Central African Republic,Kemo,Kemo,Sibut,Sibut,20000
+CF,Republique Centrafricaine,Central African Republic,Lobaye,Lobaye,Mbaiki,Mbaiki,25000
+CF,Republique Centrafricaine,Central African Republic,Mbomou,Mbomou,Bangassou,Bangassou,30000
+CF,Republique Centrafricaine,Central African Republic,Ouham-Pende,Ouham-Pende,Bozoum,Bozoum,25000
+CF,Republique Centrafricaine,Central African Republic,Sangha-Mbaere,Sangha-Mbaere,Nola,Nola,20000
+CF,Republique Centrafricaine,Central African Republic,Vakaga,Vakaga,Birao,Birao,10000
+TD,Tchad,Chad,Barh el Gazel,Barh el Gazel,Moussoro,Moussoro,15000
+TD,Tchad,Chad,Batha,Batha,Ati,Ati,43000
+TD,Tchad,Chad,Chari-Baguirmi,Chari-Baguirmi,Massenya,Massenya,20000
+TD,Tchad,Chad,Ennedi Est,Ennedi Est,Am-Djarass,Am-Djarass,10000
+TD,Tchad,Chad,Ennedi Ouest,Ennedi Ouest,Fada,Fada,15000
+TD,Tchad,Chad,Hadjer-Lamis,Hadjer-Lamis,Massakory,Massakory,20000
+TD,Tchad,Chad,Kanem,Kanem,Mao,Mao,25000
+TD,Tchad,Chad,Lac,Lac,Bol,Bol,20000
+TD,Tchad,Chad,Sila,Sila,Goz Beida,Goz Beida,15000
+TD,Tchad,Chad,Tibesti,Tibesti,Bardai,Bardai,29000
+TD,Tchad,Chad,Wadi Fira,Wadi Fira,Biltine,Biltine,15000
+CG,Congo,Republic of the Congo,Cuvette,Cuvette,Owando,Owando,30000
+CG,Congo,Republic of the Congo,Cuvette-Ouest,Cuvette-Ouest,Ewo,Ewo,10000
+CG,Congo,Republic of the Congo,Kouilou,Kouilou,Hinda,Hinda,15000
+CG,Congo,Republic of the Congo,Pool,Pool,Kinkala,Kinkala,15000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Bas-Uele,Bas-Uele,Buta,Buta,50000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Equateur,Equateur,Mbandaka,Mbandaka,700000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Haut-Lomami,Haut-Lomami,Kamina,Kamina,250000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Haut-Uele,Haut-Uele,Isiro,Isiro,200000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Ituri,Ituri,Bunia,Bunia,450000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Kwango,Kwango,Kenge,Kenge,50000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Kwilu,Kwilu,Kikwit,Kikwit,600000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Lomami,Lomami,Kabinda,Kabinda,150000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Mai-Ndombe,Mai-Ndombe,Inongo,Inongo,30000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Maniema,Maniema,Kindu,Kindu,250000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Mongala,Mongala,Lisala,Lisala,60000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Nord-Ubangi,Nord-Ubangi,Gbadolite,Gbadolite,50000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Sankuru,Sankuru,Lusambo,Lusambo,30000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Sud-Ubangi,Sud-Ubangi,Gemena,Gemena,180000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Tanganyika,Tanganyika,Kalemie,Kalemie,200000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Tshuapa,Tshuapa,Boende,Boende,30000
+GQ,Guinee Equatoriale,Equatorial Guinea,Annobon,Annobon,San Antonio de Pale,San Antonio de Pale,5000
+GA,Gabon,Gabon,Ngounie,Ngounie,Mouila,Mouila,35000
+ST,Sao Tome-et-Principe,Sao Tome and Principe,Caue,Caue,Sao Joao dos Angolares,Sao Joao dos Angolares,5000
+NG,Nigeria,Nigeria,Kogi,Kogi,Okene,Okene,180000
+NG,Nigeria,Nigeria,Niger,Niger,Bida,Bida,170000
+NG,Nigeria,Nigeria,Benue,Benue,Gboko,Gboko,150000
+NG,Nigeria,Nigeria,Benue,Benue,Otukpo,Otukpo,180000
+NG,Nigeria,Nigeria,Adamawa,Adamawa,Mubi,Mubi,150000
+NG,Nigeria,Nigeria,Yobe,Yobe,Potiskum,Potiskum,200000
+NG,Nigeria,Nigeria,Yobe,Yobe,Gashua,Gashua,100000
+NG,Nigeria,Nigeria,Borno,Borno,Bama,Bama,80000
+NG,Nigeria,Nigeria,Taraba,Taraba,Wukari,Wukari,120000
+NG,Nigeria,Nigeria,Katsina,Katsina,Funtua,Funtua,150000
+NG,Nigeria,Nigeria,Abia,Abia,Aba,Aba,1160000
+NG,Nigeria,Nigeria,Anambra,Anambra,Nnewi,Nnewi,700000
+NG,Nigeria,Nigeria,Enugu,Enugu,Nsukka,Nsukka,300000
+NG,Nigeria,Nigeria,Delta,Delta,Asaba,Asaba,250000
+NG,Nigeria,Nigeria,Delta,Delta,Agbor,Agbor,200000
+NG,Nigeria,Nigeria,Osun,Osun,Ede,Ede,180000
+NG,Nigeria,Nigeria,Osun,Osun,Ile-Ife,Ile-Ife,300000
+NG,Nigeria,Nigeria,Akwa Ibom,Akwa Ibom,Ikot Ekpene,Ikot Ekpene,150000
+NG,Nigeria,Nigeria,Edo,Edo,Auchi,Auchi,120000
+NG,Nigeria,Nigeria,Ogun,Ogun,Ijebu Ode,Ijebu Ode,200000
+NG,Nigeria,Nigeria,Rivers,Rivers,Bonny,Bonny,90000
+NG,Nigeria,Nigeria,Cross River,Cross River,Ikom,Ikom,100000
+NG,Nigeria,Nigeria,Sokoto,Sokoto,Wurno,Wurno,50000
+NG,Nigeria,Nigeria,Kano,Kano,Wudil,Wudil,60000
+GH,Ghana,Ghana,Ahafo,Ahafo,Duayaw Nkwanta,Duayaw Nkwanta,30000
+GH,Ghana,Ghana,Ashanti,Ashanti,Ejisu,Ejisu,145000
+GH,Ghana,Ghana,Ashanti,Ashanti,Konongo,Konongo,70000
+GH,Ghana,Ghana,Bono,Bono,Berekum,Berekum,130000
+GH,Ghana,Ghana,Bono,Bono,Wenchi,Wenchi,50000
+GH,Ghana,Ghana,Bono East,Bono East,Kintampo,Kintampo,70000
+GH,Ghana,Ghana,Northern,Northern,Yendi,Yendi,150000
+GH,Ghana,Ghana,Northern,Northern,Savelugu,Savelugu,50000
+GH,Ghana,Ghana,North East,North East,Walewale,Walewale,30000
+GH,Ghana,Ghana,Oti,Oti,Nkwanta,Nkwanta,30000
+GH,Ghana,Ghana,Savannah,Savannah,Salaga,Salaga,40000
+GH,Ghana,Ghana,Greater Accra,Greater Accra,Ashaiman,Ashaiman,300000
+GH,Ghana,Ghana,Greater Accra,Greater Accra,Dodowa,Dodowa,40000
+GH,Ghana,Ghana,Western,Western,Axim,Axim,40000
+GH,Ghana,Ghana,Eastern,Eastern,Nkawkaw,Nkawkaw,60000
+GH,Ghana,Ghana,Eastern,Eastern,Suhum,Suhum,50000
+GH,Ghana,Ghana,Central,Central,Winneba,Winneba,70000
+GH,Ghana,Ghana,Central,Central,Kasoa,Kasoa,180000
+GH,Ghana,Ghana,Volta,Volta,Hohoe,Hohoe,70000
+GH,Ghana,Ghana,Upper East,Upper East,Bawku,Bawku,90000
+GH,Ghana,Ghana,Upper West,Upper West,Jirapa,Jirapa,30000
+GH,Ghana,Ghana,Western North,Western North,Bibiani,Bibiani,30000
+ML,Mali,Mali,Sikasso,Sikasso,Bougouni,Bougouni,59000
+ML,Mali,Mali,Sikasso,Sikasso,Kimparana,Kimparana,30000
+ML,Mali,Mali,Sikasso,Sikasso,Kadiolo,Kadiolo,30000
+ML,Mali,Mali,Segou,Segou,San,San,67000
+ML,Mali,Mali,Segou,Segou,Ke-Macina,Ke-Macina,30000
+ML,Mali,Mali,Segou,Segou,Tominian,Tominian,30000
+ML,Mali,Mali,Koulikoro,Koulikoro,Kalaban Koro,Kalaban Koro,71000
+ML,Mali,Mali,Koulikoro,Koulikoro,Mande,Mande,59000
+ML,Mali,Mali,Koulikoro,Koulikoro,Ouelessebougou,Ouelessebougou,30000
+ML,Mali,Mali,Mopti,Mopti,Sevare,Sevare,30000
+ML,Mali,Mali,Mopti,Mopti,Bankass,Bankass,29000
+ML,Mali,Mali,Kayes,Kayes,Bafoulabe,Bafoulabe,30000
+ML,Mali,Mali,Tombouctou,Tombouctou,Dire,Dire,30000
+ML,Mali,Mali,Gao,Gao,Bourem,Bourem,30000
+ML,Mali,Mali,Gao,Gao,Ansongo,Ansongo,30000
+TD,Tchad,Chad,Tandjile,Tandjile,Lai,Lai,41000
+TD,Tchad,Chad,Guera,Guera,Bitkine,Bitkine,31000
+TD,Tchad,Chad,Logone Oriental,Logone Oriental,Bebedja,Bebedja,33000
+TD,Tchad,Chad,Batha,Batha,Oum Hadjer,Oum Hadjer,37000
+TD,Tchad,Chad,Chari-Baguirmi,Chari-Baguirmi,Bousso,Bousso,30000
+CI,Cote d'Ivoire,Ivory Coast,Bagoue,Bagoue,Boundiali,Boundiali,50000
+CI,Cote d'Ivoire,Ivory Coast,Folon,Folon,Minignan,Minignan,43000
+CI,Cote d'Ivoire,Ivory Coast,Tchologo,Tchologo,Kong,Kong,42000
+CI,Cote d'Ivoire,Ivory Coast,Iffou,Iffou,Prikro,Prikro,46000
+CI,Cote d'Ivoire,Ivory Coast,La Me,La Me,Alepe,Alepe,51000
+CI,Cote d'Ivoire,Ivory Coast,Grands-Ponts,Grands-Ponts,Jacqueville,Jacqueville,52000
+CI,Cote d'Ivoire,Ivory Coast,Nawa,Nawa,Buyo,Buyo,49000
+CI,Cote d'Ivoire,Ivory Coast,Tonkpi,Tonkpi,Zouan-Hounien,Zouan-Hounien,48000
+CI,Cote d'Ivoire,Ivory Coast,Marahoue,Marahoue,Zuenoula,Zuenoula,45000
+CI,Cote d'Ivoire,Ivory Coast,Worodougou,Worodougou,Dianra,Dianra,41000
+CM,Cameroun,Cameroon,Centre,Centre,Bafia,Bafia,69000
+CM,Cameroun,Cameroon,Centre,Centre,Akonolinga,Akonolinga,17000
+CM,Cameroun,Cameroon,Centre,Centre,Mbalmayo,Mbalmayo,80000
+CM,Cameroun,Cameroon,Nord-Ouest,Northwest,Bafut,Bafut,72000
+CM,Cameroun,Cameroon,Nord-Ouest,Northwest,Kumbo,Kumbo,54000
+CM,Cameroun,Cameroon,Est,East,Batouri,Batouri,44000
+CM,Cameroun,Cameroon,Sud-Ouest,Southwest,Buea,Buea,90000
+CM,Cameroun,Cameroon,Sud-Ouest,Southwest,Limbe,Limbe,84000
+CM,Cameroun,Cameroon,Sud-Ouest,Southwest,Mamfe,Mamfe,30000
+CM,Cameroun,Cameroon,Ouest,West,Dschang,Dschang,96000
+CM,Cameroun,Cameroon,Ouest,West,Foumbot,Foumbot,84000
+CM,Cameroun,Cameroon,Adamaoua,Adamawa,Banyo,Banyo,41000
+CM,Cameroun,Cameroon,Nord,North,Guider,Guider,85000
+CM,Cameroun,Cameroon,Extreme-Nord,Far North,Kaele,Kaele,25000
+CM,Cameroun,Cameroon,Sud,South,Kribi,Kribi,55000
+GN,Guinee,Guinea,Nzerekore,Nzerekore,Gueckedou,Gueckedou,62000
+GN,Guinee,Guinea,Faranah,Faranah,Dabola,Dabola,35000
+GN,Guinee,Guinea,Labe,Labe,Mali,Mali,5000
+SN,Senegal,Senegal,Ziguinchor,Ziguinchor,Bignona,Bignona,27000
+SN,Senegal,Senegal,Fatick,Fatick,Joal-Fadiouth,Joal-Fadiouth,36000
+SN,Senegal,Senegal,Kolda,Kolda,Velingara,Velingara,24000
+GW,Guinee-Bissau,Guinea-Bissau,Oio,Oio,Nhacra,Nhacra,8000
+SL,Sierra Leone,Sierra Leone,Nord,Northern,Magburaka,Magburaka,25000
+SL,Sierra Leone,Sierra Leone,Sud,Southern,Moyamba,Moyamba,15000
+SL,Sierra Leone,Sierra Leone,Est,Eastern,Pendembu,Pendembu,10000
+BF,Burkina Faso,Burkina Faso,Hauts-Bassins,Hauts-Bassins,Orodara,Orodara,30000
+BF,Burkina Faso,Burkina Faso,Centre,Centre,Saaba,Saaba,50000
+BJ,Benin,Benin,Zou,Zou,Za-Kpota,Za-Kpota,25000
+BJ,Benin,Benin,Borgou,Borgou,Bembereke,Bembereke,30000
+TG,Togo,Togo,Plateaux,Plateaux,Notse,Notse,30000
+AO,Angola,Angola,Huambo,Huambo,Bailundo,Bailundo,50000
+AO,Angola,Angola,Huila,Huila,Chibia,Chibia,40000
+AO,Angola,Angola,Bie,Bie,Andulo,Andulo,30000
+AO,Angola,Angola,Malanje,Malanje,Cacuso,Cacuso,20000
+AO,Angola,Angola,Uige,Uige,Negage,Negage,50000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Kongo Central,Kongo Central,Boma,Boma,150000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Nord-Kivu,North Kivu,Butembo,Butembo,1000000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Kasai-Oriental,Kasai-Oriental,Mwene-Ditu,Mwene-Ditu,200000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Haut-Katanga,Haut-Katanga,Kasumbalesa,Kasumbalesa,100000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Ituri,Ituri,Aru,Aru,30000
+CG,Congo,Republic of the Congo,Sangha,Sangha,Souanke,Souanke,10000
+CG,Congo,Republic of the Congo,Niari,Niari,Kimongo,Kimongo,10000
+CF,Republique Centrafricaine,Central African Republic,Ombella-M'Poko,Ombella-M'Poko,Damara,Damara,15000
+CF,Republique Centrafricaine,Central African Republic,Ouham,Ouham,Bouca,Bouca,15000
+GA,Gabon,Gabon,Estuaire,Estuaire,Ntoum,Ntoum,20000
+GA,Gabon,Gabon,Ngounie,Ngounie,Fougamou,Fougamou,8000
+AO,Angola,Angola,Uige,Uige,Alto Cauale,Alto Cauale,104000
+AO,Angola,Angola,Uige,Uige,Ambuila,Ambuila,18000
+AO,Angola,Angola,Huambo,Huambo,Caala,Caala,130000
+AO,Angola,Angola,Huambo,Huambo,Alto Hama,Alto Hama,17000
+AO,Angola,Angola,Moxico,Moxico,Alto Zambeze,Alto Zambeze,20000
+AO,Angola,Angola,Cuanza Norte,Cuanza Norte,Ambaca,Ambaca,62000
+AO,Angola,Angola,Benguela,Benguela,Baia Farta,Baia Farta,45000
+AO,Angola,Angola,Benguela,Benguela,Balombo,Balombo,36000
+AO,Angola,Angola,Namibe,Namibe,Bibala,Bibala,10500
+AO,Angola,Angola,Lunda Sul,Lunda Sul,Cacolo,Cacolo,32000
+AO,Angola,Angola,Cabinda,Cabinda,Buco-Zau,Buco-Zau,13000
+AO,Angola,Angola,Cuanza Sul,Cuanza Sul,Mussende,Mussende,83000
+AO,Angola,Angola,Malanje,Malanje,Cambundi-Catembo,Cambundi-Catembo,46000
+AO,Angola,Angola,Bie,Bie,Cunhinga,Cunhinga,74000
+CF,Republique Centrafricaine,Central African Republic,Lobaye,Lobaye,Boda,Boda,30000
+CF,Republique Centrafricaine,Central African Republic,Ouaka,Ouaka,Ippy,Ippy,20000
+CF,Republique Centrafricaine,Central African Republic,Nana-Mambere,Nana-Mambere,Baoro,Baoro,20000
+CF,Republique Centrafricaine,Central African Republic,Basse-Kotto,Basse-Kotto,Kembe,Kembe,15000
+LR,Liberia,Liberia,Nimba,Nimba,Sanniquellie,Sanniquellie,20000
+LR,Liberia,Liberia,Montserrado,Montserrado,Paynesville,Paynesville,400000
+LR,Liberia,Liberia,Lofa,Lofa,Foya,Foya,25000
+LR,Liberia,Liberia,Margibi,Margibi,Harbel,Harbel,30000
+LR,Liberia,Liberia,Grand Bassa,Grand Bassa,Edina,Edina,10000
+LR,Liberia,Liberia,Maryland,Maryland,Pleebo,Pleebo,20000
+SN,Senegal,Senegal,Thies,Thies,Tivaouane,Tivaouane,39000
+SN,Senegal,Senegal,Louga,Louga,Dahra,Dahra,30000
+SN,Senegal,Senegal,Tambacounda,Tambacounda,Bakel,Bakel,15000
+SN,Senegal,Senegal,Kaolack,Kaolack,Guinguineo,Guinguineo,15000
+BF,Burkina Faso,Burkina Faso,Boucle du Mouhoun,Boucle du Mouhoun,Nouna,Nouna,30000
+BF,Burkina Faso,Burkina Faso,Sahel,Sahel,Djibo,Djibo,40000
+BF,Burkina Faso,Burkina Faso,Centre-Est,Centre-Est,Koupela,Koupela,30000
+BF,Burkina Faso,Burkina Faso,Est,East,Diapaga,Diapaga,20000
+BJ,Benin,Benin,Oueme,Oueme,Adjohoun,Adjohoun,20000
+BJ,Benin,Benin,Mono,Mono,Athieme,Athieme,15000
+BJ,Benin,Benin,Atacora,Atacora,Tanguieta,Tanguieta,20000
+BJ,Benin,Benin,Collines,Collines,Save,Save,30000
+NE,Niger,Niger,Tillaberi,Tillaberi,Say,Say,20000
+NE,Niger,Niger,Dosso,Dosso,Dogondoutchi,Dogondoutchi,30000
+NE,Niger,Niger,Diffa,Diffa,N'Guigmi,N'Guigmi,20000
+GM,Gambie,Gambia,North Bank,North Bank,Kerewan,Kerewan,10000
+GM,Gambie,Gambia,Upper River,Upper River,Fatoto,Fatoto,8000
+GW,Guinee-Bissau,Guinea-Bissau,Gabu,Gabu,Pirada,Pirada,10000
+GW,Guinee-Bissau,Guinea-Bissau,Tombali,Tombali,Cacine,Cacine,5000
+CV,Cap-Vert,Cabo Verde,Santo Antao,Santo Antao,Ribeira Grande,Ribeira Grande,8000
+CV,Cap-Vert,Cabo Verde,Fogo,Fogo,Mosteiros,Mosteiros,7000
+CG,Congo,Republic of the Congo,Bouenza,Bouenza,Mouyondzi,Mouyondzi,20000
+CG,Congo,Republic of the Congo,Plateaux,Plateaux,Ngo,Ngo,10000
+CG,Congo,Republic of the Congo,Likouala,Likouala,Dongou,Dongou,15000
+GA,Gabon,Gabon,Woleu-Ntem,Woleu-Ntem,Bitam,Bitam,30000
+GA,Gabon,Gabon,Ogooue-Maritime,Ogooue-Maritime,Gamba,Gamba,10000
+GQ,Guinee Equatoriale,Equatorial Guinea,Wele-Nzas,Wele-Nzas,Anisoc,Anisoc,10000
+GN,Guinee,Guinea,Kindia,Kindia,Coyah,Coyah,50000
+GN,Guinee,Guinea,Kankan,Kankan,Kerouane,Kerouane,30000
+NG,Nigeria,Nigeria,Bayelsa,Bayelsa,Brass,Brass,30000
+NG,Nigeria,Nigeria,Imo,Imo,Orlu,Orlu,150000
+NG,Nigeria,Nigeria,Kwara,Kwara,Offa,Offa,120000
+NG,Nigeria,Nigeria,Plateau,Plateau,Bukuru,Bukuru,100000
+GH,Ghana,Ghana,North East,North East,Chereponi,Chereponi,15000
+GH,Ghana,Ghana,Savannah,Savannah,Bole,Bole,20000
+GH,Ghana,Ghana,Western North,Western North,Enchi,Enchi,20000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Equateur,Equateur,Basankusu,Basankusu,27000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Tshopo,Tshopo,Yangambi,Yangambi,15000
+CD,Republique Democratique du Congo,Democratic Republic of the Congo,Kasai-Central,Kasai-Central,Luiza,Luiza,50000
+TD,Tchad,Chad,Mayo-Kebbi Est,Mayo-Kebbi East,Fianga,Fianga,25000
+TD,Tchad,Chad,Ouaddai,Ouaddai,Adre,Adre,25000

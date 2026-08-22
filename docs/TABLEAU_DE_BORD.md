@@ -398,6 +398,93 @@ l'interruption franche. Écran : 409 re-préparer → retour structurel à
 l'étape ① ; 503 pré-vol → bannière avec le message nommé, l'étape ② reste
 ouverte (re-confirmer sans re-préparer). 1 039 tests (+1, sondes doublées).
 
+## D-quinquies. LE PREMIER RUN REAL EN PRODUCTION — 21/08, FAILED, disséqué et durci
+
+**Le fait** : présentation du Loader à la direction le 21/08 (appréciée ;
+consigne ferme : « jamais le mot démo — c'est un produit officiel interne »).
+DRY_RUN 15h18 propre (PARTIAL attendu), REAL 15h29 confirmé → **FAILED à
+DEPOSITAIRES en 4 min**. Audit du soir, lecture seule prod + code, trois
+causes PROUVÉES :
+
+1. **ORGANISATION 14/18** — email d'owner déterministe (`nom.nom@…`) dont
+   l'unicité n'était garantie qu'EN MÉMOIRE DU RUN ; collision avec les
+   résidus du 17/08 (`mbarga.mbarga@`, `ouedraogo.ouedraogo@` — prouvé sur
+   user-service) → 400 « Identity with this email already exists ».
+2. **CATALOGUE 4/6** — 422 reproduit sur pièce : « The fields measure and
+   measure_price are required for PRODUCT collection policy » ; on envoyait
+   `measure_price: 0.0` en dur (leur validation traite 0 comme absent —
+   anomalie à remonter). Warrantage et Cacao ne pouvaient JAMAIS naître.
+3. **DEPOSITAIRES FATAL** — `porteuses[imf_rang % len(porteuses)]` : avec
+   14 IMF sur 18, le modulo repliait deux rangs sur la même company → deux
+   Branches même (run, company, région) → E11000 sur NOTRE index →
+   exception non rattrapée, run mort. CLIENTS/STAFF jamais tentés, Faker
+   jamais appelé (registre clos à 0).
+
+**Durcissement livré le soir même (chantier A)** : le rang de plan voyage
+avec la porteuse (`CompanyPorteuse.imf_rang`) et le réseau d'une IMF absente
+est **sauté et déclaré, jamais réattribué** (UC-07) ; `DuplicateKeyError`
+rattrapée en échec nommé ; les adresses déjà prises sur user-service sont
+**semées dans le générateur au lancement** (`reserver_emails`, une lecture —
+owners, staff et clients immunisés d'un coup, DRY compris) ; `prix_mesure`
+métier par produit PRODUCT (mil 240, cacao 1800 FCFA/kg) refusé à 0 dès la
+construction ; erreurs COMPLÈTES (troncatures 160→600, rapport entier du
+module persisté dans le checkpoint `resume`, trace d'exception incluse) ;
+502 pays/devise relaye le refus réel de config-service ; journal admin :
+**issue jointe** (l'échec du pays GN en séance s'affichait comme un CREATE
+ordinaire) + **acteur** sur les intentions référentiels/entités/inventaire.
+Tests : rejeu du crash en doublure d'index (le test meurt comme la prod si
+la réattribution revient).
+
+**Constaté aussi ce jour-là** : création pays GN par un collaborateur
+direction — devise GNF créée (gardes anti-doublon OK, 1 seule malgré 3
+tentatives), pays refusé par config-service, cause exacte à lire au replay
+(le 502 muet est corrigé) ; 43 kiosques UC-09 sans agent laissés sur la
+plateforme (pas de DELETE) — le prochain run les ADOPTE (GET-avant-POST
+par nom, déjà en place). Chantiers ouverts : B (contrat inter-phases
+généralisé), C1 (pays 100 % paramétrable dans la GÉNÉRATION — conception à
+valider), C2 (balayage « demo » : 62 occurrences backend + frontend).
+
+## D-sexies. C1 — LE LOADER MAÎTRE DE SES PAYS (22/08) + import des fichiers direction
+
+**La décision (Yaniv, 22/08)** : le Loader est le System of Record — un pays
+naît DANS le Loader (fiche complète : devise, TVA, fuseau, régulateurs — tout
+ce que config-service n'a pas de champ pour porter) ; le pousser vers
+config-service reste le geste VOLONTAIRE d'US-B6. Jamais d'import en masse
+vers la plateforme.
+
+**Livré** : `SurcoucheReferentiel.ajouter_pays` (l'« autre opération » promise
+depuis le 14/08) — ISO2 unique, indicatif borné, TVA [0-40], devise JAMAIS
+orpheline (forgée avec le pays si inconnue), retrait réversible qui emporte la
+devise du dernier pays, `appliquer()` fusionne `pays_index` + devises, les
+gardes région/telco reconnaissent les pays de surcouche (la chaîne
+pays→région→ville→quartier→telco s'enchaîne entièrement en surcouche).
+Persistance Mongo complète (frozenset devise inclus), relecture prouvée
+identique. **+10 tests (1054).**
+
+**Import des fichiers direction** (`scripts/importer_referentiel_pays.py`,
+re-lançable, GET-avant-POST à chaque niveau) : `Import_pays.xlsx` (48 fiches)
+TRAITÉ en senior data scientist — **7 MCC faux corrigés contre le plan UIT
+E.212** (bloc décalé d'un cran : MG/ZM/MZ/BI/SC/GW/AO), accents FR restaurés
+(« Erithre »→Érythrée), devises multi-valeurs LS/NA tranchées (LSL/NAD),
+décimales ISO 4217 vérifiées, TVA et fuseaux comblés (48/48, 8 taux marqués
+« à confirmer »), 8 regex telco réécrites dans NOTRE grammaire et validées
+par le composeur réel, espaces/NBSP/tabulations purgés, CV absent de la
+feuille telco relevé + `afrique_ouest_centrale_pays_villes_1.csv` (24 pays,
+563 lignes, 0 doublon). **Résultat en base locale (surcouche v10) : 44 pays ·
+259 régions · 461 villes (232 avec GPS réel, ±0,01°) · 128 quartiers RÉELS
+(communes officielles : Kaloum, Gombe, Poto-Poto…) · 34 devises. 0 refus
+d'invariant.** Les 4 cibles restent au classeur. Fichiers traités versionnés
+dans `docs/reference/`.
+
+**Trous DITS, jamais inventés** : 22 pays (Est/Sud) sans géographie (hors
+CSV `_1` — d'autres fichiers annoncés), 441 villes sans quartier (US-B4),
+0 telco importé (le fichier n'a NI parts de marché NI regex composables
+hors les 8 réécrites — INV-18 refuse, on ne contourne pas). **Reste C1
+lot 2** : patronymes par pays + porte d'activation « matière complète » +
+planification au-delà de `PAYS_CIBLES` — alors seulement un pays importé
+devient GÉNÉRABLE. Et rejouer l'import SUR LE SERVEUR après déploiement
+(la surcouche v10 est locale).
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |

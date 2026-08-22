@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.database import COLLECTION_LOADER_CONFIGURATION, get_collection
-from app.services.geographie import City, District, Region, Telco
+from app.services.geographie import City, Devise, District, Pays, Region, Telco
 from app.services.surcouche_referentiel import SurcoucheReferentiel
 
 _ID_SINGLETON = "surcouche"
@@ -49,6 +49,13 @@ class SurcoucheRepository:
                 "modifie_le": None,
             }
         surcouche = SurcoucheReferentiel(
+            pays={i: Pays(**p) for i, p in (document.get("pays") or {}).items()},
+            # `pays` d'une Devise est un frozenset — Mongo le stocke en liste,
+            # l'inverse exact est refait ici (meme promesse que le docstring).
+            devises={
+                i: Devise(**{**d, "pays": frozenset(d.get("pays") or ())})
+                for i, d in (document.get("devises") or {}).items()
+            },
             regions={i: Region(**r) for i, r in (document.get("regions") or {}).items()},
             villes={i: City(**v) for i, v in (document.get("villes") or {}).items()},
             quartiers={i: District(**q) for i, q in (document.get("quartiers") or {}).items()},
@@ -75,6 +82,11 @@ class SurcoucheRepository:
             {"_id": _ID_SINGLETON},
             {
                 "$set": {
+                    "pays": {i: asdict(p) for i, p in surcouche.pays.items()},
+                    "devises": {
+                        i: {**asdict(d), "pays": sorted(d.pays)}
+                        for i, d in surcouche.devises.items()
+                    },
                     "regions": {i: asdict(r) for i, r in surcouche.regions.items()},
                     "villes": {i: asdict(v) for i, v in surcouche.villes.items()},
                     "quartiers": {i: asdict(q) for i, q in surcouche.quartiers.items()},
