@@ -578,6 +578,28 @@ des fiches (état/devise/TVA/complétude, i18n). Dynamisme prouvé : le globe
 a détecté seul CV en opération (présent sur config-service depuis la recon
 du 14/08). QA navigateur prod : 0 erreur console.
 
+## D-undecies. Le panneau config-service + vague 2 (22/08, clôture)
+
+**Panneau de chargement config-service EN PROD** (frontend `bf0bf94`) : la
+machine d'états d'un pays, vérifiée EN DIRECT — EN OPÉRATION (5) / PRÊT À
+POUSSER (43, bouton depuis NOTRE fiche) / FICHE SEULE (0) / LÀ-BAS SEULEMENT
+(**1 anomalie détectée et affichée : « CA »**, le résidu que la recon du
+14/08 avait vu). `GET /pays` rend `hors_loader`. Création manuelle de pays
+ET de monnaie SUPPRIMÉES (routes + écrans) — l'entrée est l'import backend ;
+`pousser` forge la devise là-bas depuis notre fiche. Géographie épurée :
+l'arbre et la recherche retirés, le globe + la vue table sont LA structure,
+seul l'ajout de QUARTIER survit (aucune source mondiale ne les fournit).
+
+**Vague 2 de la connaissance sûre** (`completer_quartiers_telcos.py`,
+`5d2070b`) : +33 quartiers officiels (Plateau/Cocody à Abidjan, Katutura,
+Rohero…) et **+38 telcos réels sur 13 marchés maîtrisés** — parts de marché
+régulateurs/GSMA, plans de numérotation réels, CHAQUE ligne validée par le
+composeur (38/38, longueurs conformes UIT contre-vérifiées, INV-18 ≤ 100
+partout). Serveur v23. **Nexttel (défunt au Cameroun, erreur de ma batterie
+QA) RETIRÉ de la prod via DELETE /surcouche — première utilisation réelle
+de la réversibilité (v24, 38 telcos).** État final prod : 48 pays ·
+626 régions · 3 148 villes · 272 quartiers · 38 telcos · 34 devises.
+
 ## E. Backlog S4/S5 restant
 
 | Tâche | État |
