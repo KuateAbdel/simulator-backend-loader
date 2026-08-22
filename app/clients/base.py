@@ -106,6 +106,11 @@ MARGE_RENOUVELLEMENT: Final = timedelta(minutes=10)
 DUREE_ACCESS: Final = timedelta(hours=4)
 DUREE_REFRESH: Final = timedelta(days=7)
 
+#: Fenetre du disjoncteur de login : apres un refus, on n'essaie plus pendant
+#: cette duree — assez long pour ne jamais atteindre le seuil de 3 (INV-USR-19),
+#: assez court pour repartir seul apres correction du mot de passe.
+FENETRE_DISJONCTEUR_LOGIN: Final = timedelta(minutes=10)
+
 
 @dataclass
 class SessionAuth:
@@ -139,6 +144,13 @@ class SessionAuth:
     access_expire_le: datetime | None = None
     refresh_expire_le: datetime | None = None
     verrou: asyncio.Lock = field(default_factory=asyncio.Lock)
+    #: DISJONCTEUR (22/08) — apres un login REFUSE (mot de passe perime,
+    #: compte verrouille...), AUCUNE nouvelle tentative avant ce moment :
+    #: chaque appel d'ecran retentait sinon, et 3 chargements suffisaient a
+    #: verrouiller le compte ROOT partage (INV-USR-19, seuil a 3). Avec le
+    #: disjoncteur, le Loader brule AU PIRE une tentative par fenetre.
+    login_bloque_jusqua: datetime | None = None
+    login_refus_motif: str = ""
 
     def access_utilisable(self) -> bool:
         return (
@@ -432,6 +444,22 @@ class ClientFinZuu:
 
     async def _ouvrir_session(self, session: SessionAuth) -> str:
         """`POST /auth/login` — la seule voie qui compte dans les 3 tentatives."""
+        maintenant = datetime.now(UTC)
+        if session.login_bloque_jusqua and maintenant < session.login_bloque_jusqua:
+            restant = int((session.login_bloque_jusqua - maintenant).total_seconds() // 60) + 1
+            raise ErreurService(
+                self.nom_service,
+                "POST",
+                "/auth/login",
+                423,
+                (
+                    f"DISJONCTEUR : dernier login refuse ({session.login_refus_motif}) — "
+                    f"aucune nouvelle tentative avant ~{restant} min, pour ne pas "
+                    "verrouiller le compte ROOT partage (INV-USR-19, seuil a 3). "
+                    "Corriger les identifiants du .env si le mot de passe a change."
+                ),
+                "-",
+            )
         if not settings.root_username or not settings.root_password:
             raise ErreurService(
                 self.nom_service,
@@ -448,8 +476,11 @@ class ClientFinZuu:
             json={"username": settings.root_username, "password": settings.root_password},
             headers={"X-Request-Id": request_id},
         )
-        # INV-USR-19 : un login echoue n'est JAMAIS rejoue automatiquement.
+        # INV-USR-19 : un login echoue n'est JAMAIS rejoue automatiquement —
+        # et le DISJONCTEUR s'arme : les prochains appels ne retenteront pas.
         if reponse.status_code != 200:
+            session.login_bloque_jusqua = datetime.now(UTC) + FENETRE_DISJONCTEUR_LOGIN
+            session.login_refus_motif = f"HTTP {reponse.status_code}"
             raise ErreurService(
                 "user-service",
                 "POST",
@@ -458,6 +489,8 @@ class ClientFinZuu:
                 reponse.text[:300],
                 request_id,
             )
+        session.login_bloque_jusqua = None
+        session.login_refus_motif = ""
 
         try:
             token = session.enregistrer(reponse.json().get("data", {}))

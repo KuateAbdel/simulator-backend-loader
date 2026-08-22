@@ -153,3 +153,43 @@ class TestSessionPartagee:
         resultats = await asyncio.gather(*(_renouveler() for _ in range(20)))
         assert appels == 1, "un seul renouvellement pour vingt workers"
         assert set(resultats) == {"unique"}
+
+
+class TestDisjoncteurLogin:
+    """22/08 — apres un login REFUSE, aucune nouvelle tentative pendant la
+    fenetre : c'est ce qui empeche le Loader de verrouiller le compte ROOT
+    partage (INV-USR-19, seuil a 3) quand un mot de passe est perime."""
+
+    def test_le_disjoncteur_bloque_puis_expire(self) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from app.clients.base import FENETRE_DISJONCTEUR_LOGIN, SessionAuth
+
+        s = SessionAuth()
+        assert s.login_bloque_jusqua is None
+        s.login_bloque_jusqua = datetime.now(UTC) + FENETRE_DISJONCTEUR_LOGIN
+        assert datetime.now(UTC) < s.login_bloque_jusqua
+        s.login_bloque_jusqua = datetime.now(UTC) - timedelta(seconds=1)
+        assert datetime.now(UTC) >= s.login_bloque_jusqua
+
+    async def test_un_login_refuse_arme_le_disjoncteur_et_le_dit(self) -> None:
+        """Le refus arme ; l'appel suivant echoue SANS toucher /auth/login."""
+        from datetime import UTC, datetime
+
+        from app.clients.base import ClientFinZuu, ErreurService, SessionAuth
+        from app.core.config import settings
+
+        client = ClientFinZuu("user-service", settings.user_service_base)
+        session = SessionAuth()
+        session.login_bloque_jusqua = datetime.now(UTC).replace(year=2999)
+        session.login_refus_motif = "HTTP 401"
+        try:
+            import pytest
+
+            with pytest.raises(ErreurService) as attrape:
+                await client._ouvrir_session(session)
+            assert attrape.value.status == 423
+            assert "DISJONCTEUR" in attrape.value.detail
+            assert "INV-USR-19" in attrape.value.detail
+        finally:
+            await client.fermer()
