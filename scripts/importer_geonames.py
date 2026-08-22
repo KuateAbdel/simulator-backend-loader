@@ -99,11 +99,11 @@ async def importer(villes_txt: Path, admin1_txt: Path, par: str, a_blanc: bool) 
         from app.services.geographie import Region
 
         regions_existantes: dict[tuple[str, str], Region] = {}
-        for region in referentiel.regions.values():
-            regions_existantes[(region.country_iso2, normaliser(region.name))] = region
+        for existante in referentiel.regions.values():
+            regions_existantes[(existante.country_iso2, normaliser(existante.name))] = existante
         villes_existantes: dict[tuple[str, str], bool] = {}
-        for ville in referentiel.villes.values():
-            villes_existantes[(ville.country_iso2, normaliser(ville.name))] = True
+        for connue in referentiel.villes.values():
+            villes_existantes[(connue.country_iso2, normaliser(connue.name))] = True
 
         stats = {"regions": 0, "villes": 0, "reprises": 0, "deja": 0}
         refus: list[str] = []
