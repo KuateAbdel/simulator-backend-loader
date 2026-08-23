@@ -655,9 +655,17 @@ normalisée — accents/casse/ponctuation, sur telcos, devises, pays ET villes
 (`7665f24`/`0541693`) · **relais honnête** des pannes plateforme, 423 reste
 423 (`7b9ee70`).
 
-**Restent** : C2 verrou par ressource (doublon en concurrence) · C4 sonde de
-cohérence + pré-vol bloquant le run · C5 `synchroniser` global · C7 sortir
-d'opération (A-08).
+**Livrés aussi (fin de journée)** : **C2** verrou par ressource (409 immédiat,
+TTL, verrou périmé repris ; prouvé en prod : 2 allers simultanés → `[200,
+409]`) · **C4** `GET /coherence` (verdict, le pire l'emporte) **+ pré-vol qui
+BLOQUE un REAL** si le périmètre a dérivé · **C5** `POST /synchroniser`
+(aperçu/confirmation, idempotent) · **C7** `PATCH /pays/{iso}/etat` — sortir
+d'opération et y revenir, avec garde et relecture. `6d25108`, `79f163b`.
+
+**CV RECTIFIÉ sur la prod** (décision Yaniv) : `Cabo Verde`, `dial_code 238`,
+devise **CVE**, 15 villes — la fiche portait `name/region/continent = "cm"`,
+0 ville et `XAF`. **6 pays sur 7 sans aucun écart** ; reste le parasite `CA`,
+qui n'appartient pas au Loader.
 
 **Deux bugs graves attrapés** : le telco d'un pays hors opération était créé
 là-bas puis orphelin définitif ; et l'aperçu de rectification ÉCRIVAIT (il a
@@ -665,10 +673,9 @@ créé `CVE`). Les deux corrigés et prouvés en prod.
 
 ## F. Les arbitrages qui n'appartiennent qu'à Yaniv
 
-**A-14 — 23/08, NOUVEAU** : corriger ou non la fiche `CV` du référentiel
-PARTAGÉ (devise `XAF` → `CVE`, `dial_code` vide) ; le `PUT /countries/{id}`
-à 9 champs le permet, mais l'écriture touche une fiche que d'autres équipes
-lisent. · `A-05` (permissions 11 rôles) · `A-07` (profils comportementaux) · `A-11`
+**A-14 — TRANCHÉ par Yaniv le 23/08 et APPLIQUÉ** : la fiche `CV` du
+référentiel PARTAGÉ a été rectifiée (« tout doit être consistent et cohérent,
+pas de mauvaise devise »). · `A-05` (permissions 11 rôles) · `A-07` (profils comportementaux) · `A-11`
 (proportion APPROVED/DECLINED) · `A-04` (persistance des prêts) · `A-08`
 (désactiver un pays) · noms métier du catalogue + marqueur `short_name` ·
 Agents compris ou en sus des 15-25 staff/pays. Recommandations écrites dans

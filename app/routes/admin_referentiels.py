@@ -1469,6 +1469,138 @@ async def rectifier_pays_en_operation(
     }
 
 
+@router.patch("/pays/{iso}/etat")
+async def changer_etat_pays_en_operation(
+    iso: str,
+    demande: EtatRessourceDemande,
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
+) -> dict[str, Any]:
+    """`C7` / `A-08` — SORTIR un pays d'operation, et l'y remettre.
+
+    Le verbe qui manquait : `activer_pays` et `desactiver_pays` existaient
+    dans le client depuis la mesure du 09/08, mais aucune route ne les
+    exposait. L'aller etait donc SANS RETOUR — une mise en operation par
+    erreur devenait definitive.
+
+    Une garde, mesuree et non theorique : **on ne desactive pas un pays que
+    NOTRE configuration compte generer**. Le run le viserait, la plateforme
+    le refuserait, et l'echec arriverait a la 1500e ecriture au lieu d'ici.
+    Le retirer d'abord de la configuration (`US-B1`), puis le desactiver.
+
+    Aucune suppression : `is_active` est un ETAT, reversible dans les deux
+    sens — c'est ce qui distingue ce geste de la devise, dont la reactivation
+    n'a JAMAIS ete mesuree et dont la desactivation reste donc refusee.
+
+    RELECTURE obligatoire : l'etat rendu est celui mesure APRES le geste, pas
+    celui qu'on a demande (`ANO-CFG-LIFECYCLE` : un serveur qui repond sans
+    agir existe, on l'a vu).
+    """
+    from uuid import NAMESPACE_OID, uuid5
+
+    from app.repositories.audit_trail import AuditTrailRepository
+    from app.repositories.configuration import ConfigurationRepository
+    from app.routes.admin_entites import RUN_ADMIN
+
+    await refuser_si_run_en_cours()
+    code = iso.strip().upper()
+
+    if not demande.actif:
+        configuration, _meta = await ConfigurationRepository().charger()
+        fiche_config = configuration.pays.get(code)
+        if fiche_config is not None and fiche_config.actif:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{code} est ACTIF dans la configuration du Loader : le "
+                    "prochain run le viserait et echouerait sur une plateforme "
+                    "qui ne l'accepte plus. Le desactiver d'abord dans la "
+                    "configuration (US-B1), puis ici."
+                ),
+            )
+
+    async with _verrou(f"pousser:{code}", session.email):
+        lecture = _config_lecture()
+        admin = _config_admin()
+        try:
+            distants = await lecture.lister_pays()
+            distant = next(
+                (d for d in distants if str(d.get("iso_name", "")).strip().upper() == code),
+                None,
+            )
+            if distant is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"{code} n'est pas sur la plateforme — il n'y a pas "
+                        f"d'etat a changer. Le pousser d'abord "
+                        f"(POST /pays/{code}/pousser)."
+                    ),
+                )
+            identifiant = str(distant.get("_id") or distant.get("id") or "")
+            avant = distant.get("is_active")
+
+            audit = AuditTrailRepository()
+            async with audit.intention(
+                RUN_ADMIN,
+                entity_type="Country",
+                entity_id=uuid5(NAMESPACE_OID, f"finzuu-pays:{code}"),
+                operation="UPDATE",
+                cible="config-service PATCH /countries/(de)activate",
+                payload={
+                    "iso_name": code,
+                    "actif": demande.actif,
+                    "motif": demande.motif,
+                    "par": session.email,
+                },
+            ) as suivi:
+                try:
+                    if demande.actif:
+                        await admin.activer_pays(identifiant)
+                    else:
+                        await admin.desactiver_pays(identifiant)
+                except Exception as erreur:
+                    suivi.echoue(type(erreur).__name__)
+                    raise _relayer(erreur) from erreur
+                suivi.reussi({"country_id": identifiant, "actif": demande.actif})
+
+            relus = await lecture.lister_pays()
+            relu_pays: dict[str, Any] = next(
+                (d for d in relus if str(d.get("iso_name", "")).strip().upper() == code),
+                {},
+            )
+            etat_relu = relu_pays.get("is_active")
+            if isinstance(etat_relu, bool) and etat_relu is not demande.actif:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"l'etat de {code} n'a PAS change a la relecture — le "
+                        "serveur a repondu sans agir (signature exacte de "
+                        "l'ANO-CFG-LIFECYCLE de juin)"
+                    ),
+                )
+        except HTTPException:
+            raise
+        except Exception as erreur:
+            raise _relayer(erreur) from erreur
+        finally:
+            await lecture.fermer()
+            await admin.fermer()
+
+    return {
+        "pays": code,
+        "avant": avant,
+        "actif": demande.actif,
+        "etat_relu": etat_relu,
+        "motif": demande.motif,
+        "note": (
+            "referentiel PARTAGE modifie — visible par toutes les equipes. "
+            "L'etat est REVERSIBLE dans les deux sens (contrairement a la "
+            "devise, dont la reactivation n'a jamais ete mesuree) ; la fiche "
+            "et ses villes restent la-bas, seul l'etat change"
+        ),
+    }
+
+
 @router.delete("/surcouche/{identifiant}")
 async def retirer_ajout_surcouche(
     identifiant: str,

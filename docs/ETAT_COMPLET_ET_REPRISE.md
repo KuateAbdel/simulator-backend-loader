@@ -86,10 +86,18 @@ là-bas **que si le pays est EN OPÉRATION**, sinon elle attend le `pousser`.
 | C3 | **338 appels → 2** pour compléter un pays (`ajouter_villes`, un seul PUT) | ✅ `7665f24` |
 | C6 | `POST /pays/{iso}/rectifier` — réécriture complète (le serveur n'a **aucun PATCH**), aperçu obligatoire, fusion de la matière des autres équipes | ✅ `7665f24` + `0541693` |
 | — | une panne plateforme est **relayée** (423 reste 423), plus de 500 muet | ✅ `7b9ee70` |
-| C2 | verrou par ressource (doublon en concurrence) | ⬜ |
-| C4 | sonde de cohérence + **pré-vol qui bloque le run** si dérive | ⬜ |
-| C5 | `POST /referentiels/synchroniser` (tous les pays en opération) | ⬜ |
-| C7 | sortir un pays d'opération (A-08) | ⬜ |
+| C2 | **verrou par ressource** — 409 immédiat, TTL, verrou périmé repris ; posé sur pousser, rectifier, /telcos, /villes | ✅ `6d25108` |
+| C4 | **`GET /coherence`** rend un verdict (`coherent`/`derive`/`anomalie`, le pire l'emporte) + **pré-vol qui BLOQUE un REAL** si le périmètre a dérivé | ✅ `6d25108` `79f163b` |
+| C5 | **`POST /synchroniser`** — tous les pays en opération d'un geste, aperçu puis confirmation, idempotent | ✅ `6d25108` |
+| C7 | **`PATCH /pays/{iso}/etat`** — sortir d'opération et y revenir, avec garde (refus si le pays est ACTIF dans la configuration) et relecture | ✅ |
+
+### Résultat MESURÉ sur la prod (fin de journée)
+* **CV rectifié** : `Cabo Verde`, `dial_code 238`, devise **CVE**, 15 villes —
+  la fiche portait `name/region/continent = "cm"`, 0 ville, devise `XAF`.
+* **6 pays sur 7 sans aucun écart** (BF, CI, CM, CV, GN, SN). Reste `CA`, le
+  parasite hors Loader — il ne nous appartient pas.
+* Sonde stable sur 3 tours ; synchronisation : **0 pays à synchroniser** ;
+  verrou prouvé en conditions réelles (2 allers simultanés → `[200, 409]`).
 
 ### Deux bugs graves attrapés — dont un dans MON code
 1. **Telco orphelin** : ajouter un opérateur à un pays **hors opération** le

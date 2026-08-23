@@ -3909,6 +3909,133 @@ class TestEtatsLaBas:
         assert "mesure 09/08" in reponse.json()["detail"]
 
 
+class TestC7SortirUnPaysDOperation:
+    """`C7`/`A-08` (23/08) — le verbe qui manquait. `activer_pays` et
+    `desactiver_pays` existaient dans le client depuis la mesure du 09/08,
+    mais AUCUNE route ne les exposait : l'aller etait sans retour."""
+
+    @staticmethod
+    def _doubler(monkeypatch: pytest.MonkeyPatch, *, present: bool = True, agit: bool = True):  # type: ignore[no-untyped-def]
+        from app.routes import admin_referentiels
+
+        etat: dict[str, Any] = {"actif": True, "gestes": []}
+
+        class _Lecture:
+            async def lister_pays(self):  # type: ignore[no-untyped-def]
+                if not present:
+                    return []
+                return [{"_id": "cfg-CM", "iso_name": "CM", "is_active": etat["actif"]}]
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        class _Admin:
+            async def activer_pays(self, cid):  # type: ignore[no-untyped-def]
+                etat["gestes"].append(("activer", cid))
+                if agit:
+                    etat["actif"] = True
+                return {}
+
+            async def desactiver_pays(self, cid):  # type: ignore[no-untyped-def]
+                etat["gestes"].append(("desactiver", cid))
+                if agit:
+                    etat["actif"] = False
+                return {}
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_referentiels, "_config_lecture", lambda: _Lecture())
+        monkeypatch.setattr(admin_referentiels, "_config_admin", lambda: _Admin())
+        return etat
+
+    async def _config_sans_cm(self) -> None:
+        """CM retire de la configuration : la garde ne doit plus s'opposer."""
+        from app.repositories.configuration import ConfigurationRepository
+
+        depot = ConfigurationRepository()
+        configuration, _ = await depot.charger()
+        if "CM" in configuration.pays:
+            configuration.pays["CM"].desactiver("banc de test C7")
+        await depot.enregistrer(configuration, par="test")
+
+    async def test_la_desactivation_AGIT_et_est_RELUE(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        etat = self._doubler(monkeypatch)
+        entetes = await _session_complete(client)
+        await self._config_sans_cm()
+        reponse = await client.patch(
+            "/admin/referentiels/pays/CM/etat",
+            json={"actif": False, "motif": "retrait du perimetre"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["etat_relu"] is False, "l'etat rendu est MESURE, pas demande"
+        assert corps["avant"] is True
+        assert etat["gestes"] == [("desactiver", "cfg-CM")]
+
+    async def test_un_serveur_qui_repond_SANS_AGIR_est_demasque(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`ANO-CFG-LIFECYCLE` : la signature exacte vue en juin."""
+        self._doubler(monkeypatch, agit=False)
+        entetes = await _session_complete(client)
+        await self._config_sans_cm()
+        reponse = await client.patch(
+            "/admin/referentiels/pays/CM/etat",
+            json={"actif": False, "motif": "test"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 502, reponse.text
+        assert "n'a PAS change a la relecture" in reponse.json()["detail"]
+
+    async def test_desactiver_un_pays_ACTIF_dans_la_configuration_est_refuse(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """La garde mesuree : le run le viserait et echouerait a la 1500e
+        ecriture au lieu d'ici."""
+        etat = self._doubler(monkeypatch)
+        entetes = await _session_complete(client)
+        from app.repositories.configuration import ConfigurationRepository
+
+        depot = ConfigurationRepository()
+        configuration, _ = await depot.charger()
+        if "CM" in configuration.pays:
+            configuration.pays["CM"].reactiver()
+            await depot.enregistrer(configuration, par="test")
+            reponse = await client.patch(
+                "/admin/referentiels/pays/CM/etat",
+                json={"actif": False, "motif": "test"},
+                headers=entetes,
+            )
+            assert reponse.status_code == 409, reponse.text
+            assert "ACTIF dans la configuration" in reponse.json()["detail"]
+            assert etat["gestes"] == [], "rien n'est parti"
+
+    async def test_un_pays_absent_de_la_plateforme_est_un_422(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler(monkeypatch, present=False)
+        entetes = await _session_complete(client)
+        reponse = await client.patch(
+            "/admin/referentiels/pays/CM/etat",
+            json={"actif": True, "motif": "test"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "pousser" in reponse.json()["detail"]
+
+    async def test_sans_jeton_401(self, client: httpx.AsyncClient) -> None:
+        assert (
+            await client.patch(
+                "/admin/referentiels/pays/CM/etat",
+                json={"actif": True, "motif": "test"},
+            )
+        ).status_code == 401
+
+
 class TestC4EtC5CoherenceEtSynchronisation:
     """`C4`/`C5` (23/08) — une derive qui attend qu'on ouvre un ecran n'est
     pas surveillee : 361 villes ont manque pendant dix jours. La sonde rend
