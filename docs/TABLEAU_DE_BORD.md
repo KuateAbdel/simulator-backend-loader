@@ -609,9 +609,43 @@ de la réversibilité (v24, 38 telcos).** État final prod : 48 pays ·
 | P-02 — plafonds KYC BCEAO | ⬜ s'écrit AVEC le module Vie |
 | P-03 — float de l'agent | ⬜ s'écrit AVEC le module Vie |
 
+## D-duodecies. CAMPAGNE QA SUR LA PROD (23/08) — 45 cas réels, 4 défauts corrigés
+
+Batterie jouée contre `simul.api.fintech4esg.com` et le config-service réel,
+**aucune simulation** : 10 cas d'erreur (401/422/404) ✅, 16 cas
+d'activation/désactivation ✅ (chaque geste vérifié par **relecture
+indépendante** — ça agit vraiment ; la garde des références inverses refuse
+`Moov Africa CI` en 409 sans effet de bord), 19 cas d'aller complet ✅
+(**Guinée poussée pour de vrai** : GNF orpheline adoptée, 2 telcos créés +
+rattachés, 48 villes ; re-poussée = idempotente, 0 doublon).
+
+**4 défauts mesurés et corrigés (`46e88d1`)** : (1) la docstring publiée dans
+le **Swagger de prod** annonçait un ordre FAUX (« devise → pays → telcos »
+alors que le code fait « devise → TELCOS → pays ») ; (2) la porte « ≥ 1 ville »
+n'existait pas — capitale vide → `cities: [""]`, ville fantôme **ineffaçable** ;
+(3) devise/telcos créés avant le pays restaient **orphelins en silence** quand
+le pays échouait (`AOA`, `GNF` mesurées ainsi) — le 502 les nomme désormais ;
+(4) le refus de désactivation répondait « référencée par `[]` » à une devise
+orpheline — message FAUX, remplacé par la vraie raison (aucun contrat de
+réactivation mesuré → irréversible). +10 tests (1072).
+
+**`GET /pays-config` — la relecture qui manquait** : on poussait sans jamais
+pouvoir relire. Les 9 champs, villes, devise et telcos **résolus par nom** +
+écarts (champs vides, villes absentes/fantômes, telcos absents, `hors_loader`).
+
+**Ce qu'elle a révélé** : les 4 pays du CDC ne portaient que **12-14 villes**
+là-bas contre 70-181 chez nous → **361 villes manquantes**, un run REAL aurait
+planté. Complétées (SN +56, BF +62, CM +74, CI +169) : **5 pays sur 7 sans
+aucun écart**. Restent `CV` (mauvaise devise `XAF` au lieu de `CVE`, 0 ville,
+0 telco → arbitrage) et le parasite `ca`. **L'aller est SYNCHRONE** : CI
+(169 villes) dépasse un timeout client de 60 s.
+
 ## F. Les arbitrages qui n'appartiennent qu'à Yaniv
 
-`A-05` (permissions 11 rôles) · `A-07` (profils comportementaux) · `A-11`
+**A-14 — 23/08, NOUVEAU** : corriger ou non la fiche `CV` du référentiel
+PARTAGÉ (devise `XAF` → `CVE`, `dial_code` vide) ; le `PUT /countries/{id}`
+à 9 champs le permet, mais l'écriture touche une fiche que d'autres équipes
+lisent. · `A-05` (permissions 11 rôles) · `A-07` (profils comportementaux) · `A-11`
 (proportion APPROVED/DECLINED) · `A-04` (persistance des prêts) · `A-08`
 (désactiver un pays) · noms métier du catalogue + marqueur `short_name` ·
 Agents compris ou en sus des 15-25 staff/pays. Recommandations écrites dans

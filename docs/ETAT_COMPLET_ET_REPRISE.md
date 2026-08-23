@@ -7,6 +7,72 @@
 
 ---
 
+## SESSION DU 23/08/2026 — CAMPAGNE QA SUR LA PROD (lire EN PREMIER pour reprendre)
+
+**Aucune simulation : 45 cas joués contre `simul.api.fintech4esg.com` et le
+config-service réel.** Commit `46e88d1`, CI + CD verts, 1072 tests.
+
+### Ce qui a été MESURÉ (pas supposé)
+* **Cas d'erreur : 10/10.** 401 sans jeton / jeton bidon, 422 pays inconnu,
+  422 pays sans telco (AO, `ga` minuscule), 404 telco inconnu, 422 activation
+  de devise, 422 corps invalide. Aucune écriture parasite.
+* **Activation / désactivation : 16/16 — ça AGIT vraiment.** Chaque geste
+  vérifié par **relecture indépendante** de config-service, pas par la réponse
+  de la route. `Vodafone Egypt` désactivé → `is_active=false` mesuré → réactivé
+  → état restauré. `PROBE_TELCO_0317` activé → mesuré → remis inactif.
+  **La garde des références inverses tient** : `Moov Africa CI` (porté par `CI`
+  ET le parasite `ca`) → 409, aucun effet de bord. Devises : désactivation
+  refusée, XOF et GNF restent actives.
+* **Aller complet : 19/19.** La **Guinée poussée pour de vrai** : devise GNF
+  (orpheline, adoptée), 2 telcos créés puis rattachés, 48 villes. Re-poussée :
+  `deja_en_operation`, 0 doublon, 0 ville re-envoyée.
+
+### Les 4 défauts trouvés et corrigés (`46e88d1`)
+1. **Le Swagger de prod mentait sur l'ordre** : docstring « devise → pays →
+   villes → telcos » alors que le code fait « devise → **TELCOS** → pays »
+   (les UUID l'imposent). Contrat faux affiché au frontend.
+2. **La porte « ≥ 1 ville » n'existait pas** : `villes or [capitale]` avec une
+   capitale vide envoyait `cities: [""]` — ville fantôme **ineffaçable**
+   (config-service n'a aucun DELETE sur les villes). 422 qui nomme la matière.
+3. **Résidus orphelins tus** : devise et telcos sont créés AVANT le pays ; si
+   le pays échoue, ils restent sans pays. `AOA` et `GNF` traînaient ainsi. Le
+   502 les NOMME désormais + dit le geste de rattrapage.
+4. **Message de refus faux** : une devise orpheline se voyait répondre
+   « référencée par `[]` ». Elle dit maintenant la vraie raison (aucun contrat
+   de RÉACTIVATION mesuré → geste irréversible). Vérifié en prod sur `00`,
+   `AOA`, `ZZ15`, `cv`.
+
+### `GET /pays-config` — la relecture qui manquait
+On pouvait POUSSER un pays sans jamais RELIRE ce qui avait atterri là-bas
+(le panneau couvrait telcos et devises, pas les pays). Pendant de
+`/telcos-config` : les 9 champs, villes, devise et telcos **résolus par nom**,
+écarts mesurés (champs vides, villes absentes, villes fantômes, telcos
+absents, `hors_loader`).
+
+### Ce que la relecture a révélé — et l'action menée
+Les 4 pays du CDC portaient **12 à 14 villes** là-bas alors que le Loader en
+a 70 à 181 : **361 villes du Loader n'étaient PAS sur la plateforme.** Un run
+REAL aurait planté sur toute ville inconnue. Pilote sur SN (56 villes, 0
+échec, relecture 70/70), puis BF (+62), CM (+74), CI (+169).
+**Résultat : 5 pays sur 7 sans AUCUN écart** (BF, CI, CM, GN, SN).
+
+### Ce qui RESTE cassé (arbitrage Yaniv)
+* **CV (Cap-Vert)** : en opération avec **la mauvaise devise** — `XAF` là-bas,
+  `CVE` dans notre fiche —, `dial_code` vide, 0 ville (15 chez nous), 0 telco
+  au référentiel. Le poussé est refusé par la porte (aucun telco). Une
+  correction est techniquement possible (`PUT /countries/{id}` prend les 9
+  champs, mécanisme déjà utilisé par `ajouter_ville`) mais **change une fiche
+  du référentiel PARTAGÉ** : décision Yaniv.
+* **`ca`** : pays parasite, hors Loader, `dial_code` vide — connu depuis le
+  14/08, toujours là.
+* **Résidus partagés** : telcos `DEMOQA081738057_BADRGX`, `PROBE_TELCO_0317`,
+  `cm`, `MTNcongo1` ; devises `00`, `ZZ15`, `cv`, `AOA`. Aucun DELETE n'existe.
+* **L'aller est SYNCHRONE** : pousser CI (169 villes) a dépassé un timeout
+  client de 60 s (le serveur, lui, a terminé). Le frontend doit prévoir la
+  marge — ou l'aller doit devenir asynchrone.
+
+---
+
 ## SESSION DU 22/08/2026 — LA JOURNÉE RÉFÉRENTIEL PAYS (lire EN PREMIER pour reprendre)
 
 **Marathon complet, ~14 commits backend + 4 frontend, tout CI verte + déployé.
