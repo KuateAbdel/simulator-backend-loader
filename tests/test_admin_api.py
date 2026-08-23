@@ -3849,6 +3849,68 @@ class TestEtatsLaBas:
         assert "mesure 09/08" in reponse.json()["detail"]
 
 
+class TestUnePanneDeLaPlateformeEstDITE:
+    """23/08 — la plateforme a repondu `HTTP 423` a notre login (compte ROOT
+    PARTAGE), le disjoncteur `INV-USR-19` a refuse de retenter pour ne pas
+    aggraver — et nos ecrans ont rendu un **500 muet**. Le diagnostic exact
+    dormait dans les logs du conteneur pendant que l'utilisateur lisait
+    « Internal Server Error ». Un systeme honnete relaie la panne."""
+
+    @staticmethod
+    def _plateforme_en_panne(monkeypatch: pytest.MonkeyPatch, statut: int):  # type: ignore[no-untyped-def]
+        from app.clients.base import ErreurService
+        from app.routes import admin_referentiels
+
+        def _boum():  # type: ignore[no-untyped-def]
+            raise ErreurService(
+                "config-service", "POST", "/auth/login", statut,
+                "DISJONCTEUR : dernier login refuse (HTTP 423) — aucune "
+                "nouvelle tentative avant ~9 min (INV-USR-19)", "-",
+            )
+
+        class _Lecture:
+            async def lister_telcos(self):  # type: ignore[no-untyped-def]
+                _boum()
+
+            async def lister_devises(self):  # type: ignore[no-untyped-def]
+                _boum()
+
+            async def lister_pays(self):  # type: ignore[no-untyped-def]
+                _boum()
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_referentiels, "_config_lecture", lambda: _Lecture())
+
+    async def test_un_423_de_la_plateforme_VOYAGE_avec_son_motif(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._plateforme_en_panne(monkeypatch, 423)
+        entetes = await _session_complete(client)
+        for route in (
+            "/admin/referentiels/telcos-config",
+            "/admin/referentiels/devises-config",
+            "/admin/referentiels/pays-config",
+        ):
+            reponse = await client.get(route, headers=entetes)
+            assert reponse.status_code == 423, f"{route} -> {reponse.status_code}"
+            detail = reponse.json()["detail"]
+            assert "config-service : HTTP 423" in detail, detail
+            assert "DISJONCTEUR" in detail, "le motif exact arrive a l'ecran"
+
+    async def test_une_panne_quelconque_devient_502_jamais_500(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._plateforme_en_panne(monkeypatch, 500)
+        entetes = await _session_complete(client)
+        reponse = await client.get(
+            "/admin/referentiels/telcos-config", headers=entetes
+        )
+        assert reponse.status_code == 502, reponse.text
+        assert "config-service" in reponse.json()["detail"]
+
+
 class TestC6RectifierUnPaysEnOperation:
     """`C6` (23/08, Yaniv) — config-service n'a **aucun PATCH**, que des
     `PUT` : toute modification est une REECRITURE INTEGRALE. Piege (un champ

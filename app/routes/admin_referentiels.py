@@ -67,6 +67,33 @@ def _config_lecture() -> Any:
     return ConfigServiceClient()
 
 
+def _relayer(erreur: Exception) -> HTTPException:
+    """Traduit une panne de la PLATEFORME en reponse HONNETE.
+
+    Mesure du 23/08 : le compte ROOT partage s'est retrouve VERROUILLE
+    (`HTTP 423`), le disjoncteur `INV-USR-19` a fait son travail — refuser de
+    retenter pour ne pas aggraver le verrouillage — et nos ecrans ont rendu
+    un **500 muet**. Le diagnostic exact existait dans les logs du conteneur
+    pendant que l'utilisateur voyait « Internal Server Error » : c'est le
+    contraire de ce que ce systeme promet.
+
+    Le statut de la plateforme VOYAGE (423 reste 423 : le frontend peut
+    afficher « compte verrouille » et non « bug »), le reste devient 502.
+    """
+    from app.clients.base import ErreurService
+
+    if isinstance(erreur, ErreurService):
+        statut = erreur.status if erreur.status in (401, 403, 423, 429) else 502
+        return HTTPException(
+            status_code=statut,
+            detail=f"config-service : HTTP {erreur.status} — {str(erreur.detail)[:600]}",
+        )
+    return HTTPException(
+        status_code=502,
+        detail=f"config-service injoignable : {type(erreur).__name__}: {str(erreur)[:400]}",
+    )
+
+
 async def _identifiant_pays_ou_none(code: str) -> tuple[str | None, bool]:
     """`(country_id, plateforme_joignable)` — jamais d'exception.
 
@@ -1349,6 +1376,10 @@ async def rectifier_pays_en_operation(
             (d for d in relus if str(d.get("iso_name", "")).strip().upper() == code),
             {},
         )
+    except HTTPException:
+        raise  # nos refus pedagogiques passent intacts
+    except Exception as erreur:  # la panne de la PLATEFORME est DITE, pas 500
+        raise _relayer(erreur) from erreur
     finally:
         await lecture.fermer()
         await admin.fermer()
@@ -1714,6 +1745,8 @@ async def pays_config(
             str(d.get("_id") or d.get("id")): str(d.get("iso_name") or "")
             for d in await lecture.lister_devises()
         }
+    except Exception as erreur:
+        raise _relayer(erreur) from erreur
     finally:
         await lecture.fermer()
 
@@ -1819,6 +1852,8 @@ async def telcos_config(
     try:
         telcos = await lecture.lister_telcos()
         porteurs = await _porteurs_par_ressource(lecture, "telcos")
+    except Exception as erreur:  # la panne de la plateforme est DITE
+        raise _relayer(erreur) from erreur
     finally:
         await lecture.fermer()
     lignes = [
@@ -1996,6 +2031,8 @@ async def devises_config(
     try:
         devises = await lecture.lister_devises()
         porteurs = await _porteurs_par_ressource(lecture, "currencies")
+    except Exception as erreur:
+        raise _relayer(erreur) from erreur
     finally:
         await lecture.fermer()
     lignes = [
