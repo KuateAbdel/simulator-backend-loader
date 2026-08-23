@@ -148,6 +148,64 @@ async def preparer(
     return {"run_id": str(run_id), "mode": "DRY_RUN", "statut": "PENDING"}
 
 
+def _pays_du_perimetre(preparation: Any) -> list[str]:
+    """Les codes ISO2 que le run va REELLEMENT toucher.
+
+    Lus dans l'empreinte FIGEE (`ConfigurationExecution.empreinte()`, cle
+    `pays`), et filtres sur `actif` : un pays desactive dans la configuration
+    ne recevra aucune ecriture, sa derive eventuelle ne doit donc pas bloquer
+    le run. Jamais une liste codee en dur — le perimetre est parametrable
+    depuis le 22/08 (plus aucun verrou statique).
+    """
+    fiches = (preparation.configuration or {}).get("pays") or {}
+    if not isinstance(fiches, dict):
+        return []
+    return [
+        str(code).strip().upper()
+        for code, fiche in fiches.items()
+        if str(code).strip() and (not isinstance(fiche, dict) or fiche.get("actif", True))
+    ]
+
+
+async def _derive_du_perimetre(codes: list[str]) -> list[str]:
+    """Les derives MESUREES sur les pays du perimetre, en clair.
+
+    Silencieuse par construction si la mesure est impossible : un pre-vol qui
+    bloque un run parce qu'il n'a PAS pu mesurer serait pire que le mal — le
+    pre-vol de vie (10 sondes) a deja refuse ce cas juste avant.
+    """
+    if not codes:
+        return []
+    from app.routes.admin_referentiels import _mesurer_pays_config
+
+    try:
+        mesure = await _mesurer_pays_config()
+    except Exception:
+        return []
+    motifs: list[str] = []
+    for ligne in mesure["pays"]:
+        if str(ligne["iso2"]) not in codes:
+            continue
+        ecarts = ligne["ecarts"]
+        if ecarts["villes_absentes"]:
+            motifs.append(
+                f"{ligne['iso2']} : {len(ecarts['villes_absentes'])} ville(s) "
+                "du Loader absentes de la plateforme"
+            )
+        if ecarts["telcos_absents"]:
+            motifs.append(
+                f"{ligne['iso2']} : telco(s) non rattache(s) — "
+                f"{', '.join(ecarts['telcos_absents'])}"
+            )
+        attendue = ecarts["devise_attendue"]
+        if attendue and attendue not in ecarts["devise_portee"]:
+            motifs.append(
+                f"{ligne['iso2']} : devise {attendue} attendue, "
+                f"{ecarts['devise_portee']} portee(s)"
+            )
+    return motifs
+
+
 @router.post("/{run_id}/confirmer", status_code=202)
 async def confirmer(
     run_id: UUID,
@@ -213,6 +271,24 @@ async def confirmer(
                 "pré-vol refusé — service(s) injoignable(s) : "
                 f"{', '.join(en_panne)}. RIEN n'est parti. Relancer la "
                 "confirmation quand le tableau de bord est entièrement vert."
+            ),
+        )
+
+    # --- PRE-VOL DE COHERENCE (`C4`, 23/08) : la preuve de vie ne suffit
+    # pas. Un service peut etre UP et porter un referentiel DESYNCHRONISE :
+    # le 23/08, les 4 pays du CDC portaient 12 a 14 villes la-bas contre 70 a
+    # 181 chez nous — un REAL aurait compose des adresses dans des villes que
+    # la plateforme ne connait pas. On ne part pas sur une derive connue.
+    derive = await _derive_du_perimetre(figee_perimetre := _pays_du_perimetre(preparation))
+    if derive:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "pré-vol de cohérence refusé — le référentiel de la plateforme "
+                f"a DÉRIVÉ sur : {'; '.join(derive)}. RIEN n'est parti. "
+                "Fermer l'écart d'un geste (POST /admin/referentiels/"
+                "synchroniser), puis re-confirmer. Périmètre vérifié : "
+                f"{', '.join(figee_perimetre) or 'aucun pays'}."
             ),
         )
 

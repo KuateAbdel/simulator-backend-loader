@@ -782,12 +782,20 @@ class TestLotBRuns:
 
     @staticmethod
     def _doubler_sondes(
-        monkeypatch: pytest.MonkeyPatch, *, en_panne: tuple[str, ...] = ()
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        en_panne: tuple[str, ...] = (),
+        derive: tuple[str, ...] = (),
     ) -> None:
-        """Double le PRE-VOL de /confirmer — hermetique, aucune sonde reseau.
+        """Double les DEUX pre-vols de /confirmer — aucun appel reseau.
 
-        Le pre-vol (21/08) reutilise la sonde E1 du dashboard ; ici on la
-        remplace pour jouer les deux mondes : tout vert, ou une panne NOMMEE."""
+        1. le pre-vol de VIE (21/08) : les 10 sondes E1 — tout vert, ou une
+           panne NOMMEE ;
+        2. le pre-vol de COHERENCE (`C4`, 23/08) : le referentiel de la
+           plateforme a-t-il DERIVE sur le perimetre ? Un service peut etre UP
+           et porter un referentiel desynchronise — c'est arrive le 23/08 sur
+           les 4 pays du CDC (12-14 villes la-bas contre 70-181 chez nous).
+        """
 
         async def fausse_sonde(client: Any, nom: str, base: str) -> dict[str, Any]:
             if nom in en_panne:
@@ -795,7 +803,11 @@ class TestLotBRuns:
                         "latence_ms": 1, "erreur": "ConnectTimeout"}
             return {"nom": nom, "etat": "up", "http": 200, "latence_ms": 1}
 
+        async def fausse_derive(codes: list[str]) -> list[str]:
+            return list(derive)
+
         monkeypatch.setattr("app.routes.admin_runs._sonder", fausse_sonde)
+        monkeypatch.setattr("app.routes.admin_runs._derive_du_perimetre", fausse_derive)
 
     @staticmethod
     def _doubler_moteur(monkeypatch: pytest.MonkeyPatch, *, statut_final: str = "PARTIAL"):
@@ -895,6 +907,34 @@ class TestLotBRuns:
         assert appels[1]["configuration"] is not None, (
             "le REAL recoit l'empreinte FIGEE de la preparation, jamais None"
         )
+
+    async def test_US_C2_pre_vol_de_COHERENCE_refuse_409_si_le_referentiel_a_derive(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`C4` — les 10 services peuvent etre UP et porter un referentiel
+        DESYNCHRONISE. Le 23/08, les 4 pays du CDC portaient 12 a 14 villes
+        la-bas contre 70 a 181 chez nous : un REAL aurait compose des adresses
+        dans des villes que la plateforme ne connait pas. On ne part pas sur
+        une derive CONNUE."""
+        appels = self._doubler_moteur(monkeypatch)
+        self._doubler_sondes(
+            monkeypatch,  # vie : tout vert — c'est la COHERENCE qui refuse
+            derive=("CM : 74 ville(s) du Loader absentes de la plateforme",),
+        )
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        await database.get_database().drop_collection("loader_configuration")
+        preparation_id = await self._preparer_et_attendre(client, entetes)
+
+        reponse = await client.post(
+            f"/admin/runs/{preparation_id}/confirmer", headers=entetes
+        )
+        assert reponse.status_code == 409, reponse.text
+        detail = reponse.json()["detail"]
+        assert "cohérence" in detail and "DÉRIVÉ" in detail, detail
+        assert "74 ville(s)" in detail, "la derive MESUREE est nommee"
+        assert "synchroniser" in detail, "le geste qui la ferme est dit"
+        assert len(appels) == 1, "RIEN n'est parti : seule la preparation a tourne"
 
     async def test_US_C2_pre_vol_un_service_en_panne_refuse_503_et_rien_ne_part(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
