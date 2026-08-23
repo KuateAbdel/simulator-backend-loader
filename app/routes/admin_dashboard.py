@@ -298,6 +298,116 @@ async def population(
     return {"run_id": str(run.id), "mode": run.mode.value, **run.mesures}
 
 
+@router.get("/clients")
+async def clients(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+    run_id: UUID | None = None,
+    pays: str | None = None,
+    genre: str | None = None,
+    profession: str | None = None,
+    categorie: str | None = None,
+    page: int = 1,
+    taille: int = 50,
+) -> dict[str, Any]:
+    """`P-04` — LA LISTE DES CLIENTS, filtrable par pays, sexe et profession.
+
+    Le dashboard rendait des DISTRIBUTIONS (`US-E3`) : combien de femmes,
+    quels metiers, quelles tranches de solde. Il ne rendait aucun CLIENT.
+    « Montre-moi les femmes agricultrices du Cameroun » n'avait pas de reponse.
+
+    Servie depuis NOTRE base, en deux requetes, sans un seul appel a FinZuu.
+    C'est ce que `P-04` a rendu possible en rangeant le profil (genre,
+    profession, categorie) avec le noeud du client au moment de l'ecriture :
+    ces trois valeurs sont NOS decisions de quota (`EF-22`, `EF-23`, `EF-24`),
+    pas des donnees de la plateforme — rien ne peut donc diverger.
+
+    Chaque ligne porte le client ET sa geographie complete, remontee par son
+    Kiosque : quartier, ville, region, IMF. La reponse porte aussi les
+    FACETTES — combien de clients par pays, par genre, par categorie, par
+    metier, sur le perimetre deja filtre. Un ecran qui propose un filtre doit
+    dire ce qu'il reste derriere, sinon on clique a l'aveugle.
+    """
+    from app.routes.admin_referentiels import _geo
+
+    if run_id is None:
+        run = await _dernier_run()
+        if run is None:
+            raise HTTPException(status_code=404, detail="aucun run en base")
+        run_id = run.id
+
+    depot = OrgHierarchyRepository()
+    taille = max(1, min(int(taille), 200))
+    lignes, total, facettes = await depot.clients_filtres(
+        run_id,
+        pays=pays,
+        genre=genre,
+        profession=profession,
+        categorie=categorie,
+        page=page,
+        taille=taille,
+    )
+
+    # La geographie d'un client est DERIVEE de son Kiosque — jamais dupliquee
+    # sur son noeud (elle pourrait diverger). On la remonte donc ici, en une
+    # seule lecture des Kiosques du run plutot qu'une par client.
+    kiosques = {
+        noeud.id: noeud
+        for noeud in await depot.par_niveau(run_id, NiveauOrganisation.KIOSQUE)
+    }
+    referentiel = _geo()
+
+    resultats = []
+    for noeud in lignes:
+        kiosque = kiosques.get(noeud.parent_id) if noeud.parent_id else None
+        quartier = (
+            referentiel.quartier(kiosque.district_id)
+            if kiosque and kiosque.district_id
+            else None
+        )
+        ville = referentiel.villes.get(kiosque.city_id) if kiosque and kiosque.city_id else None
+        region = referentiel.regions.get(ville.region_id) if ville else None
+        resultats.append(
+            {
+                "client_id": str(noeud.client_id) if noeud.client_id else None,
+                "msisdn": noeud.name.removeprefix("Client ").strip(),
+                "pays": noeud.country_code,
+                "genre": noeud.gender,
+                "profession": noeud.occupation,
+                "categorie": noeud.categorie,
+                "produits": len(noeud.product_ids),
+                "kiosque": kiosque.name if kiosque else None,
+                "quartier": quartier.name if quartier else None,
+                "ville": ville.name if ville else None,
+                "region": region.name if region else None,
+                "company_id": str(noeud.company_id),
+            }
+        )
+
+    pages = (total + taille - 1) // taille
+    return {
+        "run_id": str(run_id),
+        "filtres": {
+            "pays": pays,
+            "genre": genre,
+            "profession": profession,
+            "categorie": categorie,
+        },
+        "total": total,
+        "page": page,
+        "pages": pages,
+        "taille": taille,
+        "clients": resultats,
+        "facettes": facettes,
+        "note": (
+            "servi depuis la base du Loader, ZERO appel a FinZuu. Le genre, la "
+            "profession et la categorie sont nos decisions de quota (EF-22/23/24) "
+            "rangees a l'ecriture ; la geographie est DERIVEE du Kiosque, jamais "
+            "dupliquee — un client ne peut pas etre dans une autre ville que son "
+            "Kiosque"
+        ),
+    }
+
+
 @router.get("/index-inverse")
 async def index_inverse(
     _: Annotated[SessionAdmin, Depends(admin_complet)],

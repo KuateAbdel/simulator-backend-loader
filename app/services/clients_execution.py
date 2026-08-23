@@ -1916,6 +1916,13 @@ class ExecuteurClients:
                 msisdn=compose.msisdn,
                 client_id=entite,
                 produit_entree=produit_entree.product_id if produit_entree else None,
+                # `P-04` — le profil que NOUS avons decide sous quota, range
+                # avec le noeud. Zero appel supplementaire : ces valeurs sont
+                # deja composees. Sans elles, filtrer un ecran par sexe ou par
+                # metier exigeait 200 requetes paginees vers identity-service.
+                gender=compose.identite.gender,
+                occupation=compose.identite.occupation,
+                categorie=compose.categorie.value,
             )
         except (ValueError, PyMongoError) as erreur:
             rapport.alertes.append(

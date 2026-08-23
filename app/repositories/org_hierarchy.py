@@ -20,6 +20,7 @@ meme endroit, ce qu'un bailleur reperait immediatement.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID, uuid4
@@ -218,6 +219,9 @@ class OrgHierarchyRepository(RepositoryBase):
         msisdn: str,
         client_id: UUID,
         produit_entree: UUID | None,
+        gender: str | None = None,
+        occupation: str | None = None,
+        categorie: str | None = None,
     ) -> OrgHierarchyNode:
         """Rattache un Client a son Kiosque — `EF-26`, PREMIER TEMPS.
 
@@ -260,6 +264,12 @@ class OrgHierarchyRepository(RepositoryBase):
             # None sur une reprise (le serveur ne porte pas la reference
             # inverse, on n'invente rien).
             product_ids=[str(produit_entree)] if produit_entree else [],
+            # `P-04` — le profil que NOUS avons decide (quotas EF-22/23/24).
+            # Range ici, il rend l'ecran « clients » filtrable sans un seul
+            # appel a FinZuu ; absent, il exigeait 200 requetes paginees.
+            gender=(gender or None),
+            occupation=(occupation or None),
+            categorie=(categorie or None),
             # AUCUN `district_id` : voir `NiveauOrganisation`. L'index
             # `uniq_district_par_run` le rejetterait, mais la vraie raison est que
             # la geographie du client est DERIVEE de ce Kiosque — la dupliquer
@@ -379,6 +389,74 @@ class OrgHierarchyRepository(RepositoryBase):
     async def par_niveau(self, run_id: UUID, niveau: NiveauOrganisation) -> list[OrgHierarchyNode]:
         curseur = self.collection.find({"run_id": str(run_id), "niveau": niveau.value})
         return [OrgHierarchyNode.model_validate(d) async for d in curseur]
+
+    async def clients_filtres(
+        self,
+        run_id: UUID,
+        *,
+        pays: str | None = None,
+        genre: str | None = None,
+        profession: str | None = None,
+        categorie: str | None = None,
+        kiosque_id: UUID | None = None,
+        page: int = 1,
+        taille: int = 50,
+    ) -> tuple[list[OrgHierarchyNode], int, dict[str, dict[str, int]]]:
+        """`P-04` — les clients d'un run, filtres et pagines, SANS reseau.
+
+        Rend `(page de clients, total filtre, facettes)`. Les facettes sont les
+        comptes par pays, par genre, par categorie et par profession sur le
+        perimetre FILTRE : un ecran qui propose un filtre doit dire combien il
+        en reste, sinon l'utilisateur clique a l'aveugle.
+
+        Tout se joue en DEUX requetes Mongo, jamais 2000 : la page d'un cote,
+        l'agregation des facettes de l'autre. Interroger identity-service
+        aurait coute 200 requetes paginees (`D-IDN-3`, `limit=10` par defaut)
+        pour un seul affichage.
+        """
+        filtre: dict[str, Any] = {
+            "run_id": str(run_id),
+            "niveau": NiveauOrganisation.CLIENT.value,
+        }
+        if pays:
+            filtre["country_code"] = pays.strip().upper()
+        if genre:
+            filtre["gender"] = genre.strip().upper()
+        if categorie:
+            filtre["categorie"] = categorie.strip().upper()
+        if profession:
+            # Insensible a la casse et aux accents approchants : une profession
+            # se cherche comme on l'ecrit, pas comme elle est stockee.
+            filtre["occupation"] = {"$regex": re.escape(profession.strip()), "$options": "i"}
+        if kiosque_id:
+            filtre["parent_id"] = str(kiosque_id)
+
+        total = await self.collection.count_documents(filtre)
+        saut = max(0, (max(1, page) - 1) * taille)
+        curseur = (
+            self.collection.find(filtre).sort("name", 1).skip(saut).limit(taille)
+        )
+        lignes = [OrgHierarchyNode.model_validate(d) async for d in curseur]
+
+        facettes: dict[str, dict[str, int]] = {}
+        for champ, cle in (
+            ("country_code", "pays"),
+            ("gender", "genre"),
+            ("categorie", "categorie"),
+            ("occupation", "profession"),
+        ):
+            groupes = self.collection.aggregate(
+                [
+                    {"$match": filtre},
+                    {"$group": {"_id": f"${champ}", "n": {"$sum": 1}}},
+                    {"$sort": {"n": -1, "_id": 1}},
+                    {"$limit": 40},
+                ]
+            )
+            facettes[cle] = {
+                str(g["_id"]): int(g["n"]) async for g in groupes if g["_id"] is not None
+            }
+        return lignes, total, facettes
 
     async def enfants(self, parent_id: UUID) -> list[OrgHierarchyNode]:
         curseur = self.collection.find({"parent_id": str(parent_id)})

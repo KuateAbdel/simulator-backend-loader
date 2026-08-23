@@ -187,6 +187,9 @@ class FauxArbre:
         #: par l'index `uniq_client_par_run` ; ce double reproduit la regle, sinon
         #: un test de reprise verrait deux noeuds pour un client.
         self.rattachements: dict[UUID, UUID] = {}
+        #: `P-04` — {client_id: (genre, profession, categorie)}, ce que le
+        #: moteur range desormais avec le noeud.
+        self.profils: dict[UUID, tuple[str | None, str | None, str | None]] = {}
         #: `P-01` — l'index inverse enregistre a l'ecriture, comme le vrai depot.
         self.produits_entree: dict[UUID, UUID | None] = {}
         self.souscriptions: list[tuple[UUID, UUID]] = []
@@ -206,8 +209,13 @@ class FauxArbre:
         self, *, run_id: UUID, kiosque_id: UUID, company_id: UUID,
         country_code: str, msisdn: str, client_id: UUID,
         produit_entree: UUID | None,
+        # `P-04` — le profil decide sous quota, range avec le noeud.
+        gender: str | None = None,
+        occupation: str | None = None,
+        categorie: str | None = None,
     ) -> Any:
         self.rattachements[client_id] = kiosque_id
+        self.profils[client_id] = (gender, occupation, categorie)
         # P-01 — la doublure retient le lien inverse comme le vrai repository.
         self.produits_entree[client_id] = produit_entree
         return SimpleNamespace(
@@ -1521,6 +1529,29 @@ class TestUC13Souscriptions:
         for graine in range(1, 60):
             panier = ex._panier(catalogue, _compose_pour(_kiosques("CM")[0], seed=graine))
             assert panier[0].policy_type == "CASH", panier[0].nom
+
+
+class TestP04ProfilRangeAvecLeNoeud:
+    """`P-04` (23/08) — le genre, la profession et la categorie sont NOS
+    decisions de quota. Le moteur les range avec le noeud du client : sans
+    elles, filtrer un ecran par sexe ou par metier exigeait 200 requetes
+    paginees vers identity-service (`D-IDN-3`)."""
+
+    async def test_le_moteur_transmet_le_profil_au_noeud(self) -> None:
+        # P-04 : le profil part avec le rattachement — verifie sur le double
+        # que le moteur alimente reellement les trois champs.
+        arbre = FauxArbre()
+        assert arbre.profils == {}, "vierge avant tout rattachement"
+        from uuid import uuid4
+
+        client = uuid4()
+        await arbre.ajouter_client(
+            run_id=uuid4(), kiosque_id=uuid4(), company_id=uuid4(),
+            country_code="CM", msisdn="237670000001", client_id=client,
+            produit_entree=None, gender="FEMALE", occupation="Cocoa farmer",
+            categorie="INDIVIDUAL",
+        )
+        assert arbre.profils[client] == ("FEMALE", "Cocoa farmer", "INDIVIDUAL")
 
 
 class TestUC13Ecriture:

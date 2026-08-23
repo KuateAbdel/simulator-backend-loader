@@ -269,6 +269,22 @@ class OrgHierarchyNode(LoaderDocument):
     product_ids: list[str] = Field(default_factory=list)
     #: Le package de licence qui AUTORISE ce rattachement (UC-11 pt 3).
     package: str | None = Field(default=None)
+    #: `P-04` (23/08) — LE PROFIL DU CLIENT, range au niveau CLIENT.
+    #:
+    #: Ces trois champs ne sont PAS une copie de la fiche d'identity-service :
+    #: ce sont **nos decisions**. Le genre vient du quota `EF-22` (deux femmes
+    #: pour un homme), la categorie du quota `EF-23` (80/20), la profession du
+    #: quota `EF-24` pour les CORPORATE et d'un tirage uniforme parmi les 576
+    #: professions pour les INDIVIDUAL. La plateforme ne fait que les
+    #: enregistrer — aucune verite concurrente ne peut donc diverger.
+    #:
+    #: Sans eux, « les femmes agricultrices du Cameroun » exigeait d'interroger
+    #: identity-service client par client : 2000 clients, pagination a 10 par
+    #: defaut (`D-IDN-3`), soit 200 requetes pour UN filtre d'ecran. Les ranger
+    #: ici ne coute AUCUN appel : ils sont deja en main quand le noeud s'ecrit.
+    gender: str | None = Field(default=None, description="MALE|FEMALE — quota EF-22")
+    occupation: str | None = Field(default=None, description="Une des 576 professions")
+    categorie: str | None = Field(default=None, description="INDIVIDUAL|CORPORATE — EF-23")
 
 
 class SuperAdminAccount(LoaderDocument):

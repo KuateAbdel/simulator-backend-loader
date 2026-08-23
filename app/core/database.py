@@ -219,6 +219,14 @@ async def ensure_indexes() -> None:
         [("parent_id", 1)],
         name="idx_parent",
     )
+    # `P-04` — l'ecran « clients » filtre par pays, genre, categorie et
+    # profession. Sans cet index, chaque affichage balayait les 2000 noeuds du
+    # run. Partiel : seuls les noeuds CLIENT portent ces champs.
+    await db[COLLECTION_ORG_HIERARCHY].create_index(
+        [("run_id", 1), ("country_code", 1), ("gender", 1), ("categorie", 1)],
+        name="idx_profil_client",
+        partialFilterExpression={"niveau": NiveauOrganisation.CLIENT.value},
+    )
     # `A-12` RENDU STRUCTUREL — 13/08, meme doctrine que EF-55 et le Kiosque
     # par quartier : le controle applicatif (`find_one` avant insert) reste la
     # reponse AIMABLE (None), l'index unique est le verrou reel sous

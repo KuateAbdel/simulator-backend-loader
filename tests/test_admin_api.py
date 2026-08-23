@@ -2947,6 +2947,147 @@ class TestPermissionsEtCreationDeGroupe:
         assert "relecture" in reponse.json()["detail"]
 
 
+class TestP04ListeDesClientsFiltrable:
+    """`P-04` (23/08) — la LISTE des clients, filtrable par pays, sexe et
+    profession. Le dashboard rendait des DISTRIBUTIONS, jamais un client :
+    « montre-moi les femmes agricultrices du Cameroun » n'avait pas de reponse.
+
+    Le genre, la profession et la categorie sont NOS decisions de quota
+    (EF-22/23/24), pas des donnees de la plateforme — les ranger avec le noeud
+    ne cree aucune verite concurrente, et evite 200 requetes paginees vers
+    identity-service (`D-IDN-3`, limit=10 par defaut) pour UN affichage.
+    """
+
+    async def _semer(self, run):  # type: ignore[no-untyped-def]
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.core.database import COLLECTION_ORG_HIERARCHY
+        from app.models.domain import LoaderRun, OrgHierarchyNode
+        from app.models.enums import NiveauOrganisation, RunStatus
+        from app.repositories.base import en_document
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        imf, kiosque_id = _uuid4(), _uuid4()
+        await database.get_database().drop_collection("loader_runs")
+        await database.get_database().drop_collection(COLLECTION_ORG_HIERARCHY)
+        await LoaderRunRepository().remplacer(
+            LoaderRun(
+                _id=run, sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1), status=RunStatus.COMPLETED,
+            )
+        )
+        arbre = database.get_database()[COLLECTION_ORG_HIERARCHY]
+        noeuds = [
+            OrgHierarchyNode(
+                _id=kiosque_id, run_id=run, niveau=NiveauOrganisation.KIOSQUE,
+                parent_id=_uuid4(), company_id=imf, name="Kiosque Elig-Essono",
+                country_code="CM", district_id="CM-DT-001",
+                city_id="CM-CT-01", depositary_id=_uuid4(),
+            ),
+        ]
+        profils = [
+            ("CM", "FEMALE", "Agricultrice", "INDIVIDUAL", "237670000001"),
+            ("CM", "FEMALE", "Agricultrice", "INDIVIDUAL", "237670000002"),
+            ("CM", "FEMALE", "Couturiere", "INDIVIDUAL", "237670000003"),
+            ("CM", "MALE", "Agriculteur", "INDIVIDUAL", "237670000004"),
+            ("SN", "FEMALE", "Agricultrice", "CORPORATE", "221770000005"),
+        ]
+        for pays, genre, metier, categorie, msisdn in profils:
+            noeuds.append(
+                OrgHierarchyNode(
+                    _id=_uuid4(), run_id=run, niveau=NiveauOrganisation.CLIENT,
+                    parent_id=kiosque_id, company_id=imf,
+                    name=f"Client {msisdn}", country_code=pays,
+                    client_id=_uuid4(), gender=genre, occupation=metier,
+                    categorie=categorie, product_ids=[str(_uuid4())],
+                )
+            )
+        await arbre.insert_many([en_document(n) for n in noeuds])
+
+    async def test_les_trois_criteres_filtrent_ENSEMBLE(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        run = _uuid4()
+        await self._semer(run)
+        entetes = await _session_complete(client)
+        reponse = await client.get(
+            f"/admin/dashboard/clients?run_id={run}&pays=CM&genre=FEMALE"
+            "&profession=agricultrice",
+            headers=entetes,
+        )
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["total"] == 2, corps
+        assert {c["msisdn"] for c in corps["clients"]} == {
+            "237670000001", "237670000002"
+        }, corps["clients"]
+
+    async def test_chaque_ligne_porte_le_NUMERO_et_sa_geographie(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Le msisdn est A NOUS : compose depuis le plan de numerotation reel
+        et valide contre l'operateur (`EF-27`). La geographie est DERIVEE du
+        Kiosque — jamais dupliquee sur le client, elle pourrait diverger."""
+        from uuid import uuid4 as _uuid4
+
+        run = _uuid4()
+        await self._semer(run)
+        entetes = await _session_complete(client)
+        corps = (
+            await client.get(
+                f"/admin/dashboard/clients?run_id={run}&pays=CM", headers=entetes
+            )
+        ).json()
+        ligne = corps["clients"][0]
+        assert ligne["msisdn"].startswith("2376")
+        assert ligne["client_id"] and ligne["genre"] and ligne["profession"]
+        assert ligne["kiosque"] == "Kiosque Elig-Essono"
+        assert ligne["ville"], "la ville remonte du Kiosque"
+
+    async def test_les_FACETTES_disent_ce_qui_reste_derriere_chaque_filtre(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Un ecran qui propose un filtre sans dire ce qu'il reste derriere
+        fait cliquer a l'aveugle."""
+        from uuid import uuid4 as _uuid4
+
+        run = _uuid4()
+        await self._semer(run)
+        entetes = await _session_complete(client)
+        corps = (
+            await client.get(
+                f"/admin/dashboard/clients?run_id={run}&genre=FEMALE", headers=entetes
+            )
+        ).json()
+        assert corps["total"] == 4
+        assert corps["facettes"]["pays"] == {"CM": 3, "SN": 1}
+        assert corps["facettes"]["profession"]["Agricultrice"] == 3
+        assert corps["facettes"]["categorie"] == {"INDIVIDUAL": 3, "CORPORATE": 1}
+
+    async def test_la_pagination_borne_la_reponse(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        run = _uuid4()
+        await self._semer(run)
+        entetes = await _session_complete(client)
+        corps = (
+            await client.get(
+                f"/admin/dashboard/clients?run_id={run}&taille=2&page=1", headers=entetes
+            )
+        ).json()
+        assert corps["total"] == 5
+        assert len(corps["clients"]) == 2
+        assert corps["pages"] == 3
+
+    async def test_sans_jeton_401(self, client: httpx.AsyncClient) -> None:
+        assert (await client.get("/admin/dashboard/clients")).status_code == 401
+
+
 class TestIndexInverseCommeService:
     """`P-01` cote SERVICE : GET /admin/dashboard/index-inverse — deux
     agregations chez NOUS, jamais 20 requetes paginees vers FinZuu."""

@@ -31,6 +31,107 @@
 
 ---
 
+## Ce que chaque rôle permet de FAIRE — en clair
+
+> Écrit le 23/08 à la demande de Yaniv. Les codes de permission ne disent rien
+> à qui doit choisir un rôle pour quelqu'un. Voici la traduction, rôle par
+> rôle, de ce que la personne pourra réellement faire une fois le rôle
+> attribué. **Chaque ligne est dérivée des permissions mesurées, pas d'une
+> intention.**
+
+| Rôle | Ce que la personne peut faire | Ce qu'elle NE peut PAS faire |
+|---|---|---|
+| **Super-Admin** | **Tout.** Les 61 permissions : administrer les utilisateurs, les rôles et les permissions ; créer et modifier des institutions et leurs licences ; le référentiel (pays, villes, devises, opérateurs mobiles) ; les identités ; les produits et politiques ; les comptes et transactions ; les dépositaires et souscriptions ; les menus USSD | rien — c'est le rôle sans limite |
+| **Admin** | Administrer **les utilisateurs, les rôles et les permissions** ; créer et modifier des institutions et leurs licences ; créer et modifier le **référentiel géographique et monétaire** ; créer et modifier des identités ; lire les journaux | toucher aux comptes, transactions, produits, dépositaires, clients |
+| **Marketing** | **Créer et modifier** des produits et des politiques tarifaires ; enrôler un client, le lire, le modifier | comptes, transactions, dépositaires, utilisateurs |
+| **Compliance** | Créer et modifier des **identités** (l'état civil KYC) ; créer et modifier le **référentiel** (pays, villes, devises, opérateurs) ; enrôler et modifier des clients | comptes, transactions, produits, dépositaires, utilisateurs |
+| **Collecte** | Lire et **écrire** les collectes ; lire et **écrire** les dépositaires et leurs souscriptions | clients, comptes, produits, utilisateurs |
+| **Comptable** | **Créer** des comptes, lire et **écrire** comptes et transactions | tout le reste |
+| **Branche** | Enrôler, lire et modifier des clients ; lire et **écrire** dépositaires et souscriptions | comptes, transactions, produits, utilisateurs |
+| **Employé/IT** | Administrer **les utilisateurs, les rôles, les permissions et les menus** ; activer/désactiver un compte utilisateur ; lire les journaux | aucune donnée métier (ni client, ni compte, ni produit, ni dépositaire) |
+| **Agent** | Enrôler, lire et modifier des clients ; lire et **écrire** les collectes | comptes, dépositaires, produits, utilisateurs |
+| **Marchand** | **Créer** des comptes, lire et **écrire** comptes et transactions — *exactement les mêmes pouvoirs que le Comptable* | tout le reste |
+| **Kiosque** | Lire et **écrire** collectes, dépositaires et souscriptions — *exactement les mêmes pouvoirs que Collecte* | clients, comptes, produits, utilisateurs |
+| **CUSTOMER** | Lire et **écrire** ses comptes et **ses transactions** ; lire et modifier sa fiche client ; faire des collectes ; s'enregistrer ; lire les menus USSD | administration, produits, dépositaires |
+
+---
+
+## Les six questions que nous posons à l'administration
+
+Chacune vient d'un fait mesuré ci-dessus, pas d'une opinion.
+
+### 1. 🔴 Un **Admin** d'institution peut se fabriquer n'importe quel pouvoir
+
+`Admin` porte `USER_GROUPE_CREATE`, `USER_GROUPE_UPDATE`, `USER_GROUPE_DELETE`,
+`USER_PERMISSION_CREATE`, `USER_PERMISSION_DELETE` et `USER_AUTH_REGISTER`.
+
+**Concrètement** : une personne à qui l'on donne le rôle Admin peut créer un
+nouveau rôle, y mettre les 61 permissions, créer un utilisateur et le lui
+attribuer. Elle devient Super-Admin en trois requêtes. Or `Admin` est typé
+`COMPANY` — c'est le personnel d'une **institution cliente**, pas le siège.
+
+**Question** : un Admin d'institution doit-il pouvoir administrer les rôles et
+les permissions de la plateforme, ou seulement les **utilisateurs** de sa
+propre institution ?
+
+### 2. 🔴 Trois rôles peuvent modifier le référentiel PARTAGÉ
+
+`Admin` et `Compliance` portent `IDENTITY_COUNTRY_CREATE`,
+`IDENTITY_CITY_CREATE`, `IDENTITY_CURRENCY_CREATE` et leurs `UPDATE`.
+
+**Concrètement** : le personnel d'une institution peut créer un pays, une ville
+ou une devise que **toutes les autres institutions** verront. Ces objets n'ont
+aucune suppression côté serveur — une erreur est définitive.
+
+**Question** : la géographie et les devises doivent-elles rester au siège ?
+
+### 3. 🟠 La règle ne distingue jamais LECTURE et ÉCRITURE
+
+Un `Marketing` **crée et modifie** des produits et des tarifs — il ne les
+consulte pas. Un `Compliance` **crée et modifie** des identités. Un `Agent`
+**modifie** des clients.
+
+**Question** : quels rôles doivent être en lecture seule sur quels domaines ?
+
+### 4. 🟠 Trois paires de rôles sont strictement identiques
+
+`Marchand` = `Comptable` (5 permissions `ACCOUNT_*`, à l'identique).
+`Kiosque` = `Collecte` (6 permissions, à l'identique).
+`Branche` = `Collecte` + les clients.
+
+**Question** : est-ce voulu ? Sinon, qu'est-ce qui doit les distinguer ?
+
+### 5. 🟠 Un CUSTOMER peut écrire des transactions et des collectes
+
+`ACCOUNT_TRANSACTION_WRITE` et `COLLECT_COLLECT_WRITE` sur le rôle du **client
+final**. Ce rôle préexistait en base, le Loader ne l'a pas défini.
+
+**Question** : un client final doit-il pouvoir écrire une transaction
+lui-même, ou seulement la demander ?
+
+### 6. 🟡 Personne ne peut supprimer un utilisateur
+
+Aucun rôle ne porte de permission de suppression d'utilisateur : seulement
+`USER_USER_ACTIVATE` et `USER_USER_DEACTIVATE`.
+
+**Question** : c'est un choix de conception à confirmer — la désactivation
+tient-elle lieu de suppression ?
+
+---
+
+## Ce qui se passe si rien n'est tranché
+
+Les 11 rôles sont créés **tels que décrits ci-dessus**, et toute personne à
+qui l'on donne `Admin` ou `Employé/IT` peut, dès demain, créer un utilisateur
+de n'importe quel type et lui attribuer n'importe quel rôle — y compris un
+rôle qu'elle vient de fabriquer avec tous les pouvoirs.
+
+C'est réversible : `DELETE /api/v1/groupes/{id}` est prouvé fonctionnel
+(9 août). Mais tant que l'arbitrage n'est pas rendu, c'est l'état du système.
+
+
+---
+
 ## Vue d'ensemble
 
 | Rôle | tag | UserType | perms | Familles couvertes |
