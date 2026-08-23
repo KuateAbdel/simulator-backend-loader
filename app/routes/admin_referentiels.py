@@ -929,6 +929,16 @@ async def lister_fiches_pays(
                     "telcos": len(referentiel.telcos_du_pays(code)),
                 },
                 "sur_config_service": (code in presents) if presents is not None else None,
+                # `V-02` (23/08) — L'ECRAN NE DEVINE PLUS. Il affichait un
+                # bouton « Pousser » cliquable sur des pays que la porte
+                # refusait ensuite en 422 : un clic pour une erreur. La regle
+                # est ici, la MEME que celle de la porte (`_porte_d_operation`),
+                # et `manques` donne l'infobulle qui dit pourquoi.
+                **{
+                    cle: valeur
+                    for cle, valeur in _porte_d_operation(referentiel, code).items()
+                    if cle != "villes"
+                },
             }
         )
     return {
@@ -943,6 +953,73 @@ async def lister_fiches_pays(
             else None
         ),
         "surcouche": {"resume": surcouche.resume(), "version": meta["version"]},
+    }
+
+
+def _porte_d_operation(referentiel: Any, code: str) -> dict[str, Any]:
+    """LA REGLE, ecrite UNE fois : ce pays est-il POUSSABLE, et sinon quoi ?
+
+    Elle sert deux appelants qui devaient jusqu'ici la deviner chacun de leur
+    cote : `POST /pays/{iso}/pousser`, qui refuse en 422, et `GET /pays`, qui
+    dit a l'ecran s'il peut proposer le bouton. Deux implementations d'une
+    meme regle finissent toujours par diverger — et c'est arrive : l'ecran
+    affichait un bouton « Pousser » cliquable sur des pays que la porte
+    refusait, donc un clic pour une erreur (signale par Yaniv, 23/08).
+
+    Trois matieres, et la raison de chacune :
+
+      devise   sans elle le pays n'a pas de zone monetaire — mais elle est
+               garantie par l'ingestion (`ajouter_pays` refuse une devise
+               orpheline), on la verifie quand meme, une garantie non
+               verifiee n'en est pas une ;
+      villes   un pays sans ville n'heberge aucun client, aucune agence,
+               aucun depositaire ;
+      telcos   un pays sans operateur ne compose AUCUN numero (`EF-27`) —
+               ni client, ni agent, ni dirigeant.
+
+    Les AVERTISSEMENTS ne bloquent pas : un marche a un seul operateur opere,
+    il ne ressemble simplement a aucun marche africain.
+    """
+    fiche = referentiel.pays(code)
+    if fiche is None:
+        return {
+            "poussable": False,
+            "manques": ["fiche inconnue du Loader"],
+            "avertissements": [],
+            "villes": [],
+        }
+
+    villes = sorted(
+        v.name for v in referentiel.villes.values() if v.country_iso2 == code
+    ) or [fiche.capitale]
+    villes = [nom for nom in villes if str(nom).strip()]
+    telcos = referentiel.telcos_du_pays(code)
+
+    manques: list[str] = []
+    if not villes:
+        manques.append("AUCUNE ville ni capitale")
+    if not telcos:
+        manques.append("AUCUN operateur telecom")
+    if not str(fiche.devise_iso or "").strip():
+        manques.append("AUCUNE devise")
+
+    avertissements: list[str] = []
+    if telcos and len(telcos) < 2:
+        avertissements.append(
+            f"{code} : un seul operateur au referentiel — marche peu credible, "
+            "completer la matiere telco des que possible"
+        )
+    somme = sum(t.part_marche for t in telcos)
+    if telcos and somme < 50:
+        avertissements.append(
+            f"{code} : parts de marche cumulees {somme:.0f} % < 50 % — "
+            "la distribution des clients par operateur sera peu realiste"
+        )
+    return {
+        "poussable": not manques,
+        "manques": manques,
+        "avertissements": avertissements,
+        "villes": villes,
     }
 
 
@@ -996,13 +1073,11 @@ async def pousser_pays_en_operation(
                 "(scripts/importer_referentiel_pays.py), puis le pousser."
             ),
         )
-    villes = sorted(
-        v.name for v in referentiel.villes.values() if v.country_iso2 == code
-    ) or [fiche.capitale]
-    # Une chaine vide n'est PAS une ville : sans ce filtre, un pays sans
-    # ville ET sans capitale enverrait `cities: [""]` a config-service —
-    # une ville fantome, impossible a retirer la-bas (aucun DELETE).
-    villes = [nom for nom in villes if str(nom).strip()]
+    # LA REGLE vit dans `_porte_d_operation` — la meme que celle qui decide si
+    # l'ecran affiche le bouton. Une seule ecriture, donc aucune divergence
+    # possible entre ce que l'ecran propose et ce que la porte accepte.
+    porte = _porte_d_operation(referentiel, code)
+    villes = list(porte["villes"])
     fiche_devise = referentiel.devises.get(fiche.devise_iso)
     telcos_locaux = referentiel.telcos_du_pays(code)
     # PORTE DE COMPLETUDE (22/08, recommandation QA validee par Yaniv) :
@@ -1010,24 +1085,14 @@ async def pousser_pays_en_operation(
     # aucun numero (EF-27) et n'onboarde personne — on ne pousse pas une
     # coquille vide. Minimum viable : devise (garantie plus bas) + >= 1
     # ville + >= 1 telco au plan composable.
-    if not villes:
+    if not porte["poussable"]:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"pays {code} : AUCUNE ville ni capitale au referentiel — un "
-                "pays en operation sans ville n'heberge aucun client, aucune "
-                "agence, aucun depositaire. Charger sa geographie d'abord "
-                "(regions et villes officielles, US-B7)."
-            ),
-        )
-    if not telcos_locaux:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"pays {code} : AUCUN operateur telecom au referentiel — un "
-                "pays en operation sans telco ne peut composer aucun numero "
-                "(EF-27). Charger sa matiere telco d'abord (plan composable "
-                "+ part de marche, US-B7)."
+                f"pays {code} : {', '.join(porte['manques'])}. EN OPERATION "
+                "veut dire UTILISABLE — sans ville le pays n'heberge personne, "
+                "sans operateur il ne compose aucun numero (EF-27). Charger sa "
+                "matiere d'abord (US-B7)."
             ),
         )
 
@@ -1179,18 +1244,7 @@ async def pousser_pays_en_operation(
     # AVERTISSEMENTS de credibilite — NON bloquants, toujours DITS (calibrage
     # 22/08) : un seul operateur ou des parts sommant sous 50 % operent, mais
     # ne ressemblent a aucun marche africain — un bailleur le verrait.
-    avertissements: list[str] = []
-    if len(telcos_locaux) < 2:
-        avertissements.append(
-            f"{code} : un seul operateur au referentiel — marche peu credible, "
-            "completer la matiere telco des que possible"
-        )
-    somme_parts = sum(t.part_marche for t in telcos_locaux)
-    if somme_parts < 50:
-        avertissements.append(
-            f"{code} : parts de marche cumulees {somme_parts:.0f} % < 50 % — "
-            "la distribution des clients par operateur sera peu realiste"
-        )
+    avertissements: list[str] = list(porte["avertissements"])
 
     return {
         "pays": {"iso2": code, "id": identifiant, "nom_fr": fiche.nom_fr},

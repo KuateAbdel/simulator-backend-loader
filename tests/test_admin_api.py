@@ -2314,6 +2314,81 @@ async def _semer_fiche_pays(**champs: Any) -> None:
     await depot.enregistrer(surcouche, par="import-test")
 
 
+class TestV02LeBoutonPousserNeMentPlus:
+    """`V-02` (23/08, Yaniv) — l'ecran affichait un bouton « Pousser »
+    cliquable sur des pays que la porte refusait ensuite en 422 : un clic pour
+    une erreur. La regle etait ecrite DEUX fois — une dans la porte, une dans
+    l'ecran — et deux ecritures d'une meme regle finissent par diverger.
+
+    Elle vit maintenant a UN seul endroit, et `GET /pays` la porte."""
+
+    async def test_un_pays_SANS_telco_n_est_PAS_poussable_et_le_dit(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="GA", nom_fr="Gabon", nom_en="Gabon", capitale="Libreville",
+            dial_code="241", devise_iso="XAF", tva_percent=18.0,
+        )
+        fiches = (await client.get("/admin/referentiels/pays", headers=entetes)).json()
+        gabon = next(p for p in fiches["pays"] if p["iso2"] == "GA")
+        assert gabon["poussable"] is False, gabon
+        assert "AUCUN operateur telecom" in gabon["manques"], gabon["manques"]
+
+    async def test_l_ECRAN_et_la_PORTE_disent_la_MEME_chose(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """Le test qui empeche la divergence de revenir : ce que l'ecran
+        annonce non poussable, la porte doit le refuser — et l'inverse."""
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="GA", nom_fr="Gabon", nom_en="Gabon", capitale="Libreville",
+            dial_code="241", devise_iso="XAF", tva_percent=18.0,
+        )
+        fiches = (await client.get("/admin/referentiels/pays", headers=entetes)).json()
+        for fiche in fiches["pays"]:
+            reponse = await client.post(
+                f"/admin/referentiels/pays/{fiche['iso2']}/pousser", headers=entetes
+            )
+            if fiche["poussable"]:
+                assert reponse.status_code != 422, (
+                    f"{fiche['iso2']} annonce poussable mais la porte refuse : "
+                    f"{reponse.text[:200]}"
+                )
+            else:
+                assert reponse.status_code == 422, (
+                    f"{fiche['iso2']} annonce NON poussable mais la porte accepte"
+                )
+
+    async def test_un_pays_COMPLET_est_poussable_avec_ses_avertissements(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """Un avertissement ne bloque PAS : un marche a un seul operateur
+        opere, il ne ressemble simplement a aucun marche africain."""
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="TG", nom_fr="Togo", nom_en="Togo", capitale="Lomé",
+            dial_code="228", devise_iso="XOF", tva_percent=18.0,
+        )
+        await _semer_telco(
+            "TG", "Togocom", "TGCOM", r"^228(9[0-9]\d{6})$", 30.0, "22890123456"
+        )
+        fiches = (await client.get("/admin/referentiels/pays", headers=entetes)).json()
+        togo = next(p for p in fiches["pays"] if p["iso2"] == "TG")
+        assert togo["poussable"] is True, togo
+        assert togo["manques"] == []
+        assert any("un seul operateur" in a for a in togo["avertissements"])
+
+
 class TestUSB6CreationDePays:
     """CONSOLIDATION 22/08 — un seul sens par verbe : POST /pays CREE dans le
     Loader ; POST /pays/{iso}/pousser MET EN OPERATION sur config-service,
