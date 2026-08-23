@@ -64,6 +64,7 @@ from app.routes import (
     admin_purge,
     admin_referentiels,
     admin_runs,
+    admin_versions,
     health,
 )
 from app.services.bootstrap import amorcer_super_admin
@@ -133,3 +134,4 @@ app.include_router(admin_journal.router)
 app.include_router(admin_notifications.router)
 app.include_router(admin_purge.router)
 app.include_router(admin_runs.router)
+app.include_router(admin_versions.router)

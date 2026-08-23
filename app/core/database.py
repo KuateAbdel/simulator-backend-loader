@@ -58,6 +58,11 @@ COLLECTION_NOTIFICATIONS: Final = "notifications"
 #: cours (`pousser:CM`), purgee par TTL : la plateforme n'ayant aucun index
 #: unique (RC-183), deux appels simultanes creeraient chacun leur exemplaire.
 COLLECTION_VERROUS: Final = "verrous"
+#: Onzieme collection — le RELEVE DE VERSION des services (`V-01`). Un
+#: document par service, avec son historique : c'est l'historique qui permet
+#: de dire « ca a change », et le changement est la seule information qui
+#: demande une action.
+COLLECTION_VERSIONS_SERVICES: Final = "service_versions"
 
 _client: AsyncIOMotorClient[MongoDocument] | None = None
 
