@@ -3022,6 +3022,13 @@ def _config_service_double(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             traces["villes"].append((country_id, ville))
             return {"_id": country_id, "cities": [ville]}
 
+        async def ajouter_villes(self, country_id, villes):  # type: ignore[no-untyped-def]
+            if traces["echec"] or traces.get("echec_villes"):
+                raise RuntimeError(traces["echec"] or traces["echec_villes"])
+            traces["villes"].extend((country_id, v) for v in villes)
+            traces["lots"] = traces.get("lots", 0) + 1  # C3 : compte les ALLERS
+            return {"_id": country_id, "cities": list(villes)}, list(villes)
+
         async def creer_telco_si_absent(self, nom, phone_regex):  # type: ignore[no-untyped-def]
             if traces["echec"]:
                 raise RuntimeError(traces["echec"])
@@ -3840,6 +3847,261 @@ class TestEtatsLaBas:
         )
         assert reponse.status_code == 409
         assert "mesure 09/08" in reponse.json()["detail"]
+
+
+class TestC6RectifierUnPaysEnOperation:
+    """`C6` (23/08, Yaniv) — config-service n'a **aucun PATCH**, que des
+    `PUT` : toute modification est une REECRITURE INTEGRALE. Piege (un champ
+    omis est EFFACE) et chance a la fois — le Loader etant System of Record,
+    rectifier, c'est le MEME geste que pousser."""
+
+    @staticmethod
+    def _doubler(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+        from app.routes import admin_referentiels
+
+        etat: dict[str, Any] = {
+            "pays": {
+                "_id": "cfg-CV", "iso_name": "CV", "name_en": "Cape Verde",
+                "name_fr": "", "dial_code": "", "region": "Western Africa",
+                "continent": "Africa",
+                # une ville posee par une AUTRE equipe, inconnue de nous
+                "cities": ["Praia-Ilha"],
+                "currencies": ["cur-xaf"],          # FAUX : notre fiche dit CVE
+                "telcos": ["tl-etranger"],          # rattache par un autre
+            },
+            "put": [],
+        }
+
+        class _Lecture:
+            async def lister_pays(self):  # type: ignore[no-untyped-def]
+                return [dict(etat["pays"])]
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        class _Admin:
+            async def resoudre_devise(self, iso):  # type: ignore[no-untyped-def]
+                return "cur-cve" if iso.upper() == "CVE" else None
+
+            async def creer_telco_si_absent(self, nom, regex):  # type: ignore[no-untyped-def]
+                return {"_id": f"tl-{nom}", "name": nom}, True
+
+            async def remplacer_pays(self, cid, payload):  # type: ignore[no-untyped-def]
+                etat["put"].append((cid, payload))
+                etat["pays"].update(payload)
+                return dict(etat["pays"])
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_referentiels, "_config_lecture", lambda: _Lecture())
+        monkeypatch.setattr(admin_referentiels, "_config_admin", lambda: _Admin())
+        return etat
+
+    async def _fiche_cap_vert(self, client: httpx.AsyncClient) -> dict[str, str]:
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="CV", nom_fr="Cap-Vert", nom_en="Cabo Verde", capitale="Praia",
+            dial_code="238", devise_iso="CVE", tva_percent=15.0,
+            devise_nom="Cape Verdean Escudo", devise_decimales=2,
+            banque_centrale="BCV", region_africa="Western Africa",
+        )
+        await _semer_telco(
+            "CV", "CVMovel", "CVM", r"^238(9[0-9]\d{5})$", 70.0, "2389912345"
+        )
+        return entetes
+
+    async def test_l_apercu_montre_l_ECART_et_n_ecrit_RIEN(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        etat = self._doubler(monkeypatch)
+        entetes = await self._fiche_cap_vert(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays/CV/rectifier", json={}, headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["statut"] == "apercu"
+        assert etat["put"] == [], "AUCUNE ecriture sans confirmation"
+        assert corps["ecart"]["name_fr"] == {"avant": "", "apres": "Cap-Vert"}
+        assert corps["ecart"]["dial_code"] == {"avant": "", "apres": "238"}
+        assert corps["ecart"]["devise"]["iso_attendu"] == "CVE"
+
+    async def test_la_rectification_reecrit_les_9_champs_dans_l_ordre_du_pousser(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        etat = self._doubler(monkeypatch)
+        entetes = await self._fiche_cap_vert(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays/CV/rectifier",
+            json={"confirmer": True, "motif": "devise XAF au lieu de CVE"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json()["statut"] == "rectifie"
+        assert len(etat["put"]) == 1, "UN seul PUT, complet"
+        _cid, payload = etat["put"][0]
+        assert sorted(payload) == [
+            "cities", "continent", "currencies", "dial_code", "iso_name",
+            "name_en", "name_fr", "region", "telcos",
+        ], "les 9 champs — un champ omis serait EFFACE"
+        assert payload["currencies"] == ["cur-cve"], "la devise suit NOTRE fiche"
+        assert payload["name_fr"] == "Cap-Vert" and payload["dial_code"] == "238"
+
+    async def test_la_matiere_des_AUTRES_equipes_est_CONSERVEE(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Le piege du PUT : reecrire avec nos seules donnees SUPPRIMERAIT ce
+        qu'une autre equipe a ajoute. Villes et telcos fusionnent."""
+        etat = self._doubler(monkeypatch)
+        entetes = await self._fiche_cap_vert(client)
+        await client.post(
+            "/admin/referentiels/pays/CV/rectifier",
+            json={"confirmer": True}, headers=entetes,
+        )
+        _cid, payload = etat["put"][0]
+        assert "Praia-Ilha" in payload["cities"], "la ville d'une autre equipe SURVIT"
+        assert "Praia" in payload["cities"], "et la notre est ajoutee"
+        assert "tl-etranger" in payload["telcos"], "le telco d'une autre equipe SURVIT"
+        assert "tl-CVMovel" in payload["telcos"], "et le notre est rattache"
+
+    async def test_rectifier_un_pays_HORS_operation_est_refuse(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On ne rectifie que ce qui existe la-bas — sinon c'est un pousser."""
+        self._doubler(monkeypatch)
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="GA", nom_fr="Gabon", nom_en="Gabon", capitale="Libreville",
+            dial_code="241", devise_iso="XAF", tva_percent=18.0,
+        )
+        reponse = await client.post(
+            "/admin/referentiels/pays/GA/rectifier",
+            json={"confirmer": True}, headers=entetes,
+        )
+        assert reponse.status_code == 422
+        assert "pousser" in reponse.json()["detail"]
+
+    async def test_sans_jeton_401(self, client: httpx.AsyncClient) -> None:
+        assert (
+            await client.post("/admin/referentiels/pays/CV/rectifier", json={})
+        ).status_code == 401
+
+
+class TestC1CleDeComparaisonAntiDoublon:
+    """`C1` (23/08) — l'unicite est A NOUS (`RC-183` : aucun index unique
+    cote serveur). Une autorite d'unicite qui compare des chaines EXACTES
+    n'en est pas une : un accent ou une majuscule suffisait a creer un
+    doublon DEFINITIF (aucun DELETE cote config-service)."""
+
+    def test_la_cle_plie_accents_casse_et_ponctuation(self) -> None:
+        from app.clients.config_service import cle_comparaison
+
+        assert cle_comparaison("Orange Guinée") == cle_comparaison("ORANGE GUINEE")
+        assert cle_comparaison("Yaoundé") == cle_comparaison("yaounde")
+        assert cle_comparaison("Moov Africa - CI") == cle_comparaison("Moov  Africa CI")
+        assert cle_comparaison("MTN Côte d'Ivoire") == cle_comparaison("MTN Cote d Ivoire")
+
+    def test_la_cle_ne_confond_PAS_deux_operateurs_differents(self) -> None:
+        """Le piege inverse : trop normaliser fusionnerait deux vrais
+        operateurs. `Orange CM` et `Orange CI` restent DEUX telcos."""
+        from app.clients.config_service import cle_comparaison
+
+        assert cle_comparaison("Orange Cameroon") != cle_comparaison("Orange Cote d'Ivoire")
+        assert cle_comparaison("MTN Ghana") != cle_comparaison("MTN Guinee")
+
+    async def test_un_telco_deja_la_bas_sous_un_autre_ACCENT_est_ADOPTE(self) -> None:
+        from app.clients.config_service import AdministrationConfigService
+
+        admin = AdministrationConfigService()
+        envois: list[Any] = []
+
+        class _Faux:
+            async def lister_tout(self, _chemin):  # type: ignore[no-untyped-def]
+                return [{"_id": "tl-1", "name": "ORANGE  GUINEE"}]
+
+            async def requete(self, *a, **k):  # type: ignore[no-untyped-def]
+                envois.append((a, k))
+                raise AssertionError("aucun POST ne doit partir : le telco existe deja")
+
+        admin._client = _Faux()  # type: ignore[assignment]
+        fiche, cree = await admin.creer_telco_si_absent("Orange Guinée", r"^224(6\d{8})$")
+        assert cree is False, "reconnu malgre l'accent et la casse"
+        assert fiche["_id"] == "tl-1"
+        assert envois == []
+
+    async def test_une_ville_deja_la_bas_sous_un_autre_ACCENT_n_est_pas_doublee(
+        self,
+    ) -> None:
+        from app.clients.config_service import AdministrationConfigService
+
+        admin = AdministrationConfigService()
+        ecritures: list[Any] = []
+
+        class _Reponse:
+            data: ClassVar[dict[str, Any]] = {
+                "_id": "cfg-CM", "iso_name": "CM", "cities": ["Yaoundé", "Douala"],
+                "currencies": [], "telcos": [],
+            }
+
+        class _Faux:
+            async def get(self, _chemin):  # type: ignore[no-untyped-def]
+                return _Reponse()
+
+            async def requete(self, *a, **k):  # type: ignore[no-untyped-def]
+                ecritures.append(k.get("json_body"))
+                return _Reponse()
+
+        admin._client = _Faux()  # type: ignore[assignment]
+        await admin.ajouter_ville("cfg-CM", "Yaounde")
+        assert ecritures == [], "aucun PUT : la ville existe deja, autrement accentuee"
+        await admin.ajouter_ville("cfg-CM", "Bafoussam")
+        assert ecritures and "Bafoussam" in ecritures[0]["cities"], (
+            "une VRAIE nouvelle ville part quand meme"
+        )
+
+
+class TestC3UnSeulAllerRetourPourLesVilles:
+    """`C3` (23/08) — completer un pays coutait 2 appels PAR ville (338 pour
+    la Cote d'Ivoire, > 60 s, timeout frontend). `UpdateCountrySchema` exige
+    les 9 champs de toute facon : une seule relecture sert pour toutes."""
+
+    async def test_toutes_les_villes_manquantes_partent_en_UN_lot(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays/CM/pousser", headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json()["statut"] == "deja_en_operation"
+        assert _config_service_double.get("lots", 0) <= 1, (
+            "UN aller-retour au plus, quel que soit le nombre de villes"
+        )
+        assert len(_config_service_double["villes"]) > 1, (
+            "et le lot porte bien PLUSIEURS villes"
+        )
+
+    async def test_un_echec_du_lot_est_DIT_avec_le_nombre_et_le_rattrapage(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """Tout ou rien assume : mais jamais muet, et le geste de reprise est
+        nomme (l'aller est idempotent)."""
+        _config_service_double["echec_villes"] = "config-service indisponible"
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/referentiels/pays/CM/pousser", headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        echecs = reponse.json()["echecs"]
+        assert echecs and "ville(s) non envoyee(s)" in echecs[0], echecs
+        assert "re-pousser" in echecs[0], "le rattrapage est dit"
 
 
 class TestICFGSyncLaMatiereSuitLOperation:

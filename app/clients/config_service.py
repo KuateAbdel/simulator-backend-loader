@@ -383,8 +383,10 @@ class AdministrationConfigService:
         except re.error as erreur:
             raise ValueError(f"motif {motif!r} non compilable : {erreur}") from erreur
 
+        cible = cle_comparaison(nom)
         for existant in await self._client.lister_tout("/api/v1/telcos/"):
-            if str(existant.get("name", "")).strip() == nom.strip():
+            libelle = existant.get("name") or existant.get("network_name") or ""
+            if cle_comparaison(str(libelle)) == cible:
                 return existant, False
 
         reponse = await self._client.requete(
@@ -401,8 +403,18 @@ class AdministrationConfigService:
         `iso_name` normalise. `POST /currencies/create` attend
         `{name_en, name_fr, iso_name, accepts_decimal}`. Rend `(fiche, cree?)`."""
         cible = str(payload.get("iso_name", "")).strip().upper()
+        cible_nom = cle_comparaison(str(payload.get("name_en") or payload.get("name_fr") or ""))
         for existant in await self._client.lister_tout("/api/v1/currencies/"):
-            if str(existant.get("iso_name", "")).strip().upper() == cible:
+            libelle = cle_comparaison(
+                str(existant.get("name_en") or existant.get("name_fr") or "")
+            )
+            # L'ISO d'abord (l'autorite), le libelle ensuite : la prod porte
+            # une devise `cv` nommee `CD` et une devise `00` — des codes
+            # inventes. Sans le second regard, une devise legitime au meme
+            # nom serait doublee sous un autre code.
+            if str(existant.get("iso_name", "")).strip().upper() == cible or (
+                cible_nom and libelle == cible_nom
+            ):
                 if "_id" in existant and not existant.get("id"):
                     existant["id"] = existant["_id"]
                 return existant, False
@@ -489,6 +501,84 @@ class AdministrationConfigService:
         maj = await self._client.requete("PUT", f"/api/v1/countries/{country_id}", json_body=corps)
         return maj.data if isinstance(maj.data, dict) else {}
 
+    async def remplacer_pays(
+        self, country_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """RECTIFIE une fiche pays — **par reecriture complete des 9 champs**.
+
+        `C6` (23/08, Yaniv) : config-service n'expose **aucun PATCH**, que des
+        `PUT`. Toute modification est donc une REECRITURE INTEGRALE — ce qui
+        est un piege et une chance a la fois :
+
+        * **le piege** — un champ omis n'est pas « inchange », il est EFFACE.
+          C'est pourquoi l'appelant compose le payload depuis NOTRE fiche
+          COMPLETE, et fusionne (jamais n'ecrase) les villes et les telcos
+          que d'autres equipes auraient ajoutes la-bas ;
+        * **la chance** — le Loader etant le System of Record, « rectifier »
+          n'est pas une operation nouvelle : c'est le MEME geste que pousser,
+          avec la meme matiere, dans le meme ordre (devise et telcos resolus
+          en UUID AVANT le pays). Aucun contrat supplementaire a mesurer.
+
+        L'appelant a deja resolu la devise et les telcos.
+        """
+        maj = await self._client.requete(
+            "PUT", f"/api/v1/countries/{country_id}", json_body=payload
+        )
+        return maj.data if isinstance(maj.data, dict) else {}
+
+    async def ajouter_villes(
+        self, country_id: str, villes: list[str]
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Ajoute PLUSIEURS villes en **UN SEUL** aller-retour. Rend
+        `(fiche, villes_reellement_ajoutees)`.
+
+        `C3` (23/08) — mesure : completer la Cote d'Ivoire ville par ville
+        coutait **338 appels reseau** (169 `GET` + 169 `PUT`, chacun relisant
+        et renvoyant le pays ENTIER) et depassait 60 s ; le frontend lachait
+        avant le serveur, l'utilisateur re-cliquait, et chaque re-clic
+        relancait les 338. Or `UpdateCountrySchema` exige de toute facon les
+        9 champs (`ANO-CFG-DUP`) : la relecture integrale peut donc servir
+        pour **toutes** les villes a la fois. 338 appels -> 2.
+
+        Contrepartie assumee : l'ecriture devient TOUT ou RIEN. C'est
+        preferable a un pays a moitie complete dont personne ne sait ou il
+        s'est arrete — et l'appel est idempotent, on rejoue.
+        """
+        reponse = await self._client.get(f"/api/v1/countries/{country_id}")
+        fiche = reponse.data if isinstance(reponse.data, dict) else {}
+        if not fiche:
+            raise ValueError(f"pays {country_id} introuvable — rien n'est ecrit")
+
+        existantes = [str(v) for v in (fiche.get("cities") or [])]
+        deja = {cle_comparaison(v) for v in existantes}
+        ajoutees: list[str] = []
+        for nom in villes:
+            propre = str(nom).strip()
+            cle = cle_comparaison(propre)
+            if not propre or cle in deja:
+                continue
+            deja.add(cle)
+            existantes.append(propre)
+            ajoutees.append(propre)
+        if not ajoutees:
+            return fiche, []
+
+        corps = {
+            "name_en": fiche.get("name_en", ""),
+            "name_fr": fiche.get("name_fr", ""),
+            "iso_name": fiche.get("iso_name", ""),
+            "dial_code": fiche.get("dial_code", ""),
+            "region": fiche.get("region", ""),
+            "continent": fiche.get("continent", ""),
+            "cities": existantes,
+            "currencies": _identifiants(fiche.get("currencies")),
+            "telcos": _identifiants(fiche.get("telcos")),
+        }
+        maj = await self._client.requete(
+            "PUT", f"/api/v1/countries/{country_id}", json_body=corps
+        )
+        return (maj.data if isinstance(maj.data, dict) else {}), ajoutees
+
     async def ajouter_ville(self, country_id: str, ville: str) -> dict[str, Any]:
         """Ajoute une ville a `Country.cities[]` — **par relecture integrale**.
 
@@ -510,7 +600,11 @@ class AdministrationConfigService:
             raise ValueError(f"pays {country_id} introuvable — rien n'est ecrit")
 
         villes = [str(v) for v in (fiche.get("cities") or [])]
-        if ville.strip() in villes:
+        # « Yaounde » et « Yaoundé » sont la MEME ville : sans cette
+        # normalisation, chaque re-poussee d'un referentiel accentue aurait
+        # ajoute un doublon de plus, indefiniment.
+        deja = {cle_comparaison(v) for v in villes}
+        if cle_comparaison(ville) in deja:
             return fiche
         villes.append(ville.strip())
 
@@ -527,6 +621,26 @@ class AdministrationConfigService:
         }
         maj = await self._client.requete("PUT", f"/api/v1/countries/{country_id}", json_body=corps)
         return maj.data if isinstance(maj.data, dict) else {}
+
+
+def cle_comparaison(texte: str) -> str:
+    """La cle qui decide si DEUX LIBELLES designent LA MEME CHOSE.
+
+    `RC-183` : config-service n'a **aucun index unique**. C'est donc NOUS
+    l'autorite d'unicite — et une autorite qui compare des chaines exactes
+    n'en est pas une : `"Orange Guinee"`, `"Orange Guinée"` et
+    `"ORANGE GUINEE"` sont le MEME operateur, mais trois `POST` differents.
+    Un doublon ainsi cree est **definitif** (aucun DELETE cote serveur).
+
+    On normalise donc avant de comparer : accents retires, casse pliee,
+    ponctuation et espaces multiples ecrases. La comparaison sert UNIQUEMENT
+    a reconnaitre l'existant — le libelle envoye reste celui du Loader,
+    accents compris.
+    """
+    from app.core.invariants import sans_accents
+
+    plie = sans_accents(str(texte)).casefold()
+    return " ".join("".join(c if c.isalnum() else " " for c in plie).split())
 
 
 def _identifiants(valeurs: Any) -> list[str]:

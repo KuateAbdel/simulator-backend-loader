@@ -916,6 +916,7 @@ async def pousser_pays_en_operation(
     from uuid import NAMESPACE_OID, uuid5
 
     from app.clients.base import ErreurService
+    from app.clients.config_service import cle_comparaison
     from app.repositories.audit_trail import AuditTrailRepository
     from app.routes.admin_entites import RUN_ADMIN
 
@@ -1070,16 +1071,28 @@ async def pousser_pays_en_operation(
         # 4. LES VILLES MANQUANTES — cas adoption : completer, jamais doubler.
         villes_completees = 0
         if not cree and identifiant:
-            deja_labas = {str(v).strip() for v in (fiche_pays.get("cities") or [])}
-            for nom_ville in villes:
-                if nom_ville in deja_labas:
-                    continue
+            # Comparaison NORMALISEE (C1, 23/08) : « Yaounde » et « Yaoundé »
+            # sont la meme ville. Une comparaison exacte aurait rajoute un
+            # doublon a CHAQUE re-poussee, sans jamais pouvoir le retirer.
+            deja_labas = {
+                cle_comparaison(str(v)) for v in (fiche_pays.get("cities") or [])
+            }
+            manquantes = [
+                nom for nom in villes if cle_comparaison(nom) not in deja_labas
+            ]
+            if manquantes:
                 try:
-                    await admin.ajouter_ville(identifiant, nom_ville)
-                    villes_completees += 1
-                except Exception as erreur:  # echec PARTIEL, dit — jamais muet
+                    # UN aller-retour pour toutes (C3) : la Cote d'Ivoire
+                    # passait par 338 appels et depassait 60 s.
+                    _fiche, ajoutees = await admin.ajouter_villes(
+                        identifiant, manquantes
+                    )
+                    villes_completees = len(ajoutees)
+                except Exception as erreur:  # tout ou rien — et DIT
                     echecs.append(
-                        f"ville {nom_ville} : {type(erreur).__name__}: {str(erreur)[:120]}"
+                        f"{len(manquantes)} ville(s) non envoyee(s) : "
+                        f"{type(erreur).__name__}: {str(erreur)[:120]} — "
+                        "re-pousser reprend exactement la ou on s'est arrete"
                     )
 
         # 5. Cas ADOPTION : les telcos deja crees (etape 2) sont RATTACHES au
@@ -1127,6 +1140,235 @@ async def pousser_pays_en_operation(
             "telcos crees et rattaches. Regions, quartiers, GPS, TVA et parts "
             "de marche restent la richesse du Loader — la plateforme n'a "
             "aucun champ pour elles"
+        ),
+    }
+
+
+class RectificationDemande(BaseModel):
+    """`C6` — la rectification se CONFIRME. Sans confirmation, on ne rend que
+    l'ecart : le referentiel est PARTAGE, on ne le reecrit pas par surprise."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirmer: bool = False
+    motif: str = Field(default="", max_length=280)
+
+
+@router.post("/pays/{iso}/rectifier")
+async def rectifier_pays_en_operation(
+    iso: str,
+    demande: RectificationDemande,
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
+) -> dict[str, Any]:
+    """`C6` — RECTIFIER la fiche d'un pays DEJA en operation.
+
+    Le manque mesure le 23/08 : `CV` opere avec la devise `XAF` la ou notre
+    fiche dit `CVE`, et son `dial_code` est vide. `pousser` ne pouvait rien
+    y faire — il ADOPTE un pays existant, il ne le corrige pas. Un pays en
+    operation mentait donc sur sa zone monetaire, et tout prix cree dessus
+    en heritait.
+
+    Le geste, dans **l'ORDRE DU POUSSER** (il n'y en a pas deux) :
+
+      1. la DEVISE de notre fiche, resolue la-bas, CREEE si absente ;
+      2. les TELCOS de notre referentiel, crees si absents ;
+      3. le PAYS reecrit ENTIER (`PUT`, les 9 champs) depuis notre fiche.
+
+    Trois protections, parce qu'un `PUT` ecrase tout ce qu'il n'envoie pas :
+
+    * **fusion, jamais ecrasement** — les villes et les telcos presents
+      la-bas et inconnus de nous sont CONSERVES : le referentiel est
+      partage, une autre equipe a le droit d'y avoir ajoute quelque chose ;
+    * **la devise, elle, est REMPLACEE** — c'est tout l'objet du geste, et
+      notre fiche fait autorite (System of Record) ;
+    * **apercu par defaut** — sans `confirmer: true`, rien n'est ecrit : on
+      rend l'ECART champ par champ, avant/apres.
+    """
+    from uuid import NAMESPACE_OID, uuid5
+
+    from app.clients.base import ErreurService
+    from app.clients.config_service import cle_comparaison
+    from app.repositories.audit_trail import AuditTrailRepository
+    from app.routes.admin_entites import RUN_ADMIN
+
+    await refuser_si_run_en_cours()
+
+    code = iso.strip().upper()
+    surcouche, _ = await SurcoucheRepository().charger()
+    referentiel = surcouche.appliquer(_geo())
+    fiche = referentiel.pays(code)
+    if fiche is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"pays {code!r} inconnu du Loader — rien a rectifier depuis quoi.",
+        )
+
+    lecture = _config_lecture()
+    admin = _config_admin()
+    try:
+        distants = await lecture.lister_pays()
+        distant = next(
+            (d for d in distants if str(d.get("iso_name", "")).strip().upper() == code),
+            None,
+        )
+        if distant is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{code} n'est PAS en operation — il n'y a rien a rectifier "
+                    f"la-bas. C'est un POST /pays/{code}/pousser qu'il faut."
+                ),
+            )
+        identifiant = str(distant.get("_id") or distant.get("id") or "")
+
+        # --- 1. LA DEVISE (l'ordre du pousser) ---------------------------
+        devise_id = await admin.resoudre_devise(fiche.devise_iso)
+        fiche_devise = referentiel.devises.get(fiche.devise_iso)
+        devise_creee = False
+        if devise_id is None:
+            fiche_dev, devise_creee = await admin.creer_devise_si_absent(
+                {
+                    "name_en": fiche_devise.nom if fiche_devise else fiche.devise_iso,
+                    "name_fr": fiche_devise.nom if fiche_devise else fiche.devise_iso,
+                    "iso_name": fiche.devise_iso,
+                    "accepts_decimal": bool(fiche_devise and fiche_devise.decimales > 0),
+                }
+            )
+            devise_id = str(fiche_dev.get("id") or fiche_dev.get("_id") or "")
+
+        # --- 2. LES TELCOS ------------------------------------------------
+        telco_ids: list[str] = []
+        for telco in referentiel.telcos_du_pays(code):
+            fiche_telco, _cree = await admin.creer_telco_si_absent(
+                telco.network_name, telco.regex_msisdn
+            )
+            telco_id = str(fiche_telco.get("id") or fiche_telco.get("_id") or "")
+            if telco_id:
+                telco_ids.append(telco_id)
+        # FUSION : ce qui est deja rattache la-bas et qu'on ne connait pas
+        # RESTE rattache — un PUT n'est pas une occasion de faire le menage
+        # chez les autres.
+        for existant in _references(distant.get("telcos")):
+            if existant not in telco_ids:
+                telco_ids.append(existant)
+
+        # --- 3. LES VILLES : union normalisee ------------------------------
+        nos_villes = sorted(
+            v.name for v in referentiel.villes.values() if v.country_iso2 == code
+        ) or ([fiche.capitale] if fiche.capitale.strip() else [])
+        villes_labas = [str(v).strip() for v in (distant.get("cities") or []) if str(v).strip()]
+        fusion_villes = list(villes_labas)
+        connues = {cle_comparaison(v) for v in villes_labas}
+        for nom in nos_villes:
+            if cle_comparaison(nom) not in connues:
+                connues.add(cle_comparaison(nom))
+                fusion_villes.append(nom)
+
+        cible = {
+            "name_en": fiche.nom_en,
+            "name_fr": fiche.nom_fr,
+            "iso_name": code,
+            "dial_code": fiche.dial_code,
+            "region": fiche.region_africa or "Africa",
+            "continent": "Africa",
+            "cities": fusion_villes,
+            "currencies": [devise_id],
+            "telcos": telco_ids,
+        }
+
+        # --- L'ECART, champ par champ -------------------------------------
+        ecart: dict[str, Any] = {}
+        for champ in ("name_en", "name_fr", "dial_code", "region", "continent"):
+            avant = str(distant.get(champ) or "")
+            if avant != str(cible[champ]):
+                ecart[champ] = {"avant": avant, "apres": cible[champ]}
+        devises_avant = _references(distant.get("currencies"))
+        if devises_avant != [devise_id]:
+            ecart["devise"] = {
+                "avant": devises_avant,
+                "apres": [devise_id],
+                "iso_attendu": fiche.devise_iso,
+            }
+        if len(fusion_villes) != len(villes_labas):
+            ecart["villes"] = {
+                "avant": len(villes_labas),
+                "apres": len(fusion_villes),
+                "ajoutees": len(fusion_villes) - len(villes_labas),
+            }
+        telcos_avant = _references(distant.get("telcos"))
+        if sorted(telcos_avant) != sorted(telco_ids):
+            ecart["telcos"] = {"avant": len(telcos_avant), "apres": len(telco_ids)}
+
+        if not demande.confirmer:
+            return {
+                "pays": code,
+                "statut": "apercu",
+                "ecart": ecart,
+                "rien_a_rectifier": not ecart,
+                "note": (
+                    "AUCUNE ecriture. Relancer avec `confirmer: true` pour "
+                    "appliquer. Le referentiel est PARTAGE : la reecriture "
+                    "complete (le serveur n'a que des PUT) se confirme."
+                ),
+            }
+        if not ecart:
+            return {
+                "pays": code,
+                "statut": "deja_conforme",
+                "ecart": {},
+                "note": "la fiche la-bas est deja celle du Loader — rien n'a ete envoye",
+            }
+
+        audit = AuditTrailRepository()
+        async with audit.intention(
+            RUN_ADMIN,
+            entity_type="Country",
+            entity_id=uuid5(NAMESPACE_OID, f"finzuu-pays:{code}"),
+            operation="UPDATE",
+            cible="config-service PUT /countries/{id}",
+            payload={
+                "iso_name": code,
+                "ecart": ecart,
+                "motif": demande.motif,
+                "par": session.email,
+            },
+        ) as suivi:
+            try:
+                await admin.remplacer_pays(identifiant, cible)
+            except ErreurService as exc:
+                suivi.echoue(f"HTTP {exc.status} : {exc.detail[:600]}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"config-service a refuse : HTTP {exc.status} — {exc.detail[:600]}",
+                ) from exc
+            suivi.reussi({"country_id": identifiant, "champs": sorted(ecart)})
+
+        # RELECTURE — l'etat d'APRES, mesure et non suppose.
+        relus = await lecture.lister_pays()
+        relu: dict[str, Any] = next(
+            (d for d in relus if str(d.get("iso_name", "")).strip().upper() == code),
+            {},
+        )
+    finally:
+        await lecture.fermer()
+        await admin.fermer()
+
+    return {
+        "pays": code,
+        "statut": "rectifie",
+        "ecart": ecart,
+        "devise_mise_en_operation": devise_creee,
+        "relu": {
+            "name_fr": relu.get("name_fr"),
+            "dial_code": relu.get("dial_code"),
+            "villes": len(relu.get("cities") or []),
+            "devises": _references(relu.get("currencies")),
+            "telcos": len(_references(relu.get("telcos"))),
+        },
+        "note": (
+            "reecriture COMPLETE (le serveur n'a aucun PATCH) dans l'ordre du "
+            "pousser : devise -> telcos -> pays. Villes et telcos d'autres "
+            "equipes CONSERVES ; la devise, elle, suit notre fiche"
         ),
     }
 
@@ -1457,6 +1699,8 @@ async def pays_config(
 
     Aucune ecriture : c'est l'oeil, pas la main.
     """
+    from app.clients.config_service import cle_comparaison
+
     lecture = _config_lecture()
     try:
         distants = await lecture.lister_pays()
@@ -1501,7 +1745,7 @@ async def pays_config(
             if not str(distant.get(champ) or "").strip()
         ]
         fantomes = len(brutes) - len(villes_labas)
-        doublons = len(villes_labas) - len(set(villes_labas))
+        doublons = len(villes_labas) - len({cle_comparaison(v) for v in villes_labas})
         lignes.append(
             {
                 "iso2": code,
@@ -1524,7 +1768,12 @@ async def pays_config(
                 "telcos": sorted(telcos_labas),
                 "ecarts": {
                     "champs_vides": champs_vides,
-                    "villes_absentes": sorted(set(villes_ici) - set(villes_labas)),
+                    "villes_absentes": sorted(
+                        nom
+                        for nom in villes_ici
+                        if cle_comparaison(nom)
+                        not in {cle_comparaison(v) for v in villes_labas}
+                    ),
                     "villes_fantomes": fantomes + doublons,
                     "telcos_absents": sorted(set(telcos_ici) - set(telcos_labas)),
                     "devise_attendue": fiche.devise_iso if fiche else None,
