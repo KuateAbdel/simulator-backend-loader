@@ -73,6 +73,48 @@ REAL aurait planté sur toute ville inconnue. Pilote sur SN (56 villes, 0
 
 ---
 
+## SESSION DU 23/08 — 2ᵉ PARTIE : LA CONCEPTION « COHÉRENCE » (C1→C7)
+
+Règle posée par Yaniv après la campagne QA, et **codée comme invariant
+unique** (`I-CFG-SYNC`) : la matière s'écrit TOUJOURS chez nous ; elle ne part
+là-bas **que si le pays est EN OPÉRATION**, sinon elle attend le `pousser`.
+
+| # | Chantier | État |
+|---|---|---|
+| `I-CFG-SYNC` | pays en opération → envoi immédiat ; hors opération → `differe` (jamais « échec ») ; plateforme muette → `indetermine` | ✅ `a4b5a20` |
+| C1 | anti-doublon par **clé normalisée** (accents, casse, ponctuation) sur telcos, devises, pays, villes | ✅ `7665f24` |
+| C3 | **338 appels → 2** pour compléter un pays (`ajouter_villes`, un seul PUT) | ✅ `7665f24` |
+| C6 | `POST /pays/{iso}/rectifier` — réécriture complète (le serveur n'a **aucun PATCH**), aperçu obligatoire, fusion de la matière des autres équipes | ✅ `7665f24` + `0541693` |
+| — | une panne plateforme est **relayée** (423 reste 423), plus de 500 muet | ✅ `7b9ee70` |
+| C2 | verrou par ressource (doublon en concurrence) | ⬜ |
+| C4 | sonde de cohérence + **pré-vol qui bloque le run** si dérive | ⬜ |
+| C5 | `POST /referentiels/synchroniser` (tous les pays en opération) | ⬜ |
+| C7 | sortir un pays d'opération (A-08) | ⬜ |
+
+### Deux bugs graves attrapés — dont un dans MON code
+1. **Telco orphelin** : ajouter un opérateur à un pays **hors opération** le
+   créait quand même là-bas (`creer_telco_si_absent` partait avant la
+   résolution du pays), puis le rattachement échouait. Orphelin **définitif**
+   dans le référentiel partagé. Reproduit, corrigé, prouvé en prod (KE).
+2. **L'aperçu écrivait** : un simple aperçu de rectification a **créé la
+   devise `CVE`** (7 → 8) avant de tester `confirmer`. Corrigé ; 3 aperçus en
+   prod ⇒ 0 création.
+
+### Incident plateforme (pas nous)
+`config-service` a répondu **`HTTP 423`** à notre `POST /auth/login` (compte
+ROOT **partagé**). Le disjoncteur `INV-USR-19` a tenu bon (~9 min sans
+retenter, pour ne pas aggraver). Nos écrans rendaient un **500 muet** →
+corrigé. Revenu à 200 tout seul, vérifié sur 3 tours.
+
+### `CV` — un pays en opération ENTIÈREMENT corrompu (mesure)
+Ce n'est pas « juste la mauvaise devise » : `name_en = name_fr = region =
+continent = "cm"`, `dial_code` vide, **0 ville**, devise `XAF` au lieu de
+`CVE`, et le telco `MTNcongo1` (motif `6|333`, non ancré). L'aperçu de
+rectification est prêt et prouvé sans écriture — **la confirmation appartient
+à Yaniv** (A-14, réécriture d'une fiche du référentiel PARTAGÉ).
+
+---
+
 ## SESSION DU 22/08/2026 — LA JOURNÉE RÉFÉRENTIEL PAYS (lire EN PREMIER pour reprendre)
 
 **Marathon complet, ~14 commits backend + 4 frontend, tout CI verte + déployé.

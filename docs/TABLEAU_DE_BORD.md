@@ -640,6 +640,29 @@ aucun écart**. Restent `CV` (mauvaise devise `XAF` au lieu de `CVE`, 0 ville,
 0 telco → arbitrage) et le parasite `ca`. **L'aller est SYNCHRONE** : CI
 (169 villes) dépasse un timeout client de 60 s.
 
+## D-terdecies. LA CONCEPTION « COHÉRENCE » C1→C7 (23/08, 2ᵉ partie)
+
+**`I-CFG-SYNC` — la matière suit l'ÉTAT du pays** (règle Yaniv) : en
+opération → envoi immédiat ; hors opération → `differe`, rien ne part, tout
+partira au `pousser` ; plateforme muette → `indetermine` (l'absence et le
+silence sont deux faits distincts). Un seul endroit dans le code.
+
+**Livrés** : `I-CFG-SYNC` (`a4b5a20`) · **C1** anti-doublon par clé
+normalisée — accents/casse/ponctuation, sur telcos, devises, pays ET villes
+(`7665f24`) · **C3** 338 appels → 2 pour compléter un pays (`7665f24`) ·
+**C6** `POST /pays/{iso}/rectifier`, réécriture complète car le serveur n'a
+**aucun PATCH**, aperçu obligatoire + fusion de la matière des autres équipes
+(`7665f24`/`0541693`) · **relais honnête** des pannes plateforme, 423 reste
+423 (`7b9ee70`).
+
+**Restent** : C2 verrou par ressource (doublon en concurrence) · C4 sonde de
+cohérence + pré-vol bloquant le run · C5 `synchroniser` global · C7 sortir
+d'opération (A-08).
+
+**Deux bugs graves attrapés** : le telco d'un pays hors opération était créé
+là-bas puis orphelin définitif ; et l'aperçu de rectification ÉCRIVAIT (il a
+créé `CVE`). Les deux corrigés et prouvés en prod.
+
 ## F. Les arbitrages qui n'appartiennent qu'à Yaniv
 
 **A-14 — 23/08, NOUVEAU** : corriger ou non la fiche `CV` du référentiel
