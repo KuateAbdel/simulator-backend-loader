@@ -931,10 +931,50 @@ class TestLotBRuns:
         )
         assert reponse.status_code == 409, reponse.text
         detail = reponse.json()["detail"]
-        assert "cohérence" in detail and "DÉRIVÉ" in detail, detail
+        assert "cohérence" in detail, detail
+        assert "ne porte pas ce que le run suppose" in detail, detail
         assert "74 ville(s)" in detail, "la derive MESUREE est nommee"
         assert "synchroniser" in detail, "le geste qui la ferme est dit"
         assert len(appels) == 1, "RIEN n'est parti : seule la preparation a tourne"
+
+    async def test_US_C2_pre_vol_refuse_un_pays_du_perimetre_ABSENT_de_la_plateforme(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Le cas d'une base FRAICHE : le referentiel n'a jamais ete pousse.
+        Un pays absent n'apparait dans AUCUNE mesure d'ecart — il n'y a rien a
+        comparer — et serait passe entre les mailles. C'est pourtant le pire
+        etat : un REAL qui cree des Companies dans un pays inconnu."""
+        from app.routes import admin_runs
+
+        appels = self._doubler_moteur(monkeypatch)
+
+        async def fausse_sonde(cli: Any, nom: str, base: str) -> dict[str, Any]:
+            return {"nom": nom, "etat": "up", "http": 200, "latence_ms": 1}
+
+        async def mesure_vide() -> dict[str, Any]:
+            return {"pays": [], "compte": 0, "sans_ecart": 0}  # plateforme VIERGE
+
+        monkeypatch.setattr("app.routes.admin_runs._sonder", fausse_sonde)
+        monkeypatch.setattr(
+            "app.routes.admin_referentiels._mesurer_pays_config", mesure_vide
+        )
+        monkeypatch.setattr(
+            admin_runs, "_pays_du_perimetre", lambda _preparation: ["CM", "SN"]
+        )
+
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        await database.get_database().drop_collection("loader_configuration")
+        preparation_id = await self._preparer_et_attendre(client, entetes)
+
+        reponse = await client.post(
+            f"/admin/runs/{preparation_id}/confirmer", headers=entetes
+        )
+        assert reponse.status_code == 409, reponse.text
+        detail = reponse.json()["detail"]
+        assert "CM : ABSENT" in detail and "SN : ABSENT" in detail, detail
+        assert "pousser" in detail, "le geste qui repare est dit"
+        assert len(appels) == 1, "RIEN n'est parti"
 
     async def test_US_C2_pre_vol_un_service_en_panne_refuse_503_et_rien_ne_part(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch

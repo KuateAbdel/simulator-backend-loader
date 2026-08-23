@@ -183,6 +183,18 @@ async def _derive_du_perimetre(codes: list[str]) -> list[str]:
     except Exception:
         return []
     motifs: list[str] = []
+    # LE CAS QUI COMPTE LE PLUS : un pays du perimetre TOTALEMENT ABSENT de la
+    # plateforme. Il n'apparait dans aucune mesure d'ecart — il n'y a rien a
+    # comparer — et serait donc passe entre les mailles. C'est pourtant le pire
+    # etat possible : base fraiche, referentiel jamais pousse, et un REAL qui
+    # part creer des Companies dans un pays que la plateforme ne connait pas.
+    presents = {str(ligne["iso2"]) for ligne in mesure["pays"]}
+    for code in codes:
+        if code not in presents:
+            motifs.append(
+                f"{code} : ABSENT de la plateforme — le pays n'est pas en "
+                f"operation (POST /admin/referentiels/pays/{code}/pousser)"
+            )
     for ligne in mesure["pays"]:
         if str(ligne["iso2"]) not in codes:
             continue
@@ -284,11 +296,12 @@ async def confirmer(
         raise HTTPException(
             status_code=409,
             detail=(
-                "pré-vol de cohérence refusé — le référentiel de la plateforme "
-                f"a DÉRIVÉ sur : {'; '.join(derive)}. RIEN n'est parti. "
-                "Fermer l'écart d'un geste (POST /admin/referentiels/"
-                "synchroniser), puis re-confirmer. Périmètre vérifié : "
-                f"{', '.join(figee_perimetre) or 'aucun pays'}."
+                "pré-vol de cohérence refusé — la plateforme ne porte pas ce "
+                f"que le run suppose : {'; '.join(derive)}. RIEN n'est parti. "
+                "Un pays ABSENT se pousse (POST /admin/referentiels/pays/"
+                "{iso}/pousser) ; une dérive se ferme d'un geste (POST "
+                "/admin/referentiels/synchroniser). Puis re-confirmer. "
+                f"Périmètre vérifié : {', '.join(figee_perimetre) or 'aucun pays'}."
             ),
         )
 
