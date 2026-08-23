@@ -3932,11 +3932,15 @@ class TestC6RectifierUnPaysEnOperation:
                 "telcos": ["tl-etranger"],          # rattache par un autre
             },
             "put": [],
+            "ecritures": [],
         }
 
         class _Lecture:
             async def lister_pays(self):  # type: ignore[no-untyped-def]
                 return [dict(etat["pays"])]
+
+            async def lister_telcos(self):  # type: ignore[no-untyped-def]
+                return [{"_id": "tl-etranger", "network_name": "Operateur Tiers"}]
 
             async def fermer(self):  # type: ignore[no-untyped-def]
                 return None
@@ -3945,7 +3949,12 @@ class TestC6RectifierUnPaysEnOperation:
             async def resoudre_devise(self, iso):  # type: ignore[no-untyped-def]
                 return "cur-cve" if iso.upper() == "CVE" else None
 
+            async def creer_devise_si_absent(self, payload):  # type: ignore[no-untyped-def]
+                etat["ecritures"].append(("devise", payload))
+                return {"id": "cur-neuve", "iso_name": payload["iso_name"]}, True
+
             async def creer_telco_si_absent(self, nom, regex):  # type: ignore[no-untyped-def]
+                etat["ecritures"].append(("telco", nom))
                 return {"_id": f"tl-{nom}", "name": nom}, True
 
             async def remplacer_pays(self, cid, payload):  # type: ignore[no-untyped-def]
@@ -3991,6 +4000,40 @@ class TestC6RectifierUnPaysEnOperation:
         assert corps["ecart"]["name_fr"] == {"avant": "", "apres": "Cap-Vert"}
         assert corps["ecart"]["dial_code"] == {"avant": "", "apres": "238"}
         assert corps["ecart"]["devise"]["iso_attendu"] == "CVE"
+
+    async def test_l_apercu_ne_cree_NI_devise_NI_telco(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defaut attrape sur la PROD le 23/08 : l'apercu resolvait la devise
+        et la CREAIT si absente — avant meme de tester `confirmer`. La devise
+        `CVE` est nee d'un simple apercu. Un apercu LIT, il ne prepare rien."""
+        etat = self._doubler(monkeypatch)
+        entetes = await self._fiche_cap_vert(client)
+        # notre fiche demande CVE ; on simule une plateforme qui ne l'a PAS
+        from app.routes import admin_referentiels
+
+        admin_reel = admin_referentiels._config_admin()
+
+        class _SansDevise:
+            def __getattr__(self, nom):  # type: ignore[no-untyped-def]
+                return getattr(admin_reel, nom)
+
+            async def resoudre_devise(self, _iso):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_referentiels, "_config_admin", lambda: _SansDevise())
+        reponse = await client.post(
+            "/admin/referentiels/pays/CV/rectifier", json={}, headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["statut"] == "apercu"
+        assert etat["ecritures"] == [], "AUCUNE creation pendant un apercu"
+        assert etat["put"] == []
+        assert corps["ecart"]["devise"]["a_creer_la_bas"] is True, (
+            "ce qui SERA cree est annonce, pas fait"
+        )
+        assert corps["ecart"]["telcos_a_creer"] == ["CVMovel"]
 
     async def test_la_rectification_reecrit_les_9_champs_dans_l_ordre_du_pousser(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch

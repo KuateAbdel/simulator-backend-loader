@@ -1069,7 +1069,7 @@ async def pousser_pays_en_operation(
                         "region": fiche.region_africa or "Africa",
                         "continent": "Africa",
                         "cities": villes,
-                        "currencies": [devise_id],
+                        "currencies": [devise_id] if devise_id else [],
                         "telcos": telco_ids,
                     }
                 )
@@ -1249,10 +1249,15 @@ async def rectifier_pays_en_operation(
         identifiant = str(distant.get("_id") or distant.get("id") or "")
 
         # --- 1. LA DEVISE (l'ordre du pousser) ---------------------------
+        # L'APERCU NE CREE RIEN. Defaut attrape sur la prod le 23/08 : cette
+        # etape creait la devise `CVE` AVANT le test de `confirmer` — un
+        # apercu qui ecrit n'est pas un apercu. On RESOUT (lecture) toujours,
+        # on CREE seulement sur confirmation.
         devise_id = await admin.resoudre_devise(fiche.devise_iso)
         fiche_devise = referentiel.devises.get(fiche.devise_iso)
         devise_creee = False
-        if devise_id is None:
+        devise_a_creer = devise_id is None
+        if devise_a_creer and demande.confirmer:
             fiche_dev, devise_creee = await admin.creer_devise_si_absent(
                 {
                     "name_en": fiche_devise.nom if fiche_devise else fiche.devise_iso,
@@ -1263,9 +1268,23 @@ async def rectifier_pays_en_operation(
             )
             devise_id = str(fiche_dev.get("id") or fiche_dev.get("_id") or "")
 
-        # --- 2. LES TELCOS ------------------------------------------------
+        # --- 2. LES TELCOS — meme regle : reconnaitre, puis creer SI confirme
+        deja_la_bas = {
+            cle_comparaison(str(t.get("network_name") or t.get("name") or "")): str(
+                t.get("_id") or t.get("id") or ""
+            )
+            for t in await lecture.lister_telcos()
+        }
         telco_ids: list[str] = []
+        telcos_a_creer: list[str] = []
         for telco in referentiel.telcos_du_pays(code):
+            connu = deja_la_bas.get(cle_comparaison(telco.network_name))
+            if connu:
+                telco_ids.append(connu)
+                continue
+            if not demande.confirmer:
+                telcos_a_creer.append(telco.network_name)
+                continue
             fiche_telco, _cree = await admin.creer_telco_si_absent(
                 telco.network_name, telco.regex_msisdn
             )
@@ -1310,12 +1329,15 @@ async def rectifier_pays_en_operation(
             if avant != str(cible[champ]):
                 ecart[champ] = {"avant": avant, "apres": cible[champ]}
         devises_avant = _references(distant.get("currencies"))
-        if devises_avant != [devise_id]:
+        if devises_avant != ([devise_id] if devise_id else []):
             ecart["devise"] = {
                 "avant": devises_avant,
-                "apres": [devise_id],
+                "apres": [devise_id] if devise_id else [],
                 "iso_attendu": fiche.devise_iso,
+                "a_creer_la_bas": devise_a_creer,
             }
+        if telcos_a_creer:
+            ecart["telcos_a_creer"] = telcos_a_creer
         if len(fusion_villes) != len(villes_labas):
             ecart["villes"] = {
                 "avant": len(villes_labas),
@@ -1333,9 +1355,11 @@ async def rectifier_pays_en_operation(
                 "ecart": ecart,
                 "rien_a_rectifier": not ecart,
                 "note": (
-                    "AUCUNE ecriture. Relancer avec `confirmer: true` pour "
-                    "appliquer. Le referentiel est PARTAGE : la reecriture "
-                    "complete (le serveur n'a que des PUT) se confirme."
+                    "AUCUNE ecriture — ni le pays, ni la devise, ni les "
+                    "telcos : l'apercu LIT, il ne prepare rien la-bas. "
+                    "Relancer avec `confirmer: true` pour appliquer. Le "
+                    "referentiel est PARTAGE : la reecriture complete (le "
+                    "serveur n'a que des PUT) se confirme."
                 ),
             }
         if not ecart:
