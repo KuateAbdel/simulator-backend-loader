@@ -20,7 +20,7 @@ le premier appel paie la lecture, les suivants servent la memoire.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
@@ -67,19 +67,78 @@ def _config_lecture() -> Any:
     return ConfigServiceClient()
 
 
-async def _country_id(pays: str) -> str:
-    """Le country_id de config-service pour un code ISO — resolu, jamais code
-    en dur : les identifiants appartiennent au serveur."""
+async def _identifiant_pays_ou_none(code: str) -> tuple[str | None, bool]:
+    """`(country_id, plateforme_joignable)` — jamais d'exception.
+
+    L'ABSENCE d'un pays et le SILENCE de la plateforme sont deux faits
+    differents ; confondre les deux ferait dire « pas en operation » a un
+    simple incident reseau. Le second ne s'invente pas (zero-trust).
+    """
     lecture = _config_lecture()
     try:
         for fiche in await lecture.lister_pays():
-            if str(fiche.get("iso_name", "")).strip().upper() == pays.upper():
+            if str(fiche.get("iso_name", "")).strip().upper() == code.strip().upper():
                 identifiant = fiche.get("_id") or fiche.get("id")
                 if identifiant:
-                    return str(identifiant)
+                    return str(identifiant), True
+        return None, True
+    except Exception:
+        return None, False
     finally:
         await lecture.fermer()
-    raise ValueError(f"pays {pays!r} introuvable sur config-service")
+
+
+async def _aller_si_en_operation(
+    code_pays: str,
+    action: str,
+    cible: str,
+    operation: Callable[[str], Awaitable[Any]],
+    *,
+    par: str,
+) -> dict[str, Any]:
+    """`I-CFG-SYNC` (23/08, Yaniv) — la matiere suit l'ETAT du pays.
+
+    Le Loader est le System of Record : la matiere est DEJA ecrite chez nous
+    quand cette porte s'ouvre. Ce qui part la-bas depend d'un seul fait,
+    mesure EN DIRECT :
+
+    * **pays EN OPERATION** -> l'ajout part IMMEDIATEMENT. Les deux cotes
+      restent synchrones sans geste supplementaire : c'est la promesse.
+    * **pays PAS en operation** -> RIEN ne part, et ce n'est PAS un echec :
+      la matiere partira ENTIERE au `pousser`. Statut `differe` — nommer ca
+      « echec » affole l'ecran et pousse a re-tenter pour rien.
+    * **plateforme MUETTE** -> `indetermine`. On ne conclut pas d'un silence.
+
+    Mesure du 23/08 qui a impose cette porte : ajouter un telco a un pays
+    ABSENT creait quand meme l'operateur la-bas (`creer_telco_si_absent`
+    partait AVANT la resolution du pays), puis le rattachement echouait —
+    un orphelin de plus dans le referentiel PARTAGE, qu'aucun DELETE ne
+    permet de retirer. La porte s'ouvre desormais AVANT le premier octet.
+    """
+    identifiant, joignable = await _identifiant_pays_ou_none(code_pays)
+    if not joignable:
+        return {
+            "statut": "indetermine",
+            "raison": (
+                "config-service est muet — impossible de savoir si "
+                f"{code_pays.upper()} est en operation. L'ajout LOCAL est en "
+                "place ; relancer plus tard, rien n'a ete envoye."
+            ),
+        }
+    if identifiant is None:
+        return {
+            "statut": "differe",
+            "raison": (
+                f"{code_pays.upper()} n'est PAS en operation — la matiere "
+                "reste chez nous et partira ENTIERE a la mise en operation "
+                f"(POST /admin/referentiels/pays/{code_pays.upper()}/pousser). "
+                "Rien n'est envoye : un telco ou une ville sans pays serait "
+                "un orphelin dans le referentiel PARTAGE."
+            ),
+        }
+    return await _envoyer_config_service(
+        action, cible, lambda: operation(identifiant), par=par
+    )
 
 
 async def _envoyer_config_service(
@@ -237,13 +296,11 @@ async def ajouter_ville(
     # pour eux (son `region` est la region CONTINENTALE).
     admin = _config_admin()
     try:
-        pays_cible = ville.country_iso2
+        async def _envoi(country_id: str) -> Any:
+            return await admin.ajouter_ville(country_id, ville.name)
 
-        async def _envoi() -> Any:
-            return await admin.ajouter_ville(await _country_id(pays_cible), ville.name)
-
-        envoi = await _envoyer_config_service(
-            "ajouter_ville", ville.name, _envoi, par=session.email
+        envoi = await _aller_si_en_operation(
+            ville.country_iso2, "ajouter_ville", ville.name, _envoi, par=session.email
         )
     finally:
         await admin.fermer()
@@ -288,7 +345,13 @@ async def telcos(
     surcouche, _meta = await SurcoucheRepository().charger()
     referentiel = surcouche.appliquer(_geo())
     par_pays: dict[str, list[dict[str, Any]]] = {}
-    for pays in sorted({r.country_iso2 for r in referentiel.regions.values()}):
+    # Les pays SANS region mais AVEC operateurs etaient invisibles ici (bug du
+    # 23/08, meme famille que celui corrige sur /geographie le 22/08) : un
+    # telco ajoute a un pays neuf disparaissait de l'ecran qui vient de le
+    # creer. L'union des deux sources, jamais une seule.
+    codes = {r.country_iso2 for r in referentiel.regions.values()}
+    codes |= {t.country_iso2 for t in referentiel.telcos.values()}
+    for pays in sorted(codes):
         par_pays[pays] = [
             {
                 "nom": t.network_name,
@@ -354,17 +417,19 @@ async def ajouter_telco(
     admin = _config_admin()
     try:
 
-        async def _envoi() -> Any:
+        async def _envoi(country_id: str) -> Any:
             fiche_telco, _creee = await admin.creer_telco_si_absent(
                 telco.network_name, telco.regex_msisdn
             )
             identifiant = fiche_telco.get("_id") or fiche_telco.get("id")
-            return await admin.rattacher_telco_au_pays(
-                await _country_id(telco.country_iso2), str(identifiant)
-            )
+            return await admin.rattacher_telco_au_pays(country_id, str(identifiant))
 
-        envoi = await _envoyer_config_service(
-            "ajouter_telco", telco.network_name, _envoi, par=session.email
+        envoi = await _aller_si_en_operation(
+            telco.country_iso2,
+            "ajouter_telco",
+            telco.network_name,
+            _envoi,
+            par=session.email,
         )
     finally:
         await admin.fermer()

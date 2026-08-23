@@ -419,7 +419,7 @@ async def _exiger_pays_operationnel(pays: str, referentiel: Any) -> None:
       2. le pays est EN OPERATION (present sur config-service) ;
       3. la matiere de composition existe : patronymes, telco, villes.
     """
-    from app.routes.admin_referentiels import _country_id
+    from app.routes.admin_referentiels import _identifiant_pays_ou_none
     from app.services.generateur import PATRONYMES_PAR_PAYS
 
     code = pays.strip().upper()
@@ -432,23 +432,23 @@ async def _exiger_pays_operationnel(pays: str, referentiel: Any) -> None:
             ),
         )
     manques: list[str] = []
-    try:
-        await _country_id(code)
-    except ValueError:
+    identifiant, joignable = await _identifiant_pays_ou_none(code)
+    if not joignable:
+        # config-service muet : on ne cree pas une company a l'aveugle — le
+        # zero-trust vaut aussi pour l'indisponibilite. L'absence et le
+        # silence restent DEUX faits distincts (I-CFG-SYNC).
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "config-service injoignable — impossible de verifier que "
+                f"{code} est en operation"
+            ),
+        )
+    if identifiant is None:
         manques.append(
             "pas EN OPERATION sur la plateforme — le pousser d'abord "
             f"(POST /admin/referentiels/pays/{code}/pousser)"
         )
-    except Exception as erreur:
-        # config-service muet : on ne cree pas une company a l'aveugle — le
-        # zero-trust vaut aussi pour l'indisponibilite.
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"config-service injoignable — impossible de verifier que "
-                f"{code} est en operation ({type(erreur).__name__})"
-            ),
-        ) from erreur
     if code not in PATRONYMES_PAR_PAYS:
         manques.append("aucun patronyme pour composer un dirigeant (matiere generateur)")
     if not referentiel.telcos_du_pays(code):

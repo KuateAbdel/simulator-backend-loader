@@ -3842,6 +3842,166 @@ class TestEtatsLaBas:
         assert "mesure 09/08" in reponse.json()["detail"]
 
 
+class TestICFGSyncLaMatiereSuitLOperation:
+    """`I-CFG-SYNC` (23/08, Yaniv) — la coherence des deux cotes.
+
+    Regle : la matiere s'ecrit TOUJOURS chez nous ; elle ne part la-bas que
+    si le pays est EN OPERATION. Sinon elle attend le `pousser`, qui l'envoie
+    ENTIERE. Un pays hors operation ne doit JAMAIS faire naitre un telco, une
+    ville ou une devise sur le referentiel PARTAGE.
+    """
+
+    TELCO_ET: ClassVar[dict[str, Any]] = {
+        "pays": "ET", "network_name": "Ethio Telecom", "short_name": "ETHIO",
+        "regex_msisdn": r"^251(9\d{8})$", "part_marche": 90.0,
+        "exemple_msisdn": "251911234567",
+    }
+
+    @staticmethod
+    def _doubler(monkeypatch: pytest.MonkeyPatch, *, muet: bool = False):  # type: ignore[no-untyped-def]
+        from app.routes import admin_referentiels
+
+        traces: dict[str, Any] = {"telcos_crees": [], "rattaches": [], "villes": []}
+
+        class _Lecture:
+            async def lister_pays(self):  # type: ignore[no-untyped-def]
+                if muet:
+                    raise ConnectionError("config-service injoignable")
+                return [{"_id": "cfg-CM", "iso_name": "CM"}]  # ET n'y est PAS
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        class _Admin:
+            async def creer_telco_si_absent(self, nom, regex):  # type: ignore[no-untyped-def]
+                traces["telcos_crees"].append(nom)
+                return {"_id": f"tl-{nom}", "name": nom}, True
+
+            async def rattacher_telco_au_pays(self, cid, tid):  # type: ignore[no-untyped-def]
+                traces["rattaches"].append((cid, tid))
+                return {}
+
+            async def ajouter_ville(self, cid, nom):  # type: ignore[no-untyped-def]
+                traces["villes"].append((cid, nom))
+                return {}
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_referentiels, "_config_lecture", lambda: _Lecture())
+        monkeypatch.setattr(admin_referentiels, "_config_admin", lambda: _Admin())
+        return traces
+
+    async def _fiche_ethiopie(self, client: httpx.AsyncClient) -> dict[str, str]:
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="ET", nom_fr="Éthiopie", nom_en="Ethiopia", capitale="Addis-Abeba",
+            dial_code="251", devise_iso="ETB", tva_percent=15.0,
+            devise_nom="Ethiopian Birr", devise_decimales=2, banque_centrale="NBE",
+        )
+        return entetes
+
+    async def test_un_telco_sur_un_pays_HORS_operation_ne_part_PAS(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """LE bug du 23/08 : `creer_telco_si_absent` partait AVANT la
+        resolution du pays — l'operateur naissait la-bas puis le rattachement
+        echouait. Un orphelin de plus dans le referentiel PARTAGE, qu'aucun
+        DELETE ne permet de retirer."""
+        traces = self._doubler(monkeypatch)
+        entetes = await self._fiche_ethiopie(client)
+        reponse = await client.post(
+            "/admin/referentiels/telcos", json=self.TELCO_ET, headers=entetes
+        )
+        assert reponse.status_code == 201, reponse.text
+        assert traces["telcos_crees"] == [], (
+            "AUCUN telco ne doit naitre la-bas pour un pays absent"
+        )
+        assert traces["rattaches"] == []
+        envoi = reponse.json()["config_service"]
+        assert envoi["statut"] == "differe", envoi
+        assert "pousser" in envoi["raison"], "le geste qui la fera partir est dit"
+
+    async def test_le_telco_reste_ECRIT_chez_nous_malgre_le_differe(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Le Loader est le System of Record : le differe ne perd RIEN."""
+        self._doubler(monkeypatch)
+        entetes = await self._fiche_ethiopie(client)
+        await client.post(
+            "/admin/referentiels/telcos", json=self.TELCO_ET, headers=entetes
+        )
+        vue = await client.get("/admin/referentiels/telcos", headers=entetes)
+        noms = [t["nom"] for t in vue.json()["telcos"].get("ET", [])]
+        assert "Ethio Telecom" in noms, vue.json()["telcos"].get("ET")
+
+    async def test_un_telco_sur_un_pays_EN_operation_part_IMMEDIATEMENT(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """L'autre moitie de la regle : synchrone sans geste supplementaire."""
+        traces = self._doubler(monkeypatch)
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        reponse = await client.post(
+            "/admin/referentiels/telcos",
+            json={"pays": "CM", "network_name": "Nexttel CM", "short_name": "NXT",
+                  "regex_msisdn": r"^237(66\d{7})$", "part_marche": 6.0,
+                  "exemple_msisdn": "237661234567"},
+            headers=entetes,
+        )
+        assert reponse.status_code == 201, reponse.text
+        assert reponse.json()["config_service"]["statut"] == "envoye"
+        assert traces["telcos_crees"] == ["Nexttel CM"]
+        assert traces["rattaches"] == [("cfg-CM", "tl-Nexttel CM")], (
+            "cree PUIS rattache — les deux gestes vont ensemble (US-B7)"
+        )
+
+    async def test_une_ville_sur_un_pays_HORS_operation_est_DIFFEREE_pas_en_echec(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Avant : la reponse disait « echec » pour un comportement NORMAL —
+        un mot faux qui affole l'ecran et pousse a re-tenter pour rien."""
+        traces = self._doubler(monkeypatch)
+        entetes = await self._fiche_ethiopie(client)
+        region = await client.post(
+            "/admin/referentiels/regions",
+            json={"pays": "ET", "nom": "Oromia", "capitale": "Adama"},
+            headers=entetes,
+        )
+        assert region.status_code == 201, region.text
+        reponse = await client.post(
+            "/admin/referentiels/villes",
+            json={"region_id": region.json()["region"]["id"], "nom": "Adama",
+                  "latitude": 8.54, "longitude": 39.27, "population": 400000,
+                  "poids_economique": 1.0},
+            headers=entetes,
+        )
+        assert reponse.status_code == 201, reponse.text
+        assert reponse.json()["config_service"]["statut"] == "differe"
+        assert traces["villes"] == [], "rien ne part pour un pays absent"
+
+    async def test_une_plateforme_MUETTE_ne_conclut_a_rien(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Zero-trust : l'ABSENCE et le SILENCE sont deux faits differents.
+        Dire « pas en operation » a cause d'un incident reseau serait une
+        conclusion inventee."""
+        traces = self._doubler(monkeypatch, muet=True)
+        entetes = await self._fiche_ethiopie(client)
+        reponse = await client.post(
+            "/admin/referentiels/telcos", json=self.TELCO_ET, headers=entetes
+        )
+        assert reponse.status_code == 201, reponse.text
+        envoi = reponse.json()["config_service"]
+        assert envoi["statut"] == "indetermine", envoi
+        assert traces["telcos_crees"] == []
+
+
 class TestPaysConfigRelecture:
     """23/08 — la RELECTURE de l'aller `US-B6`. Campagne QA sur la prod : on
     pouvait POUSSER un pays sans jamais pouvoir RELIRE ce qui avait atterri
