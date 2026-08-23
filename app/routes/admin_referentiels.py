@@ -20,7 +20,8 @@ le premier appel paie la lecture, les suivants servent la memoire.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
@@ -65,6 +66,28 @@ def _config_lecture() -> Any:
     from app.clients.config_service import ConfigServiceClient
 
     return ConfigServiceClient()
+
+
+@asynccontextmanager
+async def _verrou(cle: str, par: str) -> AsyncIterator[None]:
+    """`C2` — un geste a la fois par ressource, refus IMMEDIAT sinon (409).
+
+    Le `GET`-avant-`POST` qui tient l'unicite n'est sur que sequentiellement :
+    deux appels simultanes sur le meme pays lisent tous les deux « absent »
+    et creent tous les deux. Le doublon serait DEFINITIF (aucun DELETE
+    cote plateforme).
+    """
+    from app.repositories.verrous import RessourceVerrouillee, VerrouRepository
+
+    depot = VerrouRepository()
+    try:
+        await depot.prendre(cle, par=par)
+    except RessourceVerrouillee as occupe:
+        raise HTTPException(status_code=409, detail=str(occupe)) from occupe
+    try:
+        yield
+    finally:
+        await depot.rendre(cle)
 
 
 def _relayer(erreur: Exception) -> HTTPException:
@@ -326,9 +349,14 @@ async def ajouter_ville(
         async def _envoi(country_id: str) -> Any:
             return await admin.ajouter_ville(country_id, ville.name)
 
-        envoi = await _aller_si_en_operation(
-            ville.country_iso2, "ajouter_ville", ville.name, _envoi, par=session.email
-        )
+        # C2 : la cle est le PAYS, pas la ville — l'ecriture est un PUT qui
+        # reecrit `cities[]` ENTIER. Deux ajouts simultanes de deux villes
+        # differentes se liraient l'un l'autre avant modification : le second
+        # PUT effacerait la ville du premier.
+        async with _verrou(f"pousser:{ville.country_iso2}", session.email):
+            envoi = await _aller_si_en_operation(
+                ville.country_iso2, "ajouter_ville", ville.name, _envoi, par=session.email
+            )
     finally:
         await admin.fermer()
 
@@ -418,6 +446,8 @@ async def ajouter_telco(
     pays, et la SOMME des parts <= 100 (INV-18 etendu a l'ecriture). Verrou
     EF-55, relecture depuis la base — le rite habituel.
     """
+    from app.clients.config_service import cle_comparaison
+
     await refuser_si_run_en_cours()
 
     depot = SurcoucheRepository()
@@ -451,13 +481,17 @@ async def ajouter_telco(
             identifiant = fiche_telco.get("_id") or fiche_telco.get("id")
             return await admin.rattacher_telco_au_pays(country_id, str(identifiant))
 
-        envoi = await _aller_si_en_operation(
-            telco.country_iso2,
-            "ajouter_telco",
-            telco.network_name,
-            _envoi,
-            par=session.email,
-        )
+        # C2 : la cle est le NOM de l'operateur — c'est lui qui porte
+        # l'unicite la-bas, et deux ajouts simultanes du meme nom (double-clic)
+        # creeraient deux telcos indistinguables et ineffacables.
+        async with _verrou(f"telco:{cle_comparaison(telco.network_name)}", session.email):
+            envoi = await _aller_si_en_operation(
+                telco.country_iso2,
+                "ajouter_telco",
+                telco.network_name,
+                _envoi,
+                par=session.email,
+            )
     finally:
         await admin.fermer()
 
@@ -999,144 +1033,148 @@ async def pousser_pays_en_operation(
 
     echecs: list[str] = []
     admin = _config_admin()
-    try:
-        audit = AuditTrailRepository()
-        entite = uuid5(NAMESPACE_OID, f"finzuu-pays:{code}")
-        async with audit.intention(
-            RUN_ADMIN,
-            entity_type="Country",
-            entity_id=entite,
-            operation="CREATE",
-            cible="config-service POST /countries/create",
-            payload={"iso_name": code, "depuis": "fiche Loader", "par": session.email},
-        ) as suivi:
-            # Ce qui a DEJA ete cree la-bas quand un echec survient plus
-            # loin : mesure du 23/08 — `AOA` et `GNF` trainaient sur
-            # config-service sans aucun pays, nees d'un aller interrompu et
-            # jamais dites. Un residu tu est un residu qu'on ne nettoie pas.
-            residus: list[str] = []
-            try:
-                # 1. LA DEVISE — d'abord, le pays la reference par UUID
-                devise_id = await admin.resoudre_devise(fiche.devise_iso)
-                devise_statut = "deja_en_operation"
-                if devise_id is None:
-                    fiche_dev, cree_devise = await admin.creer_devise_si_absent(
+    # C2 : un seul aller a la fois sur CE pays. Deux appels simultanes
+    # creeraient chacun leur exemplaire — la plateforme n'a aucun index
+    # unique (RC-183) et aucun DELETE.
+    async with _verrou(f"pousser:{code}", session.email):
+        try:
+            audit = AuditTrailRepository()
+            entite = uuid5(NAMESPACE_OID, f"finzuu-pays:{code}")
+            async with audit.intention(
+                RUN_ADMIN,
+                entity_type="Country",
+                entity_id=entite,
+                operation="CREATE",
+                cible="config-service POST /countries/create",
+                payload={"iso_name": code, "depuis": "fiche Loader", "par": session.email},
+            ) as suivi:
+                # Ce qui a DEJA ete cree la-bas quand un echec survient plus
+                # loin : mesure du 23/08 — `AOA` et `GNF` trainaient sur
+                # config-service sans aucun pays, nees d'un aller interrompu et
+                # jamais dites. Un residu tu est un residu qu'on ne nettoie pas.
+                residus: list[str] = []
+                try:
+                    # 1. LA DEVISE — d'abord, le pays la reference par UUID
+                    devise_id = await admin.resoudre_devise(fiche.devise_iso)
+                    devise_statut = "deja_en_operation"
+                    if devise_id is None:
+                        fiche_dev, cree_devise = await admin.creer_devise_si_absent(
+                            {
+                                "name_en": fiche_devise.nom if fiche_devise else fiche.devise_iso,
+                                "name_fr": fiche_devise.nom if fiche_devise else fiche.devise_iso,
+                                "iso_name": fiche.devise_iso,
+                                "accepts_decimal": bool(
+                                    fiche_devise and fiche_devise.decimales > 0
+                                ),
+                            }
+                        )
+                        devise_id = str(fiche_dev.get("id") or fiche_dev.get("_id") or "")
+                        devise_statut = "mise_en_operation" if cree_devise else "deja_en_operation"
+                        if cree_devise:
+                            residus.append(f"devise {fiche.devise_iso}")
+
+                    # 2. LES TELCOS — AVANT le pays (l'ordre du contrat,
+                    #    rappele par Yaniv) : le payload de creation du pays les
+                    #    reference par UUID, comme la devise. Crees si absents
+                    #    (motif ancre + compile, RC-184), ids collectes.
+                    telcos_statuts = []
+                    telco_ids: list[str] = []
+                    for telco in telcos_locaux:
+                        fiche_telco, telco_cree = await admin.creer_telco_si_absent(
+                            telco.network_name, telco.regex_msisdn
+                        )
+                        telco_id = str(fiche_telco.get("id") or fiche_telco.get("_id") or "")
+                        if telco_id:
+                            telco_ids.append(telco_id)
+                        if telco_cree:
+                            residus.append(f"telco {telco.network_name!r}")
+                        telcos_statuts.append(
+                            {
+                                "nom": telco.network_name,
+                                "statut": "mis_en_operation" if telco_cree else "deja_en_operation",
+                                "rattache": bool(telco_id),
+                            }
+                        )
+
+                    # 3. LE PAYS — TOUS les champs du contrat (les 9), devise et
+                    #    telcos references par UUID ; present -> adopte
+                    fiche_pays, cree = await admin.creer_pays_si_absent(
                         {
-                            "name_en": fiche_devise.nom if fiche_devise else fiche.devise_iso,
-                            "name_fr": fiche_devise.nom if fiche_devise else fiche.devise_iso,
-                            "iso_name": fiche.devise_iso,
-                            "accepts_decimal": bool(
-                                fiche_devise and fiche_devise.decimales > 0
-                            ),
+                            "name_en": fiche.nom_en,
+                            "name_fr": fiche.nom_fr,
+                            "iso_name": code,
+                            "dial_code": fiche.dial_code,
+                            "region": fiche.region_africa or "Africa",
+                            "continent": "Africa",
+                            "cities": villes,
+                            "currencies": [devise_id] if devise_id else [],
+                            "telcos": telco_ids,
                         }
                     )
-                    devise_id = str(fiche_dev.get("id") or fiche_dev.get("_id") or "")
-                    devise_statut = "mise_en_operation" if cree_devise else "deja_en_operation"
-                    if cree_devise:
-                        residus.append(f"devise {fiche.devise_iso}")
+                except ErreurService as exc:
+                    # Le REFUS COMPLET voyage (21/08, pays GN) — jamais un 502 muet.
+                    suivi.echoue(f"HTTP {exc.status} : {exc.detail[:600]}")
+                    reste = (
+                        " ATTENTION, l'aller s'est arrete en chemin : "
+                        f"{', '.join(residus)} ont ete crees la-bas et restent "
+                        f"SANS pays. Re-pousser {code} les reutilisera (aucun "
+                        "doublon) ; abandonner laisse un residu dans le "
+                        "referentiel PARTAGE."
+                        if residus
+                        else ""
+                    )
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            f"config-service a refuse : HTTP {exc.status} — "
+                            f"{exc.detail[:600]}.{reste}"
+                        ),
+                    ) from exc
+                identifiant = str(fiche_pays.get("id") or fiche_pays.get("_id") or "")
+                suivi.reussi({"country_id": identifiant, "cree": cree})
 
-                # 2. LES TELCOS — AVANT le pays (l'ordre du contrat,
-                #    rappele par Yaniv) : le payload de creation du pays les
-                #    reference par UUID, comme la devise. Crees si absents
-                #    (motif ancre + compile, RC-184), ids collectes.
-                telcos_statuts = []
-                telco_ids: list[str] = []
-                for telco in telcos_locaux:
-                    fiche_telco, telco_cree = await admin.creer_telco_si_absent(
-                        telco.network_name, telco.regex_msisdn
-                    )
-                    telco_id = str(fiche_telco.get("id") or fiche_telco.get("_id") or "")
-                    if telco_id:
-                        telco_ids.append(telco_id)
-                    if telco_cree:
-                        residus.append(f"telco {telco.network_name!r}")
-                    telcos_statuts.append(
-                        {
-                            "nom": telco.network_name,
-                            "statut": "mis_en_operation" if telco_cree else "deja_en_operation",
-                            "rattache": bool(telco_id),
-                        }
-                    )
+            # 4. LES VILLES MANQUANTES — cas adoption : completer, jamais doubler.
+            villes_completees = 0
+            if not cree and identifiant:
+                # Comparaison NORMALISEE (C1, 23/08) : « Yaounde » et « Yaoundé »
+                # sont la meme ville. Une comparaison exacte aurait rajoute un
+                # doublon a CHAQUE re-poussee, sans jamais pouvoir le retirer.
+                deja_labas = {
+                    cle_comparaison(str(v)) for v in (fiche_pays.get("cities") or [])
+                }
+                manquantes = [
+                    nom for nom in villes if cle_comparaison(nom) not in deja_labas
+                ]
+                if manquantes:
+                    try:
+                        # UN aller-retour pour toutes (C3) : la Cote d'Ivoire
+                        # passait par 338 appels et depassait 60 s.
+                        _fiche, ajoutees = await admin.ajouter_villes(
+                            identifiant, manquantes
+                        )
+                        villes_completees = len(ajoutees)
+                    except Exception as erreur:  # tout ou rien — et DIT
+                        echecs.append(
+                            f"{len(manquantes)} ville(s) non envoyee(s) : "
+                            f"{type(erreur).__name__}: {str(erreur)[:120]} — "
+                            "re-pousser reprend exactement la ou on s'est arrete"
+                        )
 
-                # 3. LE PAYS — TOUS les champs du contrat (les 9), devise et
-                #    telcos references par UUID ; present -> adopte
-                fiche_pays, cree = await admin.creer_pays_si_absent(
-                    {
-                        "name_en": fiche.nom_en,
-                        "name_fr": fiche.nom_fr,
-                        "iso_name": code,
-                        "dial_code": fiche.dial_code,
-                        "region": fiche.region_africa or "Africa",
-                        "continent": "Africa",
-                        "cities": villes,
-                        "currencies": [devise_id] if devise_id else [],
-                        "telcos": telco_ids,
-                    }
-                )
-            except ErreurService as exc:
-                # Le REFUS COMPLET voyage (21/08, pays GN) — jamais un 502 muet.
-                suivi.echoue(f"HTTP {exc.status} : {exc.detail[:600]}")
-                reste = (
-                    " ATTENTION, l'aller s'est arrete en chemin : "
-                    f"{', '.join(residus)} ont ete crees la-bas et restent "
-                    f"SANS pays. Re-pousser {code} les reutilisera (aucun "
-                    "doublon) ; abandonner laisse un residu dans le "
-                    "referentiel PARTAGE."
-                    if residus
-                    else ""
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"config-service a refuse : HTTP {exc.status} — "
-                        f"{exc.detail[:600]}.{reste}"
-                    ),
-                ) from exc
-            identifiant = str(fiche_pays.get("id") or fiche_pays.get("_id") or "")
-            suivi.reussi({"country_id": identifiant, "cree": cree})
-
-        # 4. LES VILLES MANQUANTES — cas adoption : completer, jamais doubler.
-        villes_completees = 0
-        if not cree and identifiant:
-            # Comparaison NORMALISEE (C1, 23/08) : « Yaounde » et « Yaoundé »
-            # sont la meme ville. Une comparaison exacte aurait rajoute un
-            # doublon a CHAQUE re-poussee, sans jamais pouvoir le retirer.
-            deja_labas = {
-                cle_comparaison(str(v)) for v in (fiche_pays.get("cities") or [])
-            }
-            manquantes = [
-                nom for nom in villes if cle_comparaison(nom) not in deja_labas
-            ]
-            if manquantes:
-                try:
-                    # UN aller-retour pour toutes (C3) : la Cote d'Ivoire
-                    # passait par 338 appels et depassait 60 s.
-                    _fiche, ajoutees = await admin.ajouter_villes(
-                        identifiant, manquantes
-                    )
-                    villes_completees = len(ajoutees)
-                except Exception as erreur:  # tout ou rien — et DIT
-                    echecs.append(
-                        f"{len(manquantes)} ville(s) non envoyee(s) : "
-                        f"{type(erreur).__name__}: {str(erreur)[:120]} — "
-                        "re-pousser reprend exactement la ou on s'est arrete"
-                    )
-
-        # 5. Cas ADOPTION : les telcos deja crees (etape 2) sont RATTACHES au
-        #    pays existant — « un telco cree mais non rattache n'appartient a
-        #    aucun pays » (US-B7). A la creation, le payload les portait deja.
-        if not cree and identifiant:
-            for statut_telco, telco_id in zip(telcos_statuts, telco_ids, strict=False):
-                try:
-                    await admin.rattacher_telco_au_pays(identifiant, telco_id)
-                except Exception as erreur:  # echec PARTIEL, dit — jamais muet
-                    statut_telco["rattache"] = False
-                    echecs.append(
-                        f"telco {statut_telco['nom']} : "
-                        f"{type(erreur).__name__}: {str(erreur)[:120]}"
-                    )
-    finally:
-        await admin.fermer()
+            # 5. Cas ADOPTION : les telcos deja crees (etape 2) sont RATTACHES au
+            #    pays existant — « un telco cree mais non rattache n'appartient a
+            #    aucun pays » (US-B7). A la creation, le payload les portait deja.
+            if not cree and identifiant:
+                for statut_telco, telco_id in zip(telcos_statuts, telco_ids, strict=False):
+                    try:
+                        await admin.rattacher_telco_au_pays(identifiant, telco_id)
+                    except Exception as erreur:  # echec PARTIEL, dit — jamais muet
+                        statut_telco["rattache"] = False
+                        echecs.append(
+                            f"telco {statut_telco['nom']} : "
+                            f"{type(erreur).__name__}: {str(erreur)[:120]}"
+                        )
+        finally:
+            await admin.fermer()
 
     # AVERTISSEMENTS de credibilite — NON bloquants, toujours DITS (calibrage
     # 22/08) : un seul operateur ou des parts sommant sous 50 % operent, mais
@@ -1230,183 +1268,186 @@ async def rectifier_pays_en_operation(
             detail=f"pays {code!r} inconnu du Loader — rien a rectifier depuis quoi.",
         )
 
-    lecture = _config_lecture()
-    admin = _config_admin()
-    try:
-        distants = await lecture.lister_pays()
-        distant = next(
-            (d for d in distants if str(d.get("iso_name", "")).strip().upper() == code),
-            None,
-        )
-        if distant is None:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"{code} n'est PAS en operation — il n'y a rien a rectifier "
-                    f"la-bas. C'est un POST /pays/{code}/pousser qu'il faut."
-                ),
+    # C2 : la rectification et l'aller se disputent LA MEME ressource —
+    # meme cle de verrou, donc jamais les deux a la fois sur un pays.
+    async with _verrou(f"pousser:{code}", session.email):
+        lecture = _config_lecture()
+        admin = _config_admin()
+        try:
+            distants = await lecture.lister_pays()
+            distant = next(
+                (d for d in distants if str(d.get("iso_name", "")).strip().upper() == code),
+                None,
             )
-        identifiant = str(distant.get("_id") or distant.get("id") or "")
-
-        # --- 1. LA DEVISE (l'ordre du pousser) ---------------------------
-        # L'APERCU NE CREE RIEN. Defaut attrape sur la prod le 23/08 : cette
-        # etape creait la devise `CVE` AVANT le test de `confirmer` — un
-        # apercu qui ecrit n'est pas un apercu. On RESOUT (lecture) toujours,
-        # on CREE seulement sur confirmation.
-        devise_id = await admin.resoudre_devise(fiche.devise_iso)
-        fiche_devise = referentiel.devises.get(fiche.devise_iso)
-        devise_creee = False
-        devise_a_creer = devise_id is None
-        if devise_a_creer and demande.confirmer:
-            fiche_dev, devise_creee = await admin.creer_devise_si_absent(
-                {
-                    "name_en": fiche_devise.nom if fiche_devise else fiche.devise_iso,
-                    "name_fr": fiche_devise.nom if fiche_devise else fiche.devise_iso,
-                    "iso_name": fiche.devise_iso,
-                    "accepts_decimal": bool(fiche_devise and fiche_devise.decimales > 0),
-                }
-            )
-            devise_id = str(fiche_dev.get("id") or fiche_dev.get("_id") or "")
-
-        # --- 2. LES TELCOS — meme regle : reconnaitre, puis creer SI confirme
-        deja_la_bas = {
-            cle_comparaison(str(t.get("network_name") or t.get("name") or "")): str(
-                t.get("_id") or t.get("id") or ""
-            )
-            for t in await lecture.lister_telcos()
-        }
-        telco_ids: list[str] = []
-        telcos_a_creer: list[str] = []
-        for telco in referentiel.telcos_du_pays(code):
-            connu = deja_la_bas.get(cle_comparaison(telco.network_name))
-            if connu:
-                telco_ids.append(connu)
-                continue
-            if not demande.confirmer:
-                telcos_a_creer.append(telco.network_name)
-                continue
-            fiche_telco, _cree = await admin.creer_telco_si_absent(
-                telco.network_name, telco.regex_msisdn
-            )
-            telco_id = str(fiche_telco.get("id") or fiche_telco.get("_id") or "")
-            if telco_id:
-                telco_ids.append(telco_id)
-        # FUSION : ce qui est deja rattache la-bas et qu'on ne connait pas
-        # RESTE rattache — un PUT n'est pas une occasion de faire le menage
-        # chez les autres.
-        for existant in _references(distant.get("telcos")):
-            if existant not in telco_ids:
-                telco_ids.append(existant)
-
-        # --- 3. LES VILLES : union normalisee ------------------------------
-        nos_villes = sorted(
-            v.name for v in referentiel.villes.values() if v.country_iso2 == code
-        ) or ([fiche.capitale] if fiche.capitale.strip() else [])
-        villes_labas = [str(v).strip() for v in (distant.get("cities") or []) if str(v).strip()]
-        fusion_villes = list(villes_labas)
-        connues = {cle_comparaison(v) for v in villes_labas}
-        for nom in nos_villes:
-            if cle_comparaison(nom) not in connues:
-                connues.add(cle_comparaison(nom))
-                fusion_villes.append(nom)
-
-        cible = {
-            "name_en": fiche.nom_en,
-            "name_fr": fiche.nom_fr,
-            "iso_name": code,
-            "dial_code": fiche.dial_code,
-            "region": fiche.region_africa or "Africa",
-            "continent": "Africa",
-            "cities": fusion_villes,
-            "currencies": [devise_id],
-            "telcos": telco_ids,
-        }
-
-        # --- L'ECART, champ par champ -------------------------------------
-        ecart: dict[str, Any] = {}
-        for champ in ("name_en", "name_fr", "dial_code", "region", "continent"):
-            avant = str(distant.get(champ) or "")
-            if avant != str(cible[champ]):
-                ecart[champ] = {"avant": avant, "apres": cible[champ]}
-        devises_avant = _references(distant.get("currencies"))
-        if devises_avant != ([devise_id] if devise_id else []):
-            ecart["devise"] = {
-                "avant": devises_avant,
-                "apres": [devise_id] if devise_id else [],
-                "iso_attendu": fiche.devise_iso,
-                "a_creer_la_bas": devise_a_creer,
-            }
-        if telcos_a_creer:
-            ecart["telcos_a_creer"] = telcos_a_creer
-        if len(fusion_villes) != len(villes_labas):
-            ecart["villes"] = {
-                "avant": len(villes_labas),
-                "apres": len(fusion_villes),
-                "ajoutees": len(fusion_villes) - len(villes_labas),
-            }
-        telcos_avant = _references(distant.get("telcos"))
-        if sorted(telcos_avant) != sorted(telco_ids):
-            ecart["telcos"] = {"avant": len(telcos_avant), "apres": len(telco_ids)}
-
-        if not demande.confirmer:
-            return {
-                "pays": code,
-                "statut": "apercu",
-                "ecart": ecart,
-                "rien_a_rectifier": not ecart,
-                "note": (
-                    "AUCUNE ecriture — ni le pays, ni la devise, ni les "
-                    "telcos : l'apercu LIT, il ne prepare rien la-bas. "
-                    "Relancer avec `confirmer: true` pour appliquer. Le "
-                    "referentiel est PARTAGE : la reecriture complete (le "
-                    "serveur n'a que des PUT) se confirme."
-                ),
-            }
-        if not ecart:
-            return {
-                "pays": code,
-                "statut": "deja_conforme",
-                "ecart": {},
-                "note": "la fiche la-bas est deja celle du Loader — rien n'a ete envoye",
-            }
-
-        audit = AuditTrailRepository()
-        async with audit.intention(
-            RUN_ADMIN,
-            entity_type="Country",
-            entity_id=uuid5(NAMESPACE_OID, f"finzuu-pays:{code}"),
-            operation="UPDATE",
-            cible="config-service PUT /countries/{id}",
-            payload={
-                "iso_name": code,
-                "ecart": ecart,
-                "motif": demande.motif,
-                "par": session.email,
-            },
-        ) as suivi:
-            try:
-                await admin.remplacer_pays(identifiant, cible)
-            except ErreurService as exc:
-                suivi.echoue(f"HTTP {exc.status} : {exc.detail[:600]}")
+            if distant is None:
                 raise HTTPException(
-                    status_code=502,
-                    detail=f"config-service a refuse : HTTP {exc.status} — {exc.detail[:600]}",
-                ) from exc
-            suivi.reussi({"country_id": identifiant, "champs": sorted(ecart)})
+                    status_code=422,
+                    detail=(
+                        f"{code} n'est PAS en operation — il n'y a rien a rectifier "
+                        f"la-bas. C'est un POST /pays/{code}/pousser qu'il faut."
+                    ),
+                )
+            identifiant = str(distant.get("_id") or distant.get("id") or "")
 
-        # RELECTURE — l'etat d'APRES, mesure et non suppose.
-        relus = await lecture.lister_pays()
-        relu: dict[str, Any] = next(
-            (d for d in relus if str(d.get("iso_name", "")).strip().upper() == code),
-            {},
-        )
-    except HTTPException:
-        raise  # nos refus pedagogiques passent intacts
-    except Exception as erreur:  # la panne de la PLATEFORME est DITE, pas 500
-        raise _relayer(erreur) from erreur
-    finally:
-        await lecture.fermer()
-        await admin.fermer()
+            # --- 1. LA DEVISE (l'ordre du pousser) ---------------------------
+            # L'APERCU NE CREE RIEN. Defaut attrape sur la prod le 23/08 : cette
+            # etape creait la devise `CVE` AVANT le test de `confirmer` — un
+            # apercu qui ecrit n'est pas un apercu. On RESOUT (lecture) toujours,
+            # on CREE seulement sur confirmation.
+            devise_id = await admin.resoudre_devise(fiche.devise_iso)
+            fiche_devise = referentiel.devises.get(fiche.devise_iso)
+            devise_creee = False
+            devise_a_creer = devise_id is None
+            if devise_a_creer and demande.confirmer:
+                fiche_dev, devise_creee = await admin.creer_devise_si_absent(
+                    {
+                        "name_en": fiche_devise.nom if fiche_devise else fiche.devise_iso,
+                        "name_fr": fiche_devise.nom if fiche_devise else fiche.devise_iso,
+                        "iso_name": fiche.devise_iso,
+                        "accepts_decimal": bool(fiche_devise and fiche_devise.decimales > 0),
+                    }
+                )
+                devise_id = str(fiche_dev.get("id") or fiche_dev.get("_id") or "")
+
+            # --- 2. LES TELCOS — meme regle : reconnaitre, puis creer SI confirme
+            deja_la_bas = {
+                cle_comparaison(str(t.get("network_name") or t.get("name") or "")): str(
+                    t.get("_id") or t.get("id") or ""
+                )
+                for t in await lecture.lister_telcos()
+            }
+            telco_ids: list[str] = []
+            telcos_a_creer: list[str] = []
+            for telco in referentiel.telcos_du_pays(code):
+                connu = deja_la_bas.get(cle_comparaison(telco.network_name))
+                if connu:
+                    telco_ids.append(connu)
+                    continue
+                if not demande.confirmer:
+                    telcos_a_creer.append(telco.network_name)
+                    continue
+                fiche_telco, _cree = await admin.creer_telco_si_absent(
+                    telco.network_name, telco.regex_msisdn
+                )
+                telco_id = str(fiche_telco.get("id") or fiche_telco.get("_id") or "")
+                if telco_id:
+                    telco_ids.append(telco_id)
+            # FUSION : ce qui est deja rattache la-bas et qu'on ne connait pas
+            # RESTE rattache — un PUT n'est pas une occasion de faire le menage
+            # chez les autres.
+            for existant in _references(distant.get("telcos")):
+                if existant not in telco_ids:
+                    telco_ids.append(existant)
+
+            # --- 3. LES VILLES : union normalisee ------------------------------
+            nos_villes = sorted(
+                v.name for v in referentiel.villes.values() if v.country_iso2 == code
+            ) or ([fiche.capitale] if fiche.capitale.strip() else [])
+            villes_labas = [str(v).strip() for v in (distant.get("cities") or []) if str(v).strip()]
+            fusion_villes = list(villes_labas)
+            connues = {cle_comparaison(v) for v in villes_labas}
+            for nom in nos_villes:
+                if cle_comparaison(nom) not in connues:
+                    connues.add(cle_comparaison(nom))
+                    fusion_villes.append(nom)
+
+            cible = {
+                "name_en": fiche.nom_en,
+                "name_fr": fiche.nom_fr,
+                "iso_name": code,
+                "dial_code": fiche.dial_code,
+                "region": fiche.region_africa or "Africa",
+                "continent": "Africa",
+                "cities": fusion_villes,
+                "currencies": [devise_id],
+                "telcos": telco_ids,
+            }
+
+            # --- L'ECART, champ par champ -------------------------------------
+            ecart: dict[str, Any] = {}
+            for champ in ("name_en", "name_fr", "dial_code", "region", "continent"):
+                avant = str(distant.get(champ) or "")
+                if avant != str(cible[champ]):
+                    ecart[champ] = {"avant": avant, "apres": cible[champ]}
+            devises_avant = _references(distant.get("currencies"))
+            if devises_avant != ([devise_id] if devise_id else []):
+                ecart["devise"] = {
+                    "avant": devises_avant,
+                    "apres": [devise_id] if devise_id else [],
+                    "iso_attendu": fiche.devise_iso,
+                    "a_creer_la_bas": devise_a_creer,
+                }
+            if telcos_a_creer:
+                ecart["telcos_a_creer"] = telcos_a_creer
+            if len(fusion_villes) != len(villes_labas):
+                ecart["villes"] = {
+                    "avant": len(villes_labas),
+                    "apres": len(fusion_villes),
+                    "ajoutees": len(fusion_villes) - len(villes_labas),
+                }
+            telcos_avant = _references(distant.get("telcos"))
+            if sorted(telcos_avant) != sorted(telco_ids):
+                ecart["telcos"] = {"avant": len(telcos_avant), "apres": len(telco_ids)}
+
+            if not demande.confirmer:
+                return {
+                    "pays": code,
+                    "statut": "apercu",
+                    "ecart": ecart,
+                    "rien_a_rectifier": not ecart,
+                    "note": (
+                        "AUCUNE ecriture — ni le pays, ni la devise, ni les "
+                        "telcos : l'apercu LIT, il ne prepare rien la-bas. "
+                        "Relancer avec `confirmer: true` pour appliquer. Le "
+                        "referentiel est PARTAGE : la reecriture complete (le "
+                        "serveur n'a que des PUT) se confirme."
+                    ),
+                }
+            if not ecart:
+                return {
+                    "pays": code,
+                    "statut": "deja_conforme",
+                    "ecart": {},
+                    "note": "la fiche la-bas est deja celle du Loader — rien n'a ete envoye",
+                }
+
+            audit = AuditTrailRepository()
+            async with audit.intention(
+                RUN_ADMIN,
+                entity_type="Country",
+                entity_id=uuid5(NAMESPACE_OID, f"finzuu-pays:{code}"),
+                operation="UPDATE",
+                cible="config-service PUT /countries/{id}",
+                payload={
+                    "iso_name": code,
+                    "ecart": ecart,
+                    "motif": demande.motif,
+                    "par": session.email,
+                },
+            ) as suivi:
+                try:
+                    await admin.remplacer_pays(identifiant, cible)
+                except ErreurService as exc:
+                    suivi.echoue(f"HTTP {exc.status} : {exc.detail[:600]}")
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"config-service a refuse : HTTP {exc.status} — {exc.detail[:600]}",
+                    ) from exc
+                suivi.reussi({"country_id": identifiant, "champs": sorted(ecart)})
+
+            # RELECTURE — l'etat d'APRES, mesure et non suppose.
+            relus = await lecture.lister_pays()
+            relu: dict[str, Any] = next(
+                (d for d in relus if str(d.get("iso_name", "")).strip().upper() == code),
+                {},
+            )
+        except HTTPException:
+            raise  # nos refus pedagogiques passent intacts
+        except Exception as erreur:  # la panne de la PLATEFORME est DITE, pas 500
+            raise _relayer(erreur) from erreur
+        finally:
+            await lecture.fermer()
+            await admin.fermer()
 
     return {
         "pays": code,
@@ -1754,6 +1795,12 @@ async def pays_config(
 
     Aucune ecriture : c'est l'oeil, pas la main.
     """
+    return await _mesurer_pays_config()
+
+
+async def _mesurer_pays_config() -> dict[str, Any]:
+    """La mesure brute, partagee par `/pays-config`, `/coherence` et
+    `/synchroniser` — une seule verite, calculee a un seul endroit."""
     from app.clients.config_service import cle_comparaison
 
     lecture = _config_lecture()
@@ -1862,6 +1909,162 @@ async def pays_config(
             "vraiment, resolu par nom. Un ecart n'est pas forcement une "
             "faute — regions, quartiers, GPS, TVA et parts de marche n'ont "
             "AUCUN champ la-bas et restent la richesse du Loader"
+        ),
+    }
+
+
+@router.get("/coherence")
+async def coherence_referentiel(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """`C4` — le VERDICT : le Loader et la plateforme disent-ils la meme chose ?
+
+    `/pays-config` montre les ecarts a qui va les lire. Ce n'est pas suffisant :
+    c'est ainsi que 361 villes manquantes sont restees invisibles dix jours,
+    alors qu'un run REAL aurait plante sur la premiere ville inconnue. Une
+    derive qui attend qu'on ouvre un ecran n'est pas surveillee.
+
+    Cette route rend donc un VERDICT, pas une liste :
+
+    * `coherent` — rien a faire ;
+    * `derive`   — reparable par le geste normal : il MANQUE des villes ou des
+      telcos la-bas. `POST /referentiels/synchroniser` ferme l'ecart ;
+    * `anomalie` — quelque chose ne se repare pas tout seul : un pays hors
+      Loader, des champs vides, des villes fantomes, une devise divergente.
+      Cela demande une DECISION (rectifier, ou assumer).
+
+    Le pire verdict l'emporte : un systeme qui annonce « coherent » avec une
+    anomalie en cours ment plus qu'il n'informe.
+    """
+    mesure = await _mesurer_pays_config()
+    derives: list[dict[str, Any]] = []
+    anomalies: list[dict[str, Any]] = []
+    for ligne in mesure["pays"]:
+        ecarts = ligne["ecarts"]
+        motifs_anomalie = []
+        if ecarts["hors_loader"]:
+            motifs_anomalie.append("pays inconnu du Loader")
+        if ecarts["champs_vides"]:
+            motifs_anomalie.append(f"champs vides : {', '.join(ecarts['champs_vides'])}")
+        if ecarts["villes_fantomes"]:
+            motifs_anomalie.append(f"{ecarts['villes_fantomes']} ville(s) fantome(s)")
+        attendue = ecarts["devise_attendue"]
+        if attendue and attendue not in ecarts["devise_portee"]:
+            motifs_anomalie.append(
+                f"devise {attendue} attendue, {ecarts['devise_portee']} portee(s)"
+            )
+        motifs_derive = []
+        if ecarts["villes_absentes"]:
+            motifs_derive.append(f"{len(ecarts['villes_absentes'])} ville(s) manquante(s)")
+        if ecarts["telcos_absents"]:
+            motifs_derive.append(
+                f"telco(s) non rattache(s) : {', '.join(ecarts['telcos_absents'])}"
+            )
+
+        if motifs_anomalie:
+            anomalies.append({"iso2": ligne["iso2"], "motifs": motifs_anomalie})
+        if motifs_derive:
+            derives.append({"iso2": ligne["iso2"], "motifs": motifs_derive})
+
+    verdict = "anomalie" if anomalies else ("derive" if derives else "coherent")
+    return {
+        "verdict": verdict,
+        "pays_mesures": mesure["compte"],
+        "pays_sans_ecart": mesure["sans_ecart"],
+        "derive": derives,
+        "anomalies": anomalies,
+        "geste": {
+            "coherent": "rien a faire",
+            "derive": "POST /admin/referentiels/synchroniser ferme l'ecart (idempotent)",
+            "anomalie": (
+                "POST /admin/referentiels/pays/{iso}/rectifier — apercu d'abord ; "
+                "une anomalie demande une decision, pas un automatisme"
+            ),
+        }[verdict],
+    }
+
+
+class SynchronisationDemande(BaseModel):
+    """`C5` — la synchronisation se confirme, comme la rectification."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirmer: bool = False
+
+
+@router.post("/synchroniser")
+async def synchroniser_les_pays_en_operation(
+    demande: SynchronisationDemande,
+    session: Annotated[SessionAdmin, Depends(exige_admin)],
+) -> dict[str, Any]:
+    """`C5` — fermer la derive de TOUS les pays en operation, d'un geste.
+
+    `pousser` repare deja un pays : il complete les villes manquantes et
+    rattache les telcos absents, sans jamais doubler. Mais il fallait le
+    lancer pays par pays — donc y penser, donc l'oublier. Ici la boucle est
+    faite, **uniquement sur les pays EN OPERATION** (`I-CFG-SYNC` : un pays
+    hors operation n'a rien a synchroniser, sa matiere l'attend).
+
+    Apercu par defaut : la liste de ce qui SERA envoye. Rien ne part sans
+    `confirmer: true`. Un pays qui refuse n'interrompt pas les autres.
+    """
+    await refuser_si_run_en_cours()
+
+    mesure = await _mesurer_pays_config()
+    a_faire = [
+        {
+            "iso2": ligne["iso2"],
+            "villes_manquantes": len(ligne["ecarts"]["villes_absentes"]),
+            "telcos_absents": ligne["ecarts"]["telcos_absents"],
+        }
+        for ligne in mesure["pays"]
+        if not ligne["ecarts"]["hors_loader"]
+        and (ligne["ecarts"]["villes_absentes"] or ligne["ecarts"]["telcos_absents"])
+    ]
+
+    if not demande.confirmer:
+        return {
+            "statut": "apercu",
+            "a_synchroniser": a_faire,
+            "compte": len(a_faire),
+            "note": (
+                "AUCUNE ecriture. Relancer avec `confirmer: true`. Seuls les "
+                "pays EN OPERATION sont concernes — la matiere d'un pays qui "
+                "n'y est pas partira ENTIERE a sa mise en operation."
+            ),
+        }
+
+    rapport: list[dict[str, Any]] = []
+    for cible in a_faire:
+        try:
+            resultat = await pousser_pays_en_operation(str(cible["iso2"]), session)
+            rapport.append(
+                {
+                    "iso2": cible["iso2"],
+                    "statut": resultat["statut"],
+                    "villes_envoyees": resultat["villes_envoyees"],
+                    "telcos": [t["nom"] for t in resultat["telcos"] if t["rattache"]],
+                    "echecs": resultat["echecs"],
+                }
+            )
+        except HTTPException as refus:
+            # Un pays qui refuse n'interrompt pas les autres — et son refus
+            # est rendu tel quel, jamais avale.
+            rapport.append(
+                {
+                    "iso2": cible["iso2"],
+                    "statut": f"refuse ({refus.status_code})",
+                    "detail": str(refus.detail)[:300],
+                }
+            )
+
+    return {
+        "statut": "synchronise",
+        "rapport": rapport,
+        "compte": len(rapport),
+        "note": (
+            "idempotent : relancer ne double rien. Ce qui reste apres ce geste "
+            "est une ANOMALIE (voir GET /coherence), pas une derive"
         ),
     }
 

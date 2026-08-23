@@ -54,6 +54,10 @@ COLLECTION_AUTH_THROTTLE: Final = "auth_throttle"
 #: Neuvieme collection — notifications IN-APP (canal du systeme de notification).
 #: Une entree par (destinataire, evenement) ; lues comme non lues sont gardees.
 COLLECTION_NOTIFICATIONS: Final = "notifications"
+#: Dixieme collection — VERROUS par ressource (`C2`). Une entree par geste en
+#: cours (`pousser:CM`), purgee par TTL : la plateforme n'ayant aucun index
+#: unique (RC-183), deux appels simultanes creeraient chacun leur exemplaire.
+COLLECTION_VERROUS: Final = "verrous"
 
 _client: AsyncIOMotorClient[MongoDocument] | None = None
 
@@ -185,6 +189,15 @@ async def ensure_indexes() -> None:
     await db[COLLECTION_AUTH_THROTTLE].create_index(
         "expire_le",
         name="ttl_auth_throttle",
+        expireAfterSeconds=0,
+    )
+    # Verrous par ressource : purge automatique quand `expire_le` est depassee.
+    # Le TTL de Mongo passe a la minute — la reprise d'un verrou perime est
+    # donc faite AUSSI a la prise, on ne se fie pas au balayage pour la
+    # justesse (seulement pour le menage).
+    await db[COLLECTION_VERROUS].create_index(
+        "expire_le",
+        name="ttl_verrous",
         expireAfterSeconds=0,
     )
     # Notifications : la boite d'un destinataire se lit par (destinataire, plus

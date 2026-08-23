@@ -2991,8 +2991,28 @@ def _config_service_double(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     class _Lecture:
         async def lister_pays(self):  # type: ignore[no-untyped-def]
             return [
-                {"_id": f"cfg-{code}", "iso_name": code}
+                {
+                    "_id": f"cfg-{code}",
+                    "iso_name": code,
+                    "name_en": code,
+                    "name_fr": code,
+                    "dial_code": "237",
+                    "region": "Africa",
+                    "continent": "Africa",
+                    "cities": [],
+                    "currencies": ["cur-xaf"],
+                    "telcos": [],
+                }
                 for code in ("CM", "CI", "BF", "SN")
+            ]
+
+        async def lister_telcos(self):  # type: ignore[no-untyped-def]
+            return [{"_id": "tl-connu", "network_name": "Operateur Connu"}]
+
+        async def lister_devises(self):  # type: ignore[no-untyped-def]
+            return [
+                {"_id": "cur-xaf", "iso_name": "XAF"},
+                {"_id": "cur-xof", "iso_name": "XOF"},
             ]
 
         async def fermer(self):  # type: ignore[no-untyped-def]
@@ -3847,6 +3867,195 @@ class TestEtatsLaBas:
         )
         assert reponse.status_code == 409
         assert "mesure 09/08" in reponse.json()["detail"]
+
+
+class TestC4EtC5CoherenceEtSynchronisation:
+    """`C4`/`C5` (23/08) — une derive qui attend qu'on ouvre un ecran n'est
+    pas surveillee : 361 villes ont manque pendant dix jours. La sonde rend
+    un VERDICT, et la synchronisation ferme l'ecart d'un geste."""
+
+    @staticmethod
+    def _doubler(monkeypatch: pytest.MonkeyPatch, pays: list[dict[str, Any]]):  # type: ignore[no-untyped-def]
+        from app.routes import admin_referentiels
+
+        class _Lecture:
+            async def lister_pays(self):  # type: ignore[no-untyped-def]
+                return [dict(p) for p in pays]
+
+            async def lister_telcos(self):  # type: ignore[no-untyped-def]
+                return [{"_id": "t-1", "network_name": "MTN Cameroon"}]
+
+            async def lister_devises(self):  # type: ignore[no-untyped-def]
+                return [{"_id": "d-xaf", "iso_name": "XAF"}]
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_referentiels, "_config_lecture", lambda: _Lecture())
+
+    _COMPLET: ClassVar[dict[str, Any]] = {
+        "_id": "cfg-CM", "iso_name": "CM", "name_en": "Cameroon",
+        "name_fr": "Cameroun", "dial_code": "237", "region": "Middle Africa",
+        "continent": "Africa", "cities": [], "currencies": ["d-xaf"],
+        "telcos": [{"_id": "t-1"}],
+    }
+
+    async def test_verdict_DERIVE_quand_il_manque_des_villes(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler(monkeypatch, [self._COMPLET])  # 0 ville la-bas, 87 chez nous
+        entetes = await _session_complete(client)
+        corps = (
+            await client.get("/admin/referentiels/coherence", headers=entetes)
+        ).json()
+        assert corps["verdict"] == "derive", corps
+        assert corps["derive"][0]["iso2"] == "CM"
+        assert "synchroniser" in corps["geste"]
+
+    async def test_verdict_ANOMALIE_l_emporte_sur_la_derive(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Un systeme qui annonce « coherent » avec une anomalie en cours ment
+        plus qu'il n'informe — le PIRE verdict gagne."""
+        parasite = {"_id": "cfg-ca", "iso_name": "ca", "cities": [], "telcos": []}
+        self._doubler(monkeypatch, [self._COMPLET, parasite])
+        entetes = await _session_complete(client)
+        corps = (
+            await client.get("/admin/referentiels/coherence", headers=entetes)
+        ).json()
+        assert corps["verdict"] == "anomalie", corps
+        assert any(a["iso2"] == "CA" for a in corps["anomalies"])
+        assert corps["derive"], "la derive reste VISIBLE sous l'anomalie"
+        assert "rectifier" in corps["geste"]
+
+    async def test_l_apercu_de_synchronisation_n_ecrit_RIEN(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        entetes = await _session_complete(client)
+        corps = (
+            await client.post(
+                "/admin/referentiels/synchroniser", json={}, headers=entetes
+            )
+        ).json()
+        assert corps["statut"] == "apercu"
+        assert _config_service_double["villes"] == [], "aucune ville envoyee"
+        assert _config_service_double["pays_crees"] == []
+
+    async def test_la_synchronisation_confirmee_ferme_l_ecart_de_CHAQUE_pays(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        entetes = await _session_complete(client)
+        reponse = await client.post(
+            "/admin/referentiels/synchroniser", json={"confirmer": True}, headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["statut"] == "synchronise"
+        assert corps["compte"] >= 1, corps
+        assert all(
+            ligne["statut"] in ("deja_en_operation", "mis_en_operation")
+            or ligne["statut"].startswith("refuse")
+            for ligne in corps["rapport"]
+        ), corps["rapport"]
+        assert _config_service_double["villes"], "des villes sont VRAIMENT parties"
+
+    async def test_la_synchronisation_ne_touche_QUE_les_pays_en_operation(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """`I-CFG-SYNC` : un pays hors operation n'a rien a synchroniser — sa
+        matiere partira ENTIERE a sa mise en operation."""
+        entetes = await _session_complete(client)
+        corps = (
+            await client.post(
+                "/admin/referentiels/synchroniser", json={}, headers=entetes
+            )
+        ).json()
+        # le double ne porte que CM, CI, BF, SN la-bas
+        assert {c["iso2"] for c in corps["a_synchroniser"]} <= {"CM", "CI", "BF", "SN"}
+
+    async def test_sans_jeton_401(self, client: httpx.AsyncClient) -> None:
+        assert (await client.get("/admin/referentiels/coherence")).status_code == 401
+        assert (
+            await client.post("/admin/referentiels/synchroniser", json={})
+        ).status_code == 401
+
+
+class TestC2VerrouParRessource:
+    """`C2` (23/08) — le `GET`-avant-`POST` qui tient l'unicite n'est sur que
+    SEQUENTIELLEMENT. Deux appels simultanes sur le meme pays lisent tous les
+    deux « absent » et creent tous les deux ; le doublon est ensuite
+    DEFINITIF (la plateforme n'a ni index unique ni DELETE)."""
+
+    async def test_deux_allers_simultanes_sur_le_meme_pays_UN_SEUL_passe(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        import asyncio
+
+        entetes = await _session_complete(client)
+        reponses = await asyncio.gather(
+            client.post("/admin/referentiels/pays/CM/pousser", headers=entetes),
+            client.post("/admin/referentiels/pays/CM/pousser", headers=entetes),
+        )
+        statuts = sorted(r.status_code for r in reponses)
+        assert statuts == [200, 409], [r.status_code for r in reponses]
+        refus = next(r for r in reponses if r.status_code == 409)
+        assert "DEJA en cours" in refus.json()["detail"]
+        assert "RC-183" in refus.json()["detail"], "le refus porte sa raison"
+
+    async def test_deux_pays_DIFFERENTS_ne_se_bloquent_pas(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """Le verrou est par RESSOURCE, jamais global — sinon il deviendrait
+        lui-meme le goulot d'etranglement."""
+        import asyncio
+
+        entetes = await _session_complete(client)
+        reponses = await asyncio.gather(
+            client.post("/admin/referentiels/pays/CM/pousser", headers=entetes),
+            client.post("/admin/referentiels/pays/CI/pousser", headers=entetes),
+        )
+        assert [r.status_code for r in reponses] == [200, 200], [
+            r.status_code for r in reponses
+        ]
+
+    async def test_le_verrou_est_RENDU_meme_quand_le_geste_echoue(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """Un verrou qui survit a un echec transformerait une panne passagere
+        en blocage permanent."""
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        # ZZ est inconnu du Loader -> 422, mais le verrou doit etre rendu
+        assert (
+            await client.post("/admin/referentiels/pays/ZZ/pousser", headers=entetes)
+        ).status_code == 422
+        deuxieme = await client.post(
+            "/admin/referentiels/pays/CM/pousser", headers=entetes
+        )
+        assert deuxieme.status_code == 200, deuxieme.text
+
+    async def test_un_verrou_PERIME_est_repris_jamais_un_blocage_definitif(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Un processus tue laisse son verrou : il DOIT pouvoir etre repris."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.repositories.verrous import RessourceVerrouillee, VerrouRepository
+
+        depot = VerrouRepository()
+        await depot.rendre("test:perime")
+        await depot.prendre("test:perime", par="processus-mort")
+        with pytest.raises(RessourceVerrouillee):
+            await depot.prendre("test:perime", par="second")
+        # on force la peremption, comme le TTL l'aurait fait
+        await depot.collection.update_one(
+            {"_id": "test:perime"},
+            {"$set": {"expire_le": datetime.now(UTC) - timedelta(seconds=1)}},
+        )
+        await depot.prendre("test:perime", par="repreneur")  # ne leve plus
+        await depot.rendre("test:perime")
 
 
 class TestUnePanneDeLaPlateformeEstDITE:
