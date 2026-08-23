@@ -2355,6 +2355,142 @@ class TestUSB6CreationDePays:
         assert _config_service_double["devises_creees"][0]["iso_name"] == "NGN"
         assert _config_service_double["devises_creees"][0]["accepts_decimal"] is True
 
+    async def test_un_pays_sans_ville_NI_capitale_ne_se_pousse_PAS(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """Trou attrape le 23/08 : `villes or [capitale]` avec une capitale
+        VIDE envoyait `cities: [""]` — une ville fantome, INEFFACABLE la-bas
+        (config-service n'a aucun DELETE sur les villes)."""
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="TD", nom_fr="Tchad", nom_en="Chad", capitale="",
+            dial_code="235", devise_iso="XAF", tva_percent=18.0,
+        )
+        await _semer_telco(
+            "TD", "Airtel Tchad", "Airtel TD", r"^235(6[0-9]\d{6})$", 60.0,
+            "23561234567"
+        )
+        reponse = await client.post(
+            "/admin/referentiels/pays/TD/pousser", headers=entetes
+        )
+        assert reponse.status_code == 422, reponse.text
+        assert "AUCUNE ville ni capitale" in reponse.json()["detail"]
+        assert _config_service_double["pays_crees"] == [], "rien ne part"
+        assert _config_service_double["crees"] == [], (
+            "la porte parle AVANT le reseau — aucun telco cree pour rien"
+        )
+
+    async def test_les_avertissements_de_credibilite_sont_DITS(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """Calibrage 22/08 : un marche a UN operateur qui couvre 30 % opere,
+        mais ne ressemble a aucun marche africain. Non bloquant, TOUJOURS dit
+        — sans ce test, un refactor supprimerait les avertissements en
+        silence."""
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="TG", nom_fr="Togo", nom_en="Togo", capitale="Lomé",
+            dial_code="228", devise_iso="XOF", tva_percent=18.0,
+        )
+        await _semer_telco(
+            "TG", "Togocom", "TGCOM", r"^228(9[0-9]\d{6})$", 30.0, "22890123456"
+        )
+        reponse = await client.post(
+            "/admin/referentiels/pays/TG/pousser", headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        avertissements = reponse.json()["avertissements"]
+        assert any("un seul operateur" in a for a in avertissements), avertissements
+        assert any("30 % < 50 %" in a for a in avertissements), avertissements
+
+    async def test_un_marche_credible_ne_declenche_AUCUN_avertissement(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="ML", nom_fr="Mali", nom_en="Mali", capitale="Bamako",
+            dial_code="223", devise_iso="XOF", tva_percent=18.0,
+        )
+        await _semer_telco(
+            "ML", "Orange Mali", "OML", r"^223(7[0-9]\d{6})$", 55.0, "22370123456"
+        )
+        await _semer_telco(
+            "ML", "Moov Africa Malitel", "MAM", r"^223(6[0-9]\d{6})$", 40.0,
+            "22360123456"
+        )
+        reponse = await client.post(
+            "/admin/referentiels/pays/ML/pousser", headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json()["avertissements"] == [], reponse.json()
+
+    async def test_un_echec_en_chemin_DIT_les_residus_laisses_la_bas(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mesure du 23/08 sur la PROD : `AOA` et `GNF` trainaient sur
+        config-service sans aucun pays — nees d'un aller interrompu APRES la
+        creation de la devise. Le 502 doit NOMMER ce qui reste."""
+        from app.clients.base import ErreurService
+        from app.routes import admin_referentiels
+
+        class _AdminQuiEchoueAuPays:
+            async def resoudre_devise(self, code_iso):  # type: ignore[no-untyped-def]
+                return None
+
+            async def creer_devise_si_absent(self, payload):  # type: ignore[no-untyped-def]
+                return {"id": "cur-new", "iso_name": payload["iso_name"]}, True
+
+            async def creer_telco_si_absent(self, nom, phone_regex):  # type: ignore[no-untyped-def]
+                return {"id": f"tl-{nom}", "name": nom}, True
+
+            async def creer_pays_si_absent(self, payload):  # type: ignore[no-untyped-def]
+                raise ErreurService(
+                    service="config-service",
+                    methode="POST",
+                    url="/api/v1/countries/create",
+                    status=400,
+                    detail="dial_code deja utilise",
+                    request_id="qa-23-08",
+                )
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(
+            admin_referentiels, "_config_admin", lambda: _AdminQuiEchoueAuPays()
+        )
+        entetes = await _session_complete(client)
+        await database.get_collection("loader_configuration").delete_one(
+            {"_id": "surcouche"}
+        )
+        await _semer_fiche_pays(
+            iso2="RW", nom_fr="Rwanda", nom_en="Rwanda", capitale="Kigali",
+            dial_code="250", devise_iso="RWF", tva_percent=18.0,
+            devise_nom="Rwandan Franc", devise_decimales=0, banque_centrale="BNR",
+        )
+        await _semer_telco(
+            "RW", "MTN Rwanda", "MTN RW", r"^250(78\d{7})$", 60.0, "250781234567"
+        )
+        reponse = await client.post(
+            "/admin/referentiels/pays/RW/pousser", headers=entetes
+        )
+        assert reponse.status_code == 502, reponse.text
+        detail = reponse.json()["detail"]
+        assert "dial_code deja utilise" in detail, "le refus COMPLET voyage"
+        assert "devise RWF" in detail and "MTN Rwanda" in detail, (
+            "les residus crees la-bas sont NOMMES"
+        )
+        assert "Re-pousser RW" in detail, "le geste de rattrapage est dit"
+
     async def test_pousser_un_pays_inconnu_du_loader_est_un_422(
         self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
     ) -> None:
@@ -3704,6 +3840,136 @@ class TestEtatsLaBas:
         )
         assert reponse.status_code == 409
         assert "mesure 09/08" in reponse.json()["detail"]
+
+
+class TestPaysConfigRelecture:
+    """23/08 — la RELECTURE de l'aller `US-B6`. Campagne QA sur la prod : on
+    pouvait POUSSER un pays sans jamais pouvoir RELIRE ce qui avait atterri
+    la-bas. `GET /pays-config` est l'oeil qui manquait."""
+
+    @staticmethod
+    def _doubler(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+        from app.routes import admin_referentiels
+
+        class _Lecture:
+            async def lister_pays(self):  # type: ignore[no-untyped-def]
+                return [
+                    {  # complet
+                        "_id": "cfg-CM", "iso_name": "CM", "name_en": "Cameroon",
+                        "name_fr": "Cameroun", "dial_code": "237",
+                        "region": "Middle Africa", "continent": "Africa",
+                        "is_active": True, "cities": ["Douala", "Yaoundé"],
+                        "currencies": ["d-xaf"], "telcos": [{"_id": "t-1"}],
+                    },
+                    {  # amputee : champs vides, ville fantome, telco absent
+                        "_id": "cfg-GN", "iso_name": "GN", "name_en": "Guinea",
+                        "name_fr": "", "dial_code": "", "region": "Western Africa",
+                        "continent": "Africa", "is_active": True,
+                        "cities": ["Conakry", "", "Conakry"], "currencies": [],
+                        "telcos": [],
+                    },
+                    {"_id": "cfg-ca", "iso_name": "ca", "cities": [], "telcos": []},
+                ]
+
+            async def lister_telcos(self):  # type: ignore[no-untyped-def]
+                return [{"_id": "t-1", "network_name": "MTN Cameroon"}]
+
+            async def lister_devises(self):  # type: ignore[no-untyped-def]
+                return [{"_id": "d-xaf", "iso_name": "XAF"}]
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_referentiels, "_config_lecture", lambda: _Lecture())
+
+    async def test_la_relecture_resout_les_UUID_en_NOMS(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Un ecran qui affiche `d694b215-…` n'apprend rien a personne : la
+        devise et les operateurs sont rendus par leur NOM."""
+        self._doubler(monkeypatch)
+        entetes = await _session_complete(client)
+        reponse = await client.get("/admin/referentiels/pays-config", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        par_code = {ligne["iso2"]: ligne for ligne in reponse.json()["pays"]}
+        assert par_code["CM"]["devises"] == ["XAF"]
+        assert par_code["CM"]["telcos"] == ["MTN Cameroon"]
+        assert par_code["CM"]["champs"]["dial_code"] == "237"
+
+    async def test_les_ECARTS_sont_mesures_champ_par_champ(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._doubler(monkeypatch)
+        entetes = await _session_complete(client)
+        par_code = {
+            ligne["iso2"]: ligne
+            for ligne in (
+                await client.get("/admin/referentiels/pays-config", headers=entetes)
+            ).json()["pays"]
+        }
+        ecarts = par_code["GN"]["ecarts"]
+        assert "name_fr" in ecarts["champs_vides"] and "dial_code" in ecarts["champs_vides"]
+        assert ecarts["villes_fantomes"] == 2, "une chaine vide + un doublon"
+        assert par_code["CM"]["ecarts"]["champs_vides"] == []
+
+    async def test_le_pays_hors_loader_est_MONTRE_jamais_cache(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Le 4e etat : present la-bas, inconnu de nous — le residu `ca`
+        minuscule de la plateforme, vu a la recon du 14/08."""
+        self._doubler(monkeypatch)
+        entetes = await _session_complete(client)
+        corps = (
+            await client.get("/admin/referentiels/pays-config", headers=entetes)
+        ).json()
+        parasite = next(ligne for ligne in corps["pays"] if ligne["iso2"] == "CA")
+        assert parasite["connu_du_loader"] is False
+        assert parasite["ecarts"]["hors_loader"] is True
+        assert corps["compte"] == 3
+        assert corps["sans_ecart"] < corps["compte"], (
+            "le compteur ne peut pas dire « tout va bien » quand un pays est ampute"
+        )
+
+    async def test_sans_jeton_401(self, client: httpx.AsyncClient) -> None:
+        assert (
+            await client.get("/admin/referentiels/pays-config")
+        ).status_code == 401
+
+
+class TestRefusDeDesactivationDeDevise:
+    """23/08 — mesure sur la PROD : `GNF` n'a AUCUN porteur, et le refus lui
+    repondait « referencee par [] ». Un message faux dans un systeme qui se
+    veut honnete est un defaut, pas un detail."""
+
+    async def test_devise_PORTEE_le_refus_nomme_les_porteurs(self) -> None:
+        from app.clients.config_service import AdministrationConfigService, ReferenceInverse
+
+        admin = AdministrationConfigService()
+
+        async def _porteurs(_id, _famille):  # type: ignore[no-untyped-def]
+            return ["SN", "BF", "CI"]
+
+        admin.references_inverses = _porteurs  # type: ignore[method-assign]
+        with pytest.raises(ReferenceInverse) as refus:
+            await admin.desactiver_devise("d-xof")
+        assert "referencee par ['SN', 'BF', 'CI']" in str(refus.value)
+        assert "zone monetaire" in str(refus.value)
+
+    async def test_devise_ORPHELINE_le_refus_dit_la_VRAIE_raison(self) -> None:
+        from app.clients.config_service import AdministrationConfigService, ReferenceInverse
+
+        admin = AdministrationConfigService()
+
+        async def _aucun(_id, _famille):  # type: ignore[no-untyped-def]
+            return []
+
+        admin.references_inverses = _aucun  # type: ignore[method-assign]
+        with pytest.raises(ReferenceInverse) as refus:
+            await admin.desactiver_devise("d-gnf")
+        message = str(refus.value)
+        assert "AUCUN pays" in message, "le message ne ment plus"
+        assert "IRREVERSIBLE" in message, "la vraie raison du refus est dite"
+        assert "referencee par []" not in message
 
 
 class TestVarianteApercu:

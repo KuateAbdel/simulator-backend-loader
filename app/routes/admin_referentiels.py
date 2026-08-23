@@ -832,12 +832,15 @@ async def pousser_pays_en_operation(
 
       1. la DEVISE : resolue par code ISO la-bas, CREEE depuis NOTRE fiche si
          absente (une devise n'est jamais orpheline, ni ici ni la-bas) ;
-      2. le PAYS : cree avec ses villes et sa devise ; deja present -> ADOPTE
-         (GET-avant-POST, jamais un doublon) ;
-      3. les VILLES manquantes : cas adoption — la relecture integrale du
+      2. les TELCOS du pays : crees si absents (motif ancre + compile,
+         RC-184) — AVANT le pays, car le payload du pays les reference par
+         UUID, exactement comme la devise ;
+      3. le PAYS : cree avec ses 9 champs, ses villes, sa devise et ses
+         telcos ; deja present -> ADOPTE (GET-avant-POST, jamais un doublon) ;
+      4. les VILLES manquantes : cas adoption — la relecture integrale du
          client (ANO-CFG-DUP : les 9 champs) complete `cities[]` sans doublon ;
-      4. les TELCOS du pays : crees si absents (motif ancre + compile, RC-184)
-         PUIS rattaches au pays — « un telco cree mais non rattache
+      5. le RATTACHEMENT des telcos : cas adoption uniquement — a la creation
+         le payload les portait deja. « Un telco cree mais non rattache
          n'appartient a aucun pays » (US-B7).
 
     Regions, quartiers, GPS, TVA, parts de marche RESTENT chez nous — la
@@ -869,6 +872,10 @@ async def pousser_pays_en_operation(
     villes = sorted(
         v.name for v in referentiel.villes.values() if v.country_iso2 == code
     ) or [fiche.capitale]
+    # Une chaine vide n'est PAS une ville : sans ce filtre, un pays sans
+    # ville ET sans capitale enverrait `cities: [""]` a config-service —
+    # une ville fantome, impossible a retirer la-bas (aucun DELETE).
+    villes = [nom for nom in villes if str(nom).strip()]
     fiche_devise = referentiel.devises.get(fiche.devise_iso)
     telcos_locaux = referentiel.telcos_du_pays(code)
     # PORTE DE COMPLETUDE (22/08, recommandation QA validee par Yaniv) :
@@ -876,6 +883,16 @@ async def pousser_pays_en_operation(
     # aucun numero (EF-27) et n'onboarde personne — on ne pousse pas une
     # coquille vide. Minimum viable : devise (garantie plus bas) + >= 1
     # ville + >= 1 telco au plan composable.
+    if not villes:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"pays {code} : AUCUNE ville ni capitale au referentiel — un "
+                "pays en operation sans ville n'heberge aucun client, aucune "
+                "agence, aucun depositaire. Charger sa geographie d'abord "
+                "(regions et villes officielles, US-B7)."
+            ),
+        )
     if not telcos_locaux:
         raise HTTPException(
             status_code=422,
@@ -900,6 +917,11 @@ async def pousser_pays_en_operation(
             cible="config-service POST /countries/create",
             payload={"iso_name": code, "depuis": "fiche Loader", "par": session.email},
         ) as suivi:
+            # Ce qui a DEJA ete cree la-bas quand un echec survient plus
+            # loin : mesure du 23/08 — `AOA` et `GNF` trainaient sur
+            # config-service sans aucun pays, nees d'un aller interrompu et
+            # jamais dites. Un residu tu est un residu qu'on ne nettoie pas.
+            residus: list[str] = []
             try:
                 # 1. LA DEVISE — d'abord, le pays la reference par UUID
                 devise_id = await admin.resoudre_devise(fiche.devise_iso)
@@ -917,6 +939,8 @@ async def pousser_pays_en_operation(
                     )
                     devise_id = str(fiche_dev.get("id") or fiche_dev.get("_id") or "")
                     devise_statut = "mise_en_operation" if cree_devise else "deja_en_operation"
+                    if cree_devise:
+                        residus.append(f"devise {fiche.devise_iso}")
 
                 # 2. LES TELCOS — AVANT le pays (l'ordre du contrat,
                 #    rappele par Yaniv) : le payload de creation du pays les
@@ -931,6 +955,8 @@ async def pousser_pays_en_operation(
                     telco_id = str(fiche_telco.get("id") or fiche_telco.get("_id") or "")
                     if telco_id:
                         telco_ids.append(telco_id)
+                    if telco_cree:
+                        residus.append(f"telco {telco.network_name!r}")
                     telcos_statuts.append(
                         {
                             "nom": telco.network_name,
@@ -957,17 +983,26 @@ async def pousser_pays_en_operation(
             except ErreurService as exc:
                 # Le REFUS COMPLET voyage (21/08, pays GN) — jamais un 502 muet.
                 suivi.echoue(f"HTTP {exc.status} : {exc.detail[:600]}")
+                reste = (
+                    " ATTENTION, l'aller s'est arrete en chemin : "
+                    f"{', '.join(residus)} ont ete crees la-bas et restent "
+                    f"SANS pays. Re-pousser {code} les reutilisera (aucun "
+                    "doublon) ; abandonner laisse un residu dans le "
+                    "referentiel PARTAGE."
+                    if residus
+                    else ""
+                )
                 raise HTTPException(
                     status_code=502,
                     detail=(
                         f"config-service a refuse : HTTP {exc.status} — "
-                        f"{exc.detail[:600]}"
+                        f"{exc.detail[:600]}.{reste}"
                     ),
                 ) from exc
             identifiant = str(fiche_pays.get("id") or fiche_pays.get("_id") or "")
             suivi.reussi({"country_id": identifiant, "cree": cree})
 
-        # 3. LES VILLES MANQUANTES — cas adoption : completer, jamais doubler.
+        # 4. LES VILLES MANQUANTES — cas adoption : completer, jamais doubler.
         villes_completees = 0
         if not cree and identifiant:
             deja_labas = {str(v).strip() for v in (fiche_pays.get("cities") or [])}
@@ -982,7 +1017,7 @@ async def pousser_pays_en_operation(
                         f"ville {nom_ville} : {type(erreur).__name__}: {str(erreur)[:120]}"
                     )
 
-        # 4. Cas ADOPTION : les telcos deja crees (etape 2) sont RATTACHES au
+        # 5. Cas ADOPTION : les telcos deja crees (etape 2) sont RATTACHES au
         #    pays existant — « un telco cree mais non rattache n'appartient a
         #    aucun pays » (US-B7). A la creation, le payload les portait deja.
         if not cree and identifiant:
@@ -1316,6 +1351,148 @@ async def _porteurs_par_ressource(lecture: Any, famille: str) -> dict[str, list[
             )
             porteurs.setdefault(identifiant, []).append(code)
     return porteurs
+
+
+def _references(element_liste: Any) -> list[str]:
+    """Les identifiants d'une liste de references — dicts ou chaines nues.
+
+    config-service rend tantot `["<uuid>"]`, tantot `[{"_id": "<uuid>"}]`
+    selon la route : une seule lecture pour les deux formes.
+    """
+    identifiants = []
+    for element in element_liste or []:
+        if isinstance(element, dict):
+            identifiants.append(str(element.get("_id") or element.get("id") or ""))
+        else:
+            identifiants.append(str(element))
+    return [i for i in identifiants if i]
+
+
+@router.get("/pays-config")
+async def pays_config(
+    _: Annotated[SessionAdmin, Depends(admin_complet)],
+) -> dict[str, Any]:
+    """Les pays TELS QUE config-service les porte — la RELECTURE qui manquait.
+
+    Le pendant de `/telcos-config` et `/devises-config`, ecrit le 23/08 apres
+    une campagne QA sur la prod : on pouvait POUSSER un pays (`US-B6`) sans
+    jamais pouvoir RELIRE ce qui avait atterri la-bas. Un aller sans retour
+    n'est pas verifiable — donc pas livrable.
+
+    Pour chaque pays present sur la plateforme : ses 9 champs, ses villes,
+    sa devise et ses operateurs RESOLUS PAR NOM (jamais des UUID nus), et
+    les ECARTS mesures contre notre fiche :
+
+    * `champs_vides`    — un champ du contrat rendu vide la-bas ;
+    * `villes_absentes` — villes du Loader qui ne sont PAS la-bas ;
+    * `villes_fantomes` — chaines vides ou doublons dans `cities[]` ;
+    * `telcos_absents`  — operateurs du Loader non rattaches la-bas ;
+    * `devise`          — celle portee la-bas contre celle de notre fiche ;
+    * `hors_loader`     — pays present la-bas et inconnu de nous (le 4e etat).
+
+    Aucune ecriture : c'est l'oeil, pas la main.
+    """
+    lecture = _config_lecture()
+    try:
+        distants = await lecture.lister_pays()
+        noms_telcos = {
+            str(t.get("_id") or t.get("id")): str(
+                t.get("network_name") or t.get("name") or ""
+            )
+            for t in await lecture.lister_telcos()
+        }
+        iso_devises = {
+            str(d.get("_id") or d.get("id")): str(d.get("iso_name") or "")
+            for d in await lecture.lister_devises()
+        }
+    finally:
+        await lecture.fermer()
+
+    surcouche, _meta = await SurcoucheRepository().charger()
+    referentiel = surcouche.appliquer(_geo())
+
+    lignes: list[dict[str, Any]] = []
+    for distant in distants:
+        code = str(distant.get("iso_name") or "").strip().upper()
+        brutes = [str(v) for v in (distant.get("cities") or [])]
+        villes_labas = [v.strip() for v in brutes if v.strip()]
+        telcos_labas = [
+            noms_telcos.get(i, f"(inconnu {i[:8]})") for i in _references(distant.get("telcos"))
+        ]
+        devises_labas = [
+            iso_devises.get(i, f"(inconnue {i[:8]})")
+            for i in _references(distant.get("currencies"))
+        ]
+
+        fiche = referentiel.pays(code) if code else None
+        villes_ici = sorted(
+            v.name for v in referentiel.villes.values() if v.country_iso2 == code
+        )
+        telcos_ici = [t.network_name for t in referentiel.telcos_du_pays(code)]
+
+        champs_vides = [
+            champ
+            for champ in ("name_en", "name_fr", "iso_name", "dial_code", "region", "continent")
+            if not str(distant.get(champ) or "").strip()
+        ]
+        fantomes = len(brutes) - len(villes_labas)
+        doublons = len(villes_labas) - len(set(villes_labas))
+        lignes.append(
+            {
+                "iso2": code,
+                "id": str(distant.get("_id") or distant.get("id") or ""),
+                "connu_du_loader": fiche is not None,
+                "champs": {
+                    champ: distant.get(champ)
+                    for champ in (
+                        "name_en",
+                        "name_fr",
+                        "iso_name",
+                        "dial_code",
+                        "region",
+                        "continent",
+                        "is_active",
+                    )
+                },
+                "villes": {"compte_la_bas": len(villes_labas), "compte_loader": len(villes_ici)},
+                "devises": devises_labas,
+                "telcos": sorted(telcos_labas),
+                "ecarts": {
+                    "champs_vides": champs_vides,
+                    "villes_absentes": sorted(set(villes_ici) - set(villes_labas)),
+                    "villes_fantomes": fantomes + doublons,
+                    "telcos_absents": sorted(set(telcos_ici) - set(telcos_labas)),
+                    "devise_attendue": fiche.devise_iso if fiche else None,
+                    "devise_portee": devises_labas,
+                    "hors_loader": fiche is None,
+                },
+            }
+        )
+
+    complets = [
+        ligne
+        for ligne in lignes
+        if not any(
+            [
+                ligne["ecarts"]["champs_vides"],
+                ligne["ecarts"]["villes_absentes"],
+                ligne["ecarts"]["villes_fantomes"],
+                ligne["ecarts"]["telcos_absents"],
+                ligne["ecarts"]["hors_loader"],
+            ]
+        )
+    ]
+    return {
+        "pays": sorted(lignes, key=lambda ligne: str(ligne["iso2"])),
+        "compte": len(lignes),
+        "sans_ecart": len(complets),
+        "note": (
+            "la RELECTURE de l'aller US-B6 : ce que la plateforme porte "
+            "vraiment, resolu par nom. Un ecart n'est pas forcement une "
+            "faute — regions, quartiers, GPS, TVA et parts de marche n'ont "
+            "AUCUN champ la-bas et restent la richesse du Loader"
+        ),
+    }
 
 
 @router.get("/telcos-config")

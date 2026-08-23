@@ -336,10 +336,23 @@ class AdministrationConfigService:
         moins un pays.
         """
         porteurs = await self.references_inverses(devise_id, "currencies")
+        if porteurs:
+            raise ReferenceInverse(
+                f"devise {devise_id} referencee par {porteurs} — desactivation TOUJOURS refusee. "
+                "100 % des devises sont partagees entre pays : aucun cas ne permet de la retirer "
+                "sans casser une zone monetaire entiere."
+            )
+        # Mesure du 23/08 : des devises SANS porteur existent bel et bien
+        # la-bas (`GNF`, `AOA` — nees d'un aller interrompu). Leur repondre
+        # « referencee par [] » etait un message FAUX. Le refus tient quand
+        # meme, mais pour la VRAIE raison : aucun contrat de REACTIVATION
+        # n'a ete mesure sur config-service, une desactivation serait donc
+        # irreversible.
         raise ReferenceInverse(
-            f"devise {devise_id} referencee par {porteurs} — desactivation TOUJOURS refusee. "
-            "100 % des devises sont partagees entre pays : aucun cas ne permet de la retirer "
-            "sans casser une zone monetaire entiere."
+            f"devise {devise_id} n'est referencee par AUCUN pays — mais la desactivation "
+            "reste refusee : aucun contrat de REACTIVATION de devise n'a ete mesure sur "
+            "config-service, le geste serait donc IRREVERSIBLE. Une devise orpheline se "
+            "reutilise (le prochain pays qui la porte l'adopte), elle ne se supprime pas."
         )
 
     # -- Creation — GET avant POST, toujours --------------------------------
