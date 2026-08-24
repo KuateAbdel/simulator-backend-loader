@@ -3375,6 +3375,78 @@ class TestR01LeDernierRunEstLePlusRECENT:
         )
 
 
+class TestR01RattrapageDesAnciensRuns:
+    """`R-01` — les runs crees AVANT `cree_le` sont rattrapes au demarrage,
+    depuis leur PREMIER checkpoint. La date n'est jamais inventee : c'est
+    l'instant ou le run a reellement commence a s'executer."""
+
+    async def test_la_date_vient_du_PREMIER_checkpoint(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.core import database as db
+        from app.core.database import COLLECTION_LOADER_RUNS
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.base import en_document
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        await database.get_database().drop_collection("loader_runs")
+        ancien = _uuid4()
+        document = en_document(
+            LoaderRun(
+                _id=ancien, sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1), status=RunStatus.COMPLETED,
+                checkpoints=[
+                    {"phase": "ROLES", "horodatage": "2026-08-24T09:06:34.402707+00:00"},
+                    {"phase": "CLIENTS", "horodatage": "2026-08-24T09:12:00+00:00"},
+                ],
+            )
+        )
+        document.pop("cree_le", None)
+        await database.get_database()[COLLECTION_LOADER_RUNS].insert_one(document)
+
+        await db.rattraper_horodatage_des_runs()
+
+        relu = await LoaderRunRepository().obtenir(ancien)
+        assert relu is not None and relu.cree_le is not None
+        assert relu.cree_le.isoformat().startswith("2026-08-24T09:06:34"), (
+            "le PREMIER checkpoint, pas le dernier — c'est le debut du run"
+        )
+
+    async def test_un_run_SANS_checkpoint_ne_recoit_AUCUNE_date(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """On ne comble pas un trou par une valeur plausible."""
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.core import database as db
+        from app.core.database import COLLECTION_LOADER_RUNS
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.base import en_document
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        await database.get_database().drop_collection("loader_runs")
+        muet = _uuid4()
+        document = en_document(
+            LoaderRun(
+                _id=muet, sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1), status=RunStatus.FAILED,
+            )
+        )
+        document.pop("cree_le", None)
+        await database.get_database()[COLLECTION_LOADER_RUNS].insert_one(document)
+
+        await db.rattraper_horodatage_des_runs()
+
+        relu = await LoaderRunRepository().obtenir(muet)
+        assert relu is not None and relu.cree_le is None
+
+
 class TestV05PaysDeChaqueCompany:
     """`V-05` (24/08) — le formulaire de creation d'un depositaire doit
     n'offrir que les companies DU PAYS choisi. Le backend refusait deja « un

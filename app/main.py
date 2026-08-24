@@ -84,6 +84,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     database.connect()
     try:
         await database.ensure_indexes()
+        # `R-01` — les runs crees AVANT le champ `cree_le` n'ont pas de date :
+        # le tri chronologique ne peut pas les ordonner, et « le dernier run »
+        # reste arbitraire pour eux. On la lit dans leur premier checkpoint —
+        # jamais inventee. Idempotent, sans effet des que c'est fait.
+        await database.rattraper_horodatage_des_runs()
         await amorcer_super_admin()
     except Exception:
         logger.exception(

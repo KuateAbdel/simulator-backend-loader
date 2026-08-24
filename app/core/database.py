@@ -15,6 +15,8 @@ soit provisionnee.
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime
 from typing import Any, Final
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
@@ -64,6 +66,8 @@ COLLECTION_VERROUS: Final = "verrous"
 #: demande une action.
 COLLECTION_VERSIONS_SERVICES: Final = "service_versions"
 
+logger = logging.getLogger(__name__)
+
 _client: AsyncIOMotorClient[MongoDocument] | None = None
 
 
@@ -99,6 +103,42 @@ def get_database() -> AsyncIOMotorDatabase[MongoDocument]:
 
 def get_collection(name: str) -> AsyncIOMotorCollection[MongoDocument]:
     return get_database()[name]
+
+
+async def rattraper_horodatage_des_runs() -> None:
+    """`R-01` — donne une date aux runs crees AVANT le champ `cree_le`.
+
+    Le tri chronologique ne peut pas ordonner ce qui n'a pas de date : les
+    runs anterieurs se retrouvaient tous a egalite, et « le dernier run »
+    restait arbitraire pour eux.
+
+    La date n'est pas INVENTEE : elle est lue dans le PREMIER checkpoint du
+    run, qui porte son propre `horodatage` — c'est l'instant ou le run a
+    reellement commence a s'executer. Un run sans checkpoint n'en recoit
+    aucune : on ne comble pas un trou par une valeur plausible.
+
+    Idempotent : ne touche que les documents ou le champ manque.
+    """
+    collection = get_database()[COLLECTION_LOADER_RUNS]
+    curseur = collection.find(
+        {"cree_le": {"$exists": False}}, {"checkpoints": {"$slice": 1}}
+    )
+    rattrapes = 0
+    async for document in curseur:
+        points = document.get("checkpoints") or []
+        quand = points[0].get("horodatage") if points else None
+        if not quand:
+            continue
+        try:
+            date_reelle = datetime.fromisoformat(str(quand))
+        except ValueError:
+            continue
+        await collection.update_one(
+            {"_id": document["_id"]}, {"$set": {"cree_le": date_reelle}}
+        )
+        rattrapes += 1
+    if rattrapes:
+        logger.info("R-01 : %d run(s) horodate(s) depuis leur premier checkpoint", rattrapes)
 
 
 async def ensure_indexes() -> None:
