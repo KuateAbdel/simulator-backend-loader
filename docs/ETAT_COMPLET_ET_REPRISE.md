@@ -7,6 +7,72 @@
 
 ---
 
+## SESSION DU 24/08/2026 — L'HONNÊTETÉ DES ÉCRANS (lire EN PREMIER)
+
+**Backend + frontend, ~10 commits, CI et déploiements verts. 1140 tests.**
+Fil conducteur d'une exigence de Yaniv : *« le système doit être vrai, pas de
+fake, aucune incohérence »*.
+
+### Ce qui a été livré
+
+| # | Chantier | Où |
+|---|---|---|
+| `V-01` | **Onglet Versions** — ce que chaque service PORTE, et surtout ce qui a CHANGÉ. Relevé par `openapi.json`, TTL 3 h à la lecture (pas de tâche de fond), verrou C2 contre la double sonde. Le pire cas détecté : des chemins qui bougent **à version identique** | back + front |
+| `V-02` | **Le bouton « Pousser » ne ment plus** — la règle est écrite UNE fois (`_porte_d_operation`), consommée par la porte ET par `GET /pays` (`poussable`, `manques`) | back + front |
+| `V-03` | **Écosystème à CINQ niveaux** — pays › IMF › branche › agence › kiosque, agrégats par ligne, identifiants résolus en NOMS, anomalies nommées, treemap de charge, 3 mesures (concentration + Gini + référence, couverture bornée au périmètre, intégrité), **couverture inverse** (quartiers libres) | back + front |
+| `V-04` | **Dates de création** dans l'inventaire et la purge, depuis le journal d'audit. `null` = pas de nous, jamais une date inventée | back + front |
+| `V-05` | **Pays et état actif des companies** — `country_code` de `lenders_registry`, `is_active` de la fiche plateforme | back + front |
+| `I-ENT-1` | **INVARIANT** : on ne crée une entité que dans un pays EN OPÉRATION. Inscrit dans `DISCIPLINES.md` avec ses **deux faces** | back + front + doc |
+| `P-04` | **Liste des clients filtrable** (pays + sexe + profession), profil rangé à l'écriture, 2 requêtes Mongo, zéro appel FinZuu | back + front |
+| — | **Cascade** pays › région › ville › quartier sur le formulaire Dépositaire ; companies filtrées actives + du pays | front |
+| — | Recherche rapide + index A-D/E-H + pagination sur Géographie, Pays & Devises, Telcos ; zoom cartographique du globe | front |
+
+### Les bugs trouvés — et comment
+
+**Aucun ne produisait d'erreur.** Tous sont sortis d'une capture d'écran ou
+d'une mesure, jamais du build ni des tests.
+
+1. **`--danger`, `--warning`, `--success` n'existaient pas** dans le thème
+   FinZuu. Chaque `var(--danger)` était une propriété INVALIDE, donc ignorée :
+   tuile transparente, texte blanc sur blanc. Même piège que `--background` le
+   22/08. **Audit complet ensuite : les 33 tokens utilisés sont tous définis.**
+2. **Un canal par variable** — la carte de charge repeignait la tuile ENTIÈRE
+   en rouge dès qu'UN kiosque avait un défaut : 6 tuiles sur 8 rouges pour
+   4 kiosques sur 54. La teinte porte l'institution, un bandeau porte le défaut.
+3. **`COUVERTURE 12 / 3156`** — le dénominateur était le référentiel des
+   48 pays alors que le run n'en touche que 4. Un ratio qui faisait passer une
+   couverture correcte pour un échec.
+4. **La liste des pays figée à 4** dans l'écran Company, deux jours après que
+   le backend eut retiré le verrou. Six pays s'affichent maintenant.
+5. **L'arbre ne se confrontait à rien** — voir ci-dessous.
+6. **Ma propre borne de temps ne bornait rien** : `wait_for(f(await g()))`
+   évalue `await g()` AVANT que le délai ne l'enveloppe (49 s de tests au lieu
+   de 4).
+7. **Le quatrième état oublié** : pendant le chargement, le select des pays
+   restait vide ET muet — ce qui se lit comme une panne.
+
+### L'ARBRE SE CONFRONTE AU RÉEL (la question de Yaniv qui a le plus compté)
+
+*« Si je purge la base, plus rien ne s'affiche, n'est-ce pas ? »* — **NON, et
+c'était un mensonge par omission.** `org_hierarchy` est notre mémoire d'un run ;
+la purge n'y touche pas, et la plateforme peut être vidée de son côté.
+
+`GET /ecosysteme` confronte désormais ses Kiosques à depositary-service, par la
+MÊME réconciliation que l'écran Inventaire. Trois issues :
+
+- tout existe → *« chaque Kiosque de l'arbre existe encore sur la plateforme »*
+- base vidée → bandeau rouge : *« cet arbre décrit un état PASSÉ »*
+- service muet → *« arbre NON vérifié »*, et l'intégrité écrit **`?`**, jamais
+  `0` — un `0` serait une affirmation qu'on n'a pas mesurée
+
+### La règle qui a guidé toute la journée
+
+**Ce qu'on ne sait pas, on le DIT.** `null` n'est jamais comblé par un défaut
+plausible : pas de date = pas de nous ; pas d'état = état inconnu ; pas de
+mesure = « non vérifié ». Chaque fois, un test verrouille les deux branches.
+
+---
+
 ## SESSION DU 23/08/2026 — CAMPAGNE QA SUR LA PROD (lire EN PREMIER pour reprendre)
 
 **Aucune simulation : 45 cas joués contre `simul.api.fintech4esg.com` et le

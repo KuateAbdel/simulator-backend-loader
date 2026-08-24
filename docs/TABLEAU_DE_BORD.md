@@ -671,6 +671,48 @@ qui n'appartient pas au Loader.
 là-bas puis orphelin définitif ; et l'aperçu de rectification ÉCRIVAIT (il a
 créé `CVE`). Les deux corrigés et prouvés en prod.
 
+## D-quaterdecies. LA JOURNÉE DU 24/08 — L'HONNÊTETÉ DES ÉCRANS
+
+**Backend + frontend, ~10 commits, CI et déploiements verts, 1140 tests.**
+
+**Livrés** : `V-01` onglet Versions (ce que chaque service PORTE et ce qui a
+changé — le pire cas étant des chemins qui bougent à version identique) ·
+`V-02` le bouton « Pousser » ne ment plus (la règle écrite UNE fois, consommée
+par la porte ET par l'écran) · `V-03` **écosystème à 5 niveaux** (agrégats par
+ligne, identifiants résolus en NOMS, anomalies nommées, treemap de charge,
+concentration avec sa référence + Gini, couverture bornée au périmètre,
+**couverture inverse** = les quartiers libres) · `V-04` dates de création
+(inventaire + purge) · `V-05` pays et état actif des companies · `P-04` liste
+des clients filtrable par pays + sexe + profession · **cascade** pays › région
+› ville › quartier sur le Dépositaire · recherche + index A-D + pagination sur
+trois écrans · zoom cartographique du globe.
+
+**`I-ENT-1` élevé au rang d'INVARIANT** (Yaniv) : on ne crée une entité que
+dans un pays EN OPÉRATION — inscrit dans `DISCIPLINES.md` avec ses DEUX faces
+(le backend refuse en 422, l'écran n'offre que les pays en opération). Une
+seule face ne suffit pas : le verrou statique avait été retiré du backend le
+22/08 et l'écran est resté figé sur 4 pays pendant deux jours.
+
+**L'ARBRE SE CONFRONTE AU RÉEL.** Question de Yaniv : « si je purge la base,
+plus rien ne s'affiche ? » — c'était NON, un mensonge par omission.
+`GET /ecosysteme` confronte désormais ses Kiosques à depositary-service :
+base vidée → « cet arbre décrit un état PASSÉ » ; service muet → « non
+vérifié » et l'intégrité écrit `?`, **jamais 0**.
+
+**Sept bugs trouvés, aucun ne produisait d'erreur** — tous sortis d'une capture
+d'écran ou d'une mesure : les tokens `--danger/--warning/--success` inexistants
+(propriétés invalides, texte blanc sur blanc ; **audit complet ensuite : les 33
+tokens sont définis**) · la carte repeinte en rouge à 75 % pour 4 kiosques sur
+54 · `COUVERTURE 12/3156` (dénominateur global au lieu du périmètre) · la liste
+de pays figée · l'arbre qui ne se confrontait à rien · ma propre borne de temps
+qui ne bornait rien (`wait_for(f(await g()))`) · le 4ᵉ état oublié (chargement
+silencieux).
+
+**La règle de la journée** : ce qu'on ne sait pas, on le DIT. `null` n'est
+jamais comblé par un défaut plausible — pas de date = pas de nous ; pas d'état
+= état inconnu ; pas de mesure = non vérifié. Chaque fois, un test verrouille
+les deux branches.
+
 ## F. Les arbitrages qui n'appartiennent qu'à Yaniv
 
 **A-14 — TRANCHÉ par Yaniv le 23/08 et APPLIQUÉ** : la fiche `CV` du
