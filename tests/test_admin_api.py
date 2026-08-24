@@ -1361,7 +1361,14 @@ class TestLotCDashboard:
         assert mesures["concentration"]["verdict"] == "concentre", (
             "une seule IMF qui porte tous les kiosques n'est pas un ecosysteme"
         )
+        # LE DENOMINATEUR EST LE PERIMETRE, PAS LE GLOBE (defaut vu a l'ecran
+        # le 24/08 : « 12 villes / 3156 », ou 3156 etait le referentiel des 48
+        # pays alors que le run n'en touchait que quatre — un ratio qui ne veut
+        # rien dire, et qui fait passer une couverture correcte pour un echec).
         assert mesures["couverture"]["villes_du_referentiel"] > 0
+        assert mesures["couverture"]["villes_du_referentiel"] < 200, (
+            "borne aux villes des pays de l'arbre, pas aux 3156 du referentiel"
+        )
         assert mesures["integrite"]["branches_sans_agence"] == 0
 
     async def test_V03_la_couverture_INVERSE_dit_ou_creer_le_prochain(

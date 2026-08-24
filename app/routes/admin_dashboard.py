@@ -379,14 +379,44 @@ async def ecosysteme(
         if plus_grosse and total_kiosques
         else 0.0
     )
-    #: Seuil ASSUME : avec deux IMF par pays, une repartition parfaite donne
-    #: 50 %. Au-dela de 60 % pour UNE institution sur l'ensemble du reseau, ce
-    #: n'est plus un ecosysteme concurrentiel.
+    # UN NOMBRE NU NE JUGE RIEN.
+    #
+    # « 16,7 % » : est-ce bon ou mauvais ? Sans point de comparaison, personne
+    # ne peut le dire. On rend donc AUSSI la part ATTENDUE d'un reseau
+    # parfaitement reparti (100 / nb_imf), l'ecart a cet equilibre, et un vrai
+    # indice de concentration.
+    #
+    # GINI sur les kiosques par institution : 0 = parfaitement egal, 1 = une
+    # seule institution porte tout. C'est la mesure standard de concentration,
+    # et elle voit ce que le maximum seul ne voit pas — huit IMF dont sept
+    # minuscules et une enorme, ou huit IMF equivalentes, peuvent partager le
+    # meme maximum.
+    charges = sorted(c["agregats"]["kiosques"] for c in toutes_imf)
+    nb = len(charges)
+    somme = sum(charges) or 1
+    gini = (
+        round(
+            (2 * sum((i + 1) * v for i, v in enumerate(charges)) - (nb + 1) * somme)
+            / (nb * somme),
+            3,
+        )
+        if nb > 1
+        else 0.0
+    )
+    part_attendue = round(100 / nb, 1) if nb else 0.0
+    #: Seuils ASSUMES : au-dela de 60 % pour UNE institution, ce n'est plus un
+    #: ecosysteme concurrentiel. Le Gini complete — au-dela de 0,4 la
+    #: distribution est deja tres inegale meme sans geant unique.
     concentration = {
         "part_max_pourcent": part_max,
+        "part_attendue_pourcent": part_attendue,
+        "ecart_a_l_equilibre": round(part_max - part_attendue, 1),
+        "gini": gini,
+        "min_kiosques": charges[0] if charges else 0,
+        "max_kiosques": charges[-1] if charges else 0,
         "imf": (plus_grosse or {}).get("nom") or (plus_grosse or {}).get("id"),
-        "nb_imf": len(toutes_imf),
-        "verdict": "concentre" if part_max > 60 else "reparti",
+        "nb_imf": nb,
+        "verdict": "concentre" if part_max > 60 or gini > 0.4 else "reparti",
     }
 
     # 2. COUVERTURE — un reseau national, ou trois agences ?
@@ -400,6 +430,23 @@ async def ecosysteme(
         for p in arbre_pays for c in p["companies"] for b in c["branches"]
         for a in b["agences"] for k in a["kiosques"] if k["quartier_id"]
     }
+    # LE DENOMINATEUR EST LE PERIMETRE, PAS LE GLOBE.
+    #
+    # Defaut vu a l'ecran le 24/08 : « 12 villes / 3156 ». Le 3156 etait le
+    # referentiel ENTIER (48 pays portes par le Loader), alors que le run n'en
+    # touche que quatre. Le ratio ne voulait rien dire, et pire : il faisait
+    # passer une couverture correcte pour un echec.
+    #
+    # On compte donc les villes et les quartiers DES PAYS DE L'ARBRE — le seul
+    # perimetre contre lequel une couverture se juge.
+    codes_arbre = {str(p["iso2"]) for p in arbre_pays}
+    villes_du_perimetre = [
+        v for v in referentiel.villes.values() if v.country_iso2 in codes_arbre
+    ]
+    ids_villes_perimetre = {v.city_id for v in villes_du_perimetre}
+    quartiers_du_perimetre = [
+        q for q in referentiel.quartiers.values() if q.city_id in ids_villes_perimetre
+    ]
     couverture = {
         "pays": len(arbre_pays),
         "regions": len(
@@ -411,9 +458,9 @@ async def ecosysteme(
             }
         ),
         "villes": len(villes_couvertes),
-        "villes_du_referentiel": len(referentiel.villes),
+        "villes_du_referentiel": len(villes_du_perimetre),
         "quartiers": len(quartiers_couverts),
-        "quartiers_du_referentiel": len(referentiel.quartiers),
+        "quartiers_du_referentiel": len(quartiers_du_perimetre),
         # Ce qui reste a couvrir, tous pays confondus — la reponse a « ou
         # creer le prochain depositaire ».
         "quartiers_libres": sum(
