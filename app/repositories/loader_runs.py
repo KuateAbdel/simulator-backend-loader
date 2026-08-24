@@ -67,6 +67,10 @@ class LoaderRunRepository(RepositoryBase):
         """
         run = LoaderRun(
             id=run_id or uuid4(),
+            # `R-01` — l'horodatage est pose ICI, au seul endroit ou un run
+            # nait. Sans lui, « le dernier run » n'a pas de sens (voir le tri
+            # de `lister()`).
+            cree_le=datetime.now(UTC),
             sim_start_date=sim_start_date,
             sim_end_date=sim_end_date,
             status=RunStatus.PENDING,
@@ -123,8 +127,24 @@ class LoaderRunRepository(RepositoryBase):
         Append-only : aucune methode de suppression n'existe sur ce
         repository, et c'est voulu — l'historique est une preuve (CR-06).
         """
+        # `R-01` — ON TRIE SUR LE TEMPS, PAS SUR UN UUID.
+        #
+        # Le tri etait `sort("_id", -1)`. `_id` est un UUID4 : ALEATOIRE. Ce
+        # tri ne donnait donc AUCUNE chronologie, alors que la docstring
+        # promettait « du plus recent au plus ancien ». `_dernier_run()`
+        # rendait un run tire au hasard — et apres le REAL du 24/08, tous les
+        # ecrans de l'observatoire affichaient zero parce qu'ils lisaient la
+        # preparation DRY_RUN.
+        #
+        # `_id` reste en second critere : il departage deux runs de meme
+        # horodatage de facon STABLE, pour que deux lectures rendent le meme
+        # ordre — un ecran qui change d'ordre a chaque rafraichissement n'est
+        # pas une source de confiance.
         documents = await (
-            self.collection.find().sort("_id", -1).limit(int(limite)).to_list(None)
+            self.collection.find()
+            .sort([("cree_le", -1), ("_id", -1)])
+            .limit(int(limite))
+            .to_list(None)
         )
         return [LoaderRun.model_validate(d) for d in documents]
 

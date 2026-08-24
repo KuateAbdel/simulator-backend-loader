@@ -128,6 +128,21 @@ class LoaderRun(LoaderDocument):
     """
 
     id: UUID = Field(alias="_id", description="run_id Loader -- distinct du run_id Faker")
+    #: `R-01` (24/08) — L'HORODATAGE, sans lequel « le dernier run » n'existe pas.
+    #:
+    #: `lister()` triait sur `_id`, en le decrivant comme « du plus recent au
+    #: plus ancien ». Or `_id` est un UUID4 : ALEATOIRE. Le tri ne donnait
+    #: aucune chronologie — « le dernier run » etait un run TIRE AU HASARD.
+    #:
+    #: Consequence mesuree le 24/08 : apres un REAL qui avait cree 500 clients,
+    #: le tableau de bord, l'ecosysteme, la population et l'index inverse
+    #: affichaient TOUS zero — ils lisaient la preparation DRY_RUN, qui n'ecrit
+    #: rien. Et deux personnes pouvaient voir deux runs differents au meme
+    #: instant, ce qui interdit a l'ecran d'etre une source de confiance.
+    #:
+    #: `None` sur les runs ANTERIEURS a ce champ : le tri les place apres, sans
+    #: les perdre — l'historique est append-only (CR-06).
+    cree_le: datetime | None = None
     sim_start_date: date
     sim_end_date: date
     status: RunStatus = RunStatus.PENDING

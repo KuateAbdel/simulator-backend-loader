@@ -3276,6 +3276,105 @@ class TestPermissionsEtCreationDeGroupe:
         assert "relecture" in reponse.json()["detail"]
 
 
+class TestR01LeDernierRunEstLePlusRECENT:
+    """`R-01` (24/08) — « le dernier run » n'existait pas.
+
+    `lister()` triait sur `_id`, en promettant « du plus recent au plus
+    ancien ». Or `_id` est un UUID4 : ALEATOIRE. Le tri ne donnait aucune
+    chronologie, et `_dernier_run()` rendait un run TIRE AU HASARD.
+
+    Consequence MESUREE le 24/08 : apres un REAL qui avait cree 500 clients,
+    le tableau de bord, l'ecosysteme, la population et l'index inverse
+    affichaient TOUS zero — ils lisaient la preparation DRY_RUN, qui n'ecrit
+    rien. Et deux personnes pouvaient voir deux runs differents au meme
+    instant, ce qui interdit a l'ecran d'etre une source de confiance."""
+
+    async def test_l_historique_est_CHRONOLOGIQUE_pas_alphabetique_sur_l_uuid(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        import asyncio
+        from datetime import date as _date
+
+        from app.models.enums import RunMode
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        await database.get_database().drop_collection("loader_runs")
+        depot = LoaderRunRepository()
+        ordre = []
+        for _ in range(6):
+            run = await depot.creer(
+                sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1),
+                mode=RunMode.DRY_RUN,
+            )
+            ordre.append(run.id)
+            await asyncio.sleep(0.01)  # horodatages distincts
+
+        listes = await depot.lister(limite=10)
+        assert [r.id for r in listes] == list(reversed(ordre)), (
+            "du plus RECENT au plus ancien — un tri sur l'UUID donnerait un "
+            "ordre aleatoire, et « le dernier run » serait un run au hasard"
+        )
+
+    async def test_deux_lectures_rendent_le_MEME_ordre(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Un ecran qui change d'ordre a chaque rafraichissement n'est pas une
+        source de confiance. `_id` departage en second, de facon STABLE."""
+        from datetime import date as _date
+
+        from app.models.enums import RunMode
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        await database.get_database().drop_collection("loader_runs")
+        depot = LoaderRunRepository()
+        for _ in range(5):
+            await depot.creer(
+                sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1),
+                mode=RunMode.DRY_RUN,
+            )
+        premiere = [r.id for r in await depot.lister(limite=10)]
+        seconde = [r.id for r in await depot.lister(limite=10)]
+        assert premiere == seconde
+
+    async def test_un_run_SANS_horodatage_n_est_pas_perdu(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Les runs anterieurs au champ n'ont pas de date. Ils passent APRES,
+        jamais a la trappe — l'historique est append-only (CR-06)."""
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.core.database import COLLECTION_LOADER_RUNS
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunMode, RunStatus
+        from app.repositories.base import en_document
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        await database.get_database().drop_collection("loader_runs")
+        ancien = _uuid4()
+        document = en_document(
+            LoaderRun(
+                _id=ancien, sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1), status=RunStatus.COMPLETED,
+            )
+        )
+        document.pop("cree_le", None)  # exactement un run d'AVANT le champ
+        await database.get_database()[COLLECTION_LOADER_RUNS].insert_one(document)
+
+        depot = LoaderRunRepository()
+        recent = await depot.creer(
+            sim_start_date=_date(2026, 2, 1),
+            sim_end_date=_date(2026, 8, 1),
+            mode=RunMode.REAL,
+        )
+        listes = await depot.lister(limite=10)
+        assert [r.id for r in listes] == [recent.id, ancien], (
+            "le run horodate d'abord, l'ancien ensuite — et AUCUN n'est perdu"
+        )
+
+
 class TestV05PaysDeChaqueCompany:
     """`V-05` (24/08) — le formulaire de creation d'un depositaire doit
     n'offrir que les companies DU PAYS choisi. Le backend refusait deja « un
