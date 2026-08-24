@@ -100,6 +100,21 @@ class Settings(BaseSettings):
     depositary_service_base: str = "https://depositary-service.test.services.fintech4esg.com"
     client_service_base: str = "https://client-service.test.services.fintech4esg.com"
     collect_service_base: str = "https://collect-service.test.services.fintech4esg.com"
+    #: `V-01` — le 11e service. Il manquait au releve de version alors qu'il
+    #: fait partie de l'ecosysteme au meme titre que les autres. L'URL suit la
+    #: convention des neuf precedents ; `USSD_SERVICE_BASE` la corrige sans
+    #: toucher au code si l'instance de test en expose une autre.
+    ussd_service_base: str = "https://ussd-service.test.services.fintech4esg.com"
+    #: `V-01` — decouverts le 24/08 dans les journaux de transparence des
+    #: certificats, alors qu'ils tournent sur l'instance de test depuis
+    #: juillet et aout. Le Loader les ignorait : un service absent du releve
+    #: est un service dont personne ne voit ni l'etat ni le changement.
+    bulk_paiement_service_base: str = (
+        "https://bulk-paiement-service.test.services.fintech4esg.com"
+    )
+    notification_service_base: str = (
+        "https://notification-service.test.services.fintech4esg.com"
+    )
 
     # -- Credentials ROOT (D-DEP-7 : ROOT exclusif sur depositary-service) -
     root_username: str | None = None

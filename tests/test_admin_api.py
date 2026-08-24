@@ -1161,7 +1161,16 @@ class TestLotCDashboard:
         reponse = await client.get("/admin/dashboard", headers=entetes)
         assert reponse.status_code == 200, reponse.text
         corps = reponse.json()
-        assert len(corps["services"]) == 10, "les 9 services FinZuu + Faker"
+        # Le compte SUIT `SERVICES_SONDES` au lieu d'etre grave ici : ce test
+        # a casse le 24/08 en ajoutant ussd-service, bulk-paiement-service et
+        # notification-service (10 -> 13). Un nombre en dur ne verifiait rien
+        # d'utile — il exigeait juste que personne n'ajoute de service.
+        # Ce qui compte, c'est que la vue sonde TOUT ce qui est declare.
+        from app.routes.admin_dashboard import SERVICES_SONDES
+
+        assert len(corps["services"]) == len(SERVICES_SONDES)
+        assert {s["nom"] for s in corps["services"]} == {n for n, _ in SERVICES_SONDES}
+        assert "faker" in {s["nom"] for s in corps["services"]}
         assert all(s["etat"] == "up" for s in corps["services"])
         assert corps["compteurs"]["branches"] == 1
         assert corps["compteurs"]["kiosques"] == 1

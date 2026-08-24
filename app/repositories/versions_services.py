@@ -67,6 +67,32 @@ class VersionsServicesRepository:
             return None
         return (datetime.now(UTC) - vieux).total_seconds()
 
+    async def exposition_connue(self) -> dict[str, str]:
+        """`V-06` — les dates de premiere exposition DEJA relevees.
+
+        Cette date est **immuable** : la premiere emission d'un certificat
+        pour un hote a eu lieu une fois, et rien ne la changera. On la range
+        donc chez nous des qu'on la connait, et on n'interroge plus jamais la
+        source exterieure pour ce service. Elle n'est consultee que pour un
+        hote INCONNU — un service qui vient d'apparaitre.
+        """
+        connues: dict[str, str] = {}
+        async for doc in self.collection.find({}, {"expose_depuis": 1}):
+            jour = doc.get("expose_depuis")
+            if isinstance(jour, str) and jour:
+                connues[str(doc["_id"])] = jour
+        return connues
+
+    async def graver_exposition(self, service: str, jour: str) -> None:
+        """Grave la date, UNE SEULE FOIS. Un second appel ne l'ecrase pas :
+        si la source exterieure rendait un jour une valeur differente, ce
+        serait elle qui aurait tort — la premiere emission ne bouge pas."""
+        await self.collection.update_one(
+            {"_id": service},
+            {"$setOnInsert": {"_id": service}, "$set": {"expose_depuis": jour}},
+            upsert=True,
+        )
+
     async def enregistrer(self, service: str, releve: dict[str, Any]) -> dict[str, Any]:
         """Range un relevé et rend le PRECEDENT — c'est lui qui permet la
         comparaison. Le premier relevé d'un service n'a pas de precedent, et

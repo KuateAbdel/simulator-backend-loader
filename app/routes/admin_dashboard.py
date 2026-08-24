@@ -48,6 +48,12 @@ SERVICES_SONDES: tuple[tuple[str, str], ...] = (
     ("depositary-service", settings.depositary_service_base),
     ("client-service", settings.client_service_base),
     ("collect-service", settings.collect_service_base),
+    # `V-01` — le 11e service, oublie du releve. Il est sonde comme les autres :
+    # un service absent de cette liste est un service dont personne ne verra ni
+    # l'etat ni le changement de version.
+    ("ussd-service", settings.ussd_service_base),
+    ("bulk-paiement-service", settings.bulk_paiement_service_base),
+    ("notification-service", settings.notification_service_base),
     ("faker", settings.faker_base_url),
 )
 

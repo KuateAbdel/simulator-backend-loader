@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
@@ -53,6 +54,8 @@ from fastapi import APIRouter, Depends
 from app.repositories.versions_services import VersionsServicesRepository
 from app.routes.admin_dashboard import SERVICES_SONDES
 from app.routes.dependances import SessionAdmin, admin_complet, exige_admin
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/versions", tags=["admin — versions"])
 
@@ -74,6 +77,84 @@ DELAI_SONDE = 5.0
 #: disparait pas parce qu'un service redemarre — on garde la derniere connue,
 #: seule sa date vieillit.
 GRAVITES = {"changement": 0, "anomalie": 1, "stable": 2, "jamais_lu": 3}
+
+
+
+#: `V-06` — LA DATE D'EXPOSITION, ET POURQUOI ELLE VIENT DE LA.
+#:
+#: Le boss veut savoir DEPUIS QUAND chaque service est deploye sur l'instance
+#: de test. La plateforme ne le publie nulle part : mesure du 24/08 sur les
+#: 12 services — `/health` rend `{"status":"ok"}` et rien d'autre, `/info`,
+#: `/version`, `/actuator/info` et `/metrics` rendent tous 404, et le seul
+#: en-tete non trivial est `server: APISIX/3.13.0`, la passerelle.
+#:
+#: Le certificat TLS courant ne repond pas non plus a la question : Let's
+#: Encrypt renouvelle tous les ~60 jours, et les dates lues (juillet-aout)
+#: sont des RENOUVELLEMENTS — Yaniv l'a confirme, ces services tournent
+#: depuis deux mois et plus.
+#:
+#: Les JOURNAUX DE TRANSPARENCE DES CERTIFICATS, eux, gardent TOUTES les
+#: emissions jamais faites pour un domaine. La PREMIERE donne le jour ou
+#: l'hote est apparu publiquement — c'est-a-dire sa mise en service. Mesure
+#: du 24/08 : client-service et config-service au 27/05, ussd-service au
+#: 05/07, notification-service au 21/08. Cette liste a d'ailleurs REVELE deux
+#: services que le Loader ignorait.
+#:
+#: CE QUE CETTE DATE N'EST PAS : la date du dernier deploiement de code. Un
+#: service redeploye aujourd'hui garde sa date de mai. La colonne porte donc
+#: « expose depuis le », jamais « deploye le » — et le changement de version
+#: (`V-01`) reste ce qui dit qu'un service a BOUGE.
+SOURCE_TRANSPARENCE = "https://api.certspotter.com/v1/issuances"
+DOMAINE_PLATEFORME = "test.services.fintech4esg.com"
+
+#: La premiere emission d'un certificat est IMMUABLE : une fois relevee, elle
+#: ne changera jamais. On la relit une fois par jour, pas toutes les trois
+#: heures — et seulement pour capter un service NOUVEAU.
+FRAICHEUR_EXPOSITION_SECONDES = 24 * 3600
+
+
+async def _dates_exposition() -> dict[str, str | None]:
+    """La date de premiere exposition de chaque hote, par les journaux CT.
+
+    **Ne rend JAMAIS une date approchee.** Source muette ou hote absent des
+    journaux : la valeur est `None`, et l'ecran affiche « non relevé ». Une
+    date inventee sur cet ecran serait pire que pas de date du tout — c'est
+    exactement ce qu'on a refuse de faire avec le certificat courant.
+    """
+    parametres = {
+        "domain": DOMAINE_PLATEFORME,
+        "include_subdomains": "true",
+        "expand": "dns_names",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            reponse = await client.get(SOURCE_TRANSPARENCE, params=parametres)
+            reponse.raise_for_status()
+            emissions = reponse.json()
+    except Exception as erreur:
+        logger.warning("journaux de transparence indisponibles : %s", erreur)
+        return {}
+
+    if not isinstance(emissions, list):
+        return {}
+
+    premieres: dict[str, str] = {}
+    for emission in emissions:
+        jour = str(emission.get("not_before", ""))[:10]
+        if not jour:
+            continue
+        for hote in emission.get("dns_names") or []:
+            nom = str(hote)
+            if nom.startswith("*."):
+                continue
+            if nom not in premieres or jour < premieres[nom]:
+                premieres[nom] = jour
+    return dict(premieres)
+
+
+def _hote_du_service(nom: str, base: str) -> str:
+    """L'hote d'un service, tel qu'il apparait dans les journaux CT."""
+    return str(base).split("://")[-1].split("/")[0].split(":")[0]
 
 
 async def _relever_un(client: httpx.AsyncClient, nom: str, base: str) -> dict[str, Any]:
@@ -171,8 +252,40 @@ async def _relever_tout() -> None:
         await depot.enregistrer(nom, releve)
 
 
+async def _completer_exposition(depot: VersionsServicesRepository) -> dict[str, str]:
+    """`V-06` — les dates d'exposition, en interrogeant la source LE MOINS
+    POSSIBLE.
+
+    La date est immuable (voir `SOURCE_TRANSPARENCE`). On lit donc d'abord ce
+    qu'on a deja grave, et on n'appelle les journaux CT que s'il MANQUE au
+    moins un service — c'est-a-dire a la toute premiere lecture, puis
+    uniquement quand un service nouveau apparait dans `SERVICES_SONDES`.
+
+    Faker est hors du domaine de la plateforme : son absence des journaux
+    n'est pas un trou, c'est normal, et sa date reste `None`.
+    """
+    connues = await depot.exposition_connue()
+    manquants = [nom for nom, _ in SERVICES_SONDES if nom not in connues]
+    if not manquants:
+        return connues
+
+    premieres = await _dates_exposition()
+    if not premieres:
+        return connues
+
+    for nom, base in SERVICES_SONDES:
+        if nom in connues:
+            continue
+        jour = premieres.get(_hote_du_service(nom, base))
+        if jour:
+            await depot.graver_exposition(nom, jour)
+            connues[nom] = jour
+    return connues
+
+
 async def _servir(depot: VersionsServicesRepository) -> dict[str, Any]:
     documents = await depot.dernier_releve()
+    exposition = await _completer_exposition(depot)
     lignes: list[dict[str, Any]] = []
     for nom, _base in SERVICES_SONDES:
         doc = documents.get(nom)
@@ -188,6 +301,7 @@ async def _servir(depot: VersionsServicesRepository) -> dict[str, Any]:
                     "commentaire": "version jamais lue",
                     "releve_le": None,
                     "stable_depuis": None,
+                    "expose_depuis": exposition.get(nom),
                 }
             )
             continue
@@ -205,6 +319,10 @@ async def _servir(depot: VersionsServicesRepository) -> dict[str, Any]:
                 **verdict,
                 "releve_le": _horodatage(doc.get("releve_le")),
                 "stable_depuis": _horodatage(doc.get("vu_stable_depuis")),
+                # `V-06` — le jour ou l'hote est apparu publiquement. `None`
+                # quand les journaux ne le portent pas : « non relevé », jamais
+                # une date approchee.
+                "expose_depuis": exposition.get(nom),
             }
         )
 
