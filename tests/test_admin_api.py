@@ -3276,6 +3276,63 @@ class TestPermissionsEtCreationDeGroupe:
         assert "relecture" in reponse.json()["detail"]
 
 
+class TestV05PaysDeChaqueCompany:
+    """`V-05` (24/08) — le formulaire de creation d'un depositaire doit
+    n'offrir que les companies DU PAYS choisi. Le backend refusait deja « un
+    kiosque a Douala pour une company de Dakar » (422 INCOHERENCE), mais
+    l'ecran le proposait quand meme : une liste qui offre un choix impossible
+    fait travailler l'utilisateur pour rien.
+
+    La source est `lenders_registry`, qui porte `country_code` — pas une
+    deduction depuis le nom."""
+
+    async def test_le_pays_vient_du_REGISTRE_jamais_du_nom(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        from app.models.enums import LenderType
+        from app.repositories.lenders_registry import LendersRegistryRepository
+        from app.routes import admin_inventaire
+
+        await _registre_vierge()
+        await database.get_database().drop_collection("lenders_registry")
+        camerounaise, sans_role = _uuid4(), _uuid4()
+        await LendersRegistryRepository().enregistrer(
+            company_id=camerounaise,
+            lender_type=LenderType.LOCAL,
+            country_code="CM",
+        )
+
+        class _Faux:
+            async def lister_companies(self):  # type: ignore[no-untyped-def]
+                return [
+                    {"_id": str(camerounaise), "name": "IMF du Wouri", "short_name": "WOURI"},
+                    {"_id": str(sans_role), "name": "Societe sans role", "short_name": "SSR"},
+                ]
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_inventaire, "_client_companies", lambda: _Faux())
+        entetes = await _session_complete(client)
+        corps = (
+            await client.get("/admin/inventaire/companies", headers=entetes)
+        ).json()
+        toutes = [
+            ligne
+            for statut in corps
+            if isinstance(corps[statut], list)
+            for ligne in corps[statut]
+        ]
+        avec_pays = next(x for x in toutes if x["id"] == str(camerounaise))
+        sans_pays = next(x for x in toutes if x["id"] == str(sans_role))
+        assert avec_pays["pays"] == "CM", avec_pays
+        assert sans_pays["pays"] is None, (
+            "absente du registre : pays INCONNU, jamais devine depuis le nom"
+        )
+
+
 class TestV04DatesDeCreation:
     """`V-04` (23/08, demande administration) — la DATE de creation dans
     l'inventaire ET la purge.

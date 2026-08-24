@@ -231,9 +231,31 @@ async def classer_companies(plateforme: list[dict[str, Any]]) -> dict[str, Any]:
     dans `short_name`. Un disparu ici est GRAVE : company-service n'a aucun
     DELETE, une company du registre absente la-bas ne devrait pas exister."""
     registre = {cid: "" for cid in await registre_companies()}
-    return await _classer_par_marqueur(
+    classement = await _classer_par_marqueur(
         plateforme, registre, champ_marqueur="short_name", entity_type="Company"
     )
+
+    # `V-05` (24/08) — LE PAYS DE CHAQUE COMPANY.
+    #
+    # Le formulaire de creation d'un depositaire (US-D3) doit n'offrir que les
+    # companies DU PAYS choisi : le backend refuse deja « un kiosque a Douala
+    # pour une company de Dakar » par un 422 INCOHERENCE, mais l'ecran le
+    # proposait quand meme. Une liste qui offre un choix impossible fait
+    # travailler l'utilisateur pour rien.
+    #
+    # La source est `lenders_registry`, qui porte `country_code` (EF-12). Une
+    # company absente du registre — creee sans role de Lender — n'a pas de
+    # pays connu : on rend `None`, jamais un pays devine.
+    pays_par_company: dict[str, str | None] = {}
+    curseur = get_collection(COLLECTION_LENDERS_REGISTRY).find(
+        {}, {"company_id": 1, "country_code": 1}
+    )
+    async for document in curseur:
+        pays_par_company[str(document.get("company_id"))] = document.get("country_code")
+    for statut in (STATUT_A_NOUS, STATUT_ETRANGER, STATUT_MARQUE_INCONNU, STATUT_DISPARU):
+        for ligne in classement.get(statut, []):
+            ligne["pays"] = pays_par_company.get(str(ligne.get("id")))
+    return classement
 
 
 async def registre_depositaires() -> dict[str, str]:
