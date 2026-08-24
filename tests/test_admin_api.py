@@ -1186,6 +1186,203 @@ class TestLotCDashboard:
             "structure que la plateforme ne sait pas montrer"
         )
 
+    async def test_V03_l_arbre_a_CINQ_niveaux_pays_puis_IMF(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """`V-03` (23/08) — l'arbre en avait TROIS et commencait a la Branche.
+        Sur le plan reel : 20 branches a plat, sans pays, et les deux IMF d'un
+        meme pays y apparaissaient en lignes jumelles « Centre » / « Centre »,
+        impossibles a distinguer."""
+        entetes = await _session_complete(client)
+        await self._semer_un_run()
+        corps = (
+            await client.get("/admin/dashboard/ecosysteme", headers=entetes)
+        ).json()
+        assert corps["pays"], "le niveau PAYS existe"
+        pays = corps["pays"][0]
+        assert pays["iso2"] == "CM"
+        assert pays["nom"] == "Cameroun", "le pays porte son NOM, pas son code"
+        assert pays["companies"], "le niveau IMF existe"
+        imf = pays["companies"][0]
+        assert imf["branches"], "et sous l'IMF, ses branches"
+        assert imf["branches"][0]["agences"][0]["kiosques"], "cinq niveaux"
+
+    async def test_V03_chaque_niveau_porte_ses_AGREGATS(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Une ligne qui porte ses totaux n'oblige jamais a deplier pour
+        savoir ce qu'il y a dessous — c'est ce qui separe un arbre lisible
+        d'un arbre decoratif."""
+        entetes = await _session_complete(client)
+        await self._semer_un_run()
+        corps = (
+            await client.get("/admin/dashboard/ecosysteme", headers=entetes)
+        ).json()
+        pays = corps["pays"][0]
+        assert pays["agregats"]["kiosques"] == 1
+        assert pays["agregats"]["agents"] == 1
+        assert pays["agregats"]["clients"] == 1
+        assert pays["agregats"]["companies"] == 1
+        # et le total remonte bien depuis la feuille
+        imf = pays["companies"][0]
+        assert imf["agregats"]["clients"] == pays["agregats"]["clients"]
+
+    async def test_V03_les_IDENTIFIANTS_deviennent_des_NOMS(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """L'ecran rendait `"quartier": "CM-DT-001"`. Pour savoir qu'il
+        s'agit de Bastos, il fallait ouvrir la base. Un ecran qui oblige a
+        aller chercher ailleurs ce qu'il affiche n'a pas fait son travail."""
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+        from app.repositories.org_hierarchy import OrgHierarchyRepository
+
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        await database.get_database().drop_collection("org_hierarchy")
+        run, company = _uuid4(), _uuid4()
+        await LoaderRunRepository().remplacer(
+            LoaderRun(
+                _id=run, sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1), status=RunStatus.COMPLETED,
+            )
+        )
+        arbre = OrgHierarchyRepository()
+        # Des identifiants REELS du referentiel : CM-02 = Centre,
+        # CM-CT-01 = Yaounde, CM-DT-001 = Bastos.
+        branche = await arbre.ajouter_branche(
+            run_id=run, company_id=company, name="Branche Centre",
+            country_code="CM", region_id="CM-02", company_nom="IMF Test",
+        )
+        agence = await arbre.ajouter_agence(
+            run_id=run, branche_id=branche.id, company_id=company,
+            name="Agence Yaounde", country_code="CM", city_id="CM-CT-01",
+        )
+        await arbre.ajouter_kiosque(
+            run_id=run, agence_id=agence.id, company_id=company,
+            name="Kiosque Bastos", country_code="CM",
+            district_id="CM-DT-001", depositary_id=_uuid4(),
+        )
+
+        corps = (
+            await client.get("/admin/dashboard/ecosysteme", headers=entetes)
+        ).json()
+        branche_rendue = corps["branches"][0]
+        assert branche_rendue["pays_nom"] == "Cameroun"
+        assert branche_rendue["region_id"] == "CM-02", "l'identifiant reste disponible"
+        assert branche_rendue["region"] == "Centre", "et le NOM s'affiche"
+        agence_rendue = branche_rendue["agences"][0]
+        assert agence_rendue["ville"] == "Yaounde", agence_rendue
+        kiosque = agence_rendue["kiosques"][0]
+        assert kiosque["quartier"] == "Bastos", kiosque
+        assert kiosque["quartier_id"] == "CM-DT-001"
+
+    async def test_V03_un_identifiant_INCONNU_n_est_JAMAIS_maquille_en_nom(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Un quartier absent du referentiel garde son identifiant brut. Lui
+        inventer un nom serait un mensonge d'ecran — et masquerait justement
+        le cas qu'il faut voir : une geographie qui a bouge sous l'arbre."""
+        entetes = await _session_complete(client)
+        await self._semer_un_run()  # seme des identifiants qui n'existent pas
+        corps = (
+            await client.get("/admin/dashboard/ecosysteme", headers=entetes)
+        ).json()
+        branche = corps["branches"][0]
+        assert branche["region"] == branche["region_id"], (
+            "identifiant inconnu -> on rend l'identifiant, jamais un nom invente"
+        )
+
+    async def test_V03_les_ANOMALIES_structurelles_sont_NOMMEES(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """`UC-09` postcondition : un Agent par Kiosque, sans exception. Un
+        kiosque sans agent n'ouvre pas — l'arbre doit le dire, pas le taire."""
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import NiveauOrganisation, RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+        from app.repositories.org_hierarchy import OrgHierarchyRepository
+
+        entetes = await _session_complete(client)
+        await database.get_database().drop_collection("loader_runs")
+        await database.get_database().drop_collection("org_hierarchy")
+        run, company = _uuid4(), _uuid4()
+        await LoaderRunRepository().remplacer(
+            LoaderRun(
+                _id=run, sim_start_date=_date(2026, 2, 1),
+                sim_end_date=_date(2026, 8, 1), status=RunStatus.COMPLETED,
+            )
+        )
+        arbre = OrgHierarchyRepository()
+        branche = await arbre.ajouter_branche(
+            run_id=run, company_id=company, name="Branche Littoral",
+            country_code="CM", region_id="CM-03", company_nom="IMF Test",
+        )
+        agence = await arbre.ajouter_agence(
+            run_id=run, branche_id=branche.id, company_id=company,
+            name="Agence Douala", country_code="CM", city_id="CM-CT-02",
+        )
+        await arbre.ajouter_kiosque(
+            run_id=run, agence_id=agence.id, company_id=company,
+            name="Kiosque Bepanda", country_code="CM",
+            district_id="CM-DT-010", depositary_id=_uuid4(),
+        )  # AUCUN agent rattache
+
+        corps = (
+            await client.get("/admin/dashboard/ecosysteme", headers=entetes)
+        ).json()
+        kiosque = corps["pays"][0]["companies"][0]["branches"][0]["agences"][0]["kiosques"][0]
+        assert any("aucun agent" in a for a in kiosque["anomalies"]), kiosque
+        assert corps["mesures"]["integrite"]["kiosques_sans_agent"] == 1
+        assert corps["pays"][0]["companies"][0]["nom"] == "IMF Test", (
+            "le nom de l'IMF est range avec la branche — sinon l'ecran groupe "
+            "par UUID et deux IMF du meme pays deviennent indiscernables"
+        )
+        assert NiveauOrganisation.KIOSQUE  # garde l'import utile
+
+    async def test_V03_les_TROIS_MESURES_disent_si_c_est_credible(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Un compteur dit COMBIEN. Ces trois-la disent SI C'EST CREDIBLE."""
+        entetes = await _session_complete(client)
+        await self._semer_un_run()
+        mesures = (
+            await client.get("/admin/dashboard/ecosysteme", headers=entetes)
+        ).json()["mesures"]
+        assert mesures["concentration"]["nb_imf"] == 1
+        assert mesures["concentration"]["part_max_pourcent"] == 100.0
+        assert mesures["concentration"]["verdict"] == "concentre", (
+            "une seule IMF qui porte tous les kiosques n'est pas un ecosysteme"
+        )
+        assert mesures["couverture"]["villes_du_referentiel"] > 0
+        assert mesures["integrite"]["branches_sans_agence"] == 0
+
+    async def test_V03_la_couverture_INVERSE_dit_ou_creer_le_prochain(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """`D-03` — un quartier = UN kiosque. Les quartiers NON pris sont
+        litteralement les emplacements disponibles. Sans cela, ouvrir le
+        formulaire US-D3 revenait a deviner un quartier libre dans une liste
+        de plusieurs centaines, puis a se faire refuser."""
+        entetes = await _session_complete(client)
+        await self._semer_un_run()
+        corps = (
+            await client.get("/admin/dashboard/ecosysteme", headers=entetes)
+        ).json()
+        libres = corps["pays"][0]["quartiers_libres"]
+        assert libres["compte"] > 0, "le referentiel en porte bien plus qu'un"
+        assert libres["exemples"], "et l'ecran en montre quelques-uns"
+        premier = libres["exemples"][0]
+        assert premier["quartier"] and premier["ville"] and premier["region"], premier
+        assert corps["mesures"]["couverture"]["quartiers_libres"] == libres["compte"]
+
     async def test_US_E2_un_run_sans_arbre_est_un_404(
         self, client: httpx.AsyncClient
     ) -> None:

@@ -163,50 +163,301 @@ async def ecosysteme(
         for noeud in noeuds:
             enfants_de.setdefault(noeud.parent_id, []).append(noeud)
 
+    # LES IDENTIFIANTS DEVIENNENT DES NOMS.
+    #
+    # L'ecran rendait `"quartier": "CM-DT-001"`. Pour savoir qu'il s'agit de
+    # Bastos, il fallait ouvrir la base. Un ecran qui oblige a aller chercher
+    # ailleurs ce qu'il affiche n'a pas fait son travail — et la question
+    # « creer un depositaire dans TEL quartier » devenait un exercice de
+    # correspondance manuelle.
+    from app.repositories.surcouche import SurcoucheRepository
+    from app.routes.admin_referentiels import _geo
+
+    surcouche, _meta = await SurcoucheRepository().charger()
+    referentiel = surcouche.appliquer(_geo())
+
+    def _nom_region(identifiant: str | None) -> str | None:
+        region = referentiel.regions.get(identifiant) if identifiant else None
+        return region.name if region else identifiant
+
+    def _nom_ville(identifiant: str | None) -> str | None:
+        ville = referentiel.villes.get(identifiant) if identifiant else None
+        return ville.name if ville else identifiant
+
+    def _nom_quartier(identifiant: str | None) -> str | None:
+        quartier = referentiel.quartier(identifiant) if identifiant else None
+        return quartier.name if quartier else identifiant
+
+    def _nom_pays(code: str) -> str:
+        fiche = referentiel.pays(code)
+        return fiche.nom_fr if fiche else code
+
+    #: Les agregats d'un niveau — TOUJOURS les memes cles, a tous les etages.
+    #: Une ligne qui porte ses totaux n'oblige jamais a deplier pour savoir ce
+    #: qu'il y a dessous : c'est ce qui separe un arbre lisible d'un arbre
+    #: decoratif.
+    def _somme(enfants: list[dict[str, Any]]) -> dict[str, int]:
+        cles = ("companies", "branches", "agences", "kiosques", "agents", "clients")
+        total = dict.fromkeys(cles, 0)
+        for enfant in enfants:
+            for cle in cles:
+                total[cle] += int(enfant["agregats"].get(cle, 0))
+        return total
+
     def _kiosque(noeud: Any) -> dict[str, Any]:
         rattaches = enfants_de.get(noeud.id, [])
         agents = [n for n in rattaches if n.niveau is NiveauOrganisation.AGENT]
         clients = [n for n in rattaches if n.niveau is NiveauOrganisation.CLIENT]
+        # ANOMALIES STRUCTURELLES — `UC-09` postcondition : un Agent par
+        # Kiosque, sans exception. Un kiosque sans agent n'ouvre pas.
+        anomalies = []
+        if not agents:
+            anomalies.append("aucun agent — UC-09 exige un Agent par Kiosque")
+        if noeud.depositary_id is None:
+            anomalies.append("aucun depositary_id — le Kiosque n'existe pas la-bas")
         return {
             "id": str(noeud.id),
             "nom": noeud.name,
-            "quartier": noeud.district_id,
+            "quartier_id": noeud.district_id,
+            "quartier": _nom_quartier(noeud.district_id),
             "depositary_id": str(noeud.depositary_id) if noeud.depositary_id else None,
+            # CONSERVES : l'ecran actuel et la recette les lisent. Renommer
+            # pour renommer casserait un ecran qui marche, sans rien apporter.
             "nb_agents": len(agents),
             "nb_clients": len(clients),
+            # `quartier` gardait l'identifiant brut ; il porte le NOM depuis
+            # V-03, et `quartier_id` reste disponible pour qui en a besoin.
+            "agregats": {
+                "companies": 0, "branches": 0, "agences": 0, "kiosques": 1,
+                "agents": len(agents), "clients": len(clients),
+            },
+            "anomalies": anomalies,
         }
 
     def _agence(noeud: Any) -> dict[str, Any]:
+        kiosques = [
+            _kiosque(k)
+            for k in enfants_de.get(noeud.id, [])
+            if k.niveau is NiveauOrganisation.KIOSQUE
+        ]
+        agregats = _somme(kiosques)
+        agregats["agences"] = 1
         return {
             "id": str(noeud.id),
             "nom": noeud.name,
-            "ville": noeud.city_id,
-            "kiosques": [
-                _kiosque(k)
-                for k in enfants_de.get(noeud.id, [])
-                if k.niveau is NiveauOrganisation.KIOSQUE
-            ],
+            "ville_id": noeud.city_id,
+            "ville": _nom_ville(noeud.city_id),
+            "kiosques": kiosques,
+            "agregats": agregats,
+            "anomalies": [] if kiosques else ["aucun kiosque — agence vide"],
         }
 
-    branches = [
-        {
-            "id": str(b.id),
-            "nom": b.name,
-            "pays": b.country_code,
-            "region": b.region_id,
-            "company_id": str(b.company_id),
-            "agences": [
-                _agence(a)
-                for a in enfants_de.get(b.id, [])
-                if a.niveau is NiveauOrganisation.AGENCE
-            ],
+    def _branche(noeud: Any) -> dict[str, Any]:
+        agences = [
+            _agence(a)
+            for a in enfants_de.get(noeud.id, [])
+            if a.niveau is NiveauOrganisation.AGENCE
+        ]
+        agregats = _somme(agences)
+        agregats["branches"] = 1
+        return {
+            "id": str(noeud.id),
+            "nom": noeud.name,
+            "region_id": noeud.region_id,
+            "region": _nom_region(noeud.region_id),
+            # Le PAYS voyage avec la branche : dans la liste a plat, une
+            # branche « Centre » sans son pays ne se situe nulle part.
+            "pays": noeud.country_code,
+            "pays_nom": _nom_pays(noeud.country_code),
+            "company_id": str(noeud.company_id),
+            "company_nom": getattr(noeud, "company_nom", None),
+            "agences": agences,
+            "agregats": agregats,
+            "anomalies": [] if agences else ["aucune agence — branche vide"],
         }
-        for b in par_niveau[NiveauOrganisation.BRANCHE]
+
+    # --- L'ARBRE A CINQ NIVEAUX : pays > IMF > branche > agence > kiosque ---
+    #
+    # Il en avait TROIS, et commencait a la Branche. Consequence sur le plan
+    # reel : 20 branches a plat, sans pays, et les deux IMF d'un meme pays y
+    # apparaissaient en lignes jumelles « Centre » / « Centre », impossibles a
+    # distinguer. On ne pouvait pas repondre a « ce reseau est-il celui de
+    # quelle institution ».
+    branches = [_branche(b) for b in par_niveau[NiveauOrganisation.BRANCHE]]
+
+    par_pays: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    noms_imf: dict[str, str | None] = {}
+    for noeud, rendu in zip(par_niveau[NiveauOrganisation.BRANCHE], branches, strict=True):
+        par_pays.setdefault(noeud.country_code, {}).setdefault(
+            str(noeud.company_id), []
+        ).append(rendu)
+        # Le nom vient du noeud (`V-03`). `None` sur un run anterieur : on le
+        # DIT, on n'invente pas une correspondance qu'on n'a pas.
+        if getattr(noeud, "company_nom", None):
+            noms_imf[str(noeud.company_id)] = noeud.company_nom
+
+    arbre_pays: list[dict[str, Any]] = []
+    for code in sorted(par_pays):
+        companies: list[dict[str, Any]] = []
+        for company_id in sorted(par_pays[code], key=lambda c: noms_imf.get(c) or c):
+            ses_branches = par_pays[code][company_id]
+            agregats = _somme(ses_branches)
+            agregats["companies"] = 1
+            companies.append(
+                {
+                    "id": company_id,
+                    "nom": noms_imf.get(company_id),
+                    "nom_inconnu": company_id not in noms_imf,
+                    "branches": ses_branches,
+                    "agregats": agregats,
+                }
+            )
+        arbre_pays.append(
+            {
+                "iso2": code,
+                "nom": _nom_pays(code),
+                "companies": companies,
+                "agregats": _somme(companies),
+            }
+        )
+
+    # --- LA COUVERTURE INVERSE : CE QUI MANQUE --------------------------
+    #
+    # L'ecran montrait ce qui EXISTE. Il ne montrait jamais ce qui MANQUE — et
+    # c'est pourtant la question qu'on lui pose : « ou puis-je encore creer un
+    # depositaire ? ». `D-03` (un quartier = UN kiosque) rend la reponse
+    # exacte et calculable : les quartiers NON pris sont, litteralement, les
+    # emplacements disponibles.
+    #
+    # Sans cela, ouvrir le formulaire US-D3 revenait a deviner un quartier
+    # libre dans une liste de plusieurs centaines, puis a se faire refuser.
+    pris = {
+        k["quartier_id"]
+        for p in arbre_pays for c in p["companies"] for b in c["branches"]
+        for a in b["agences"] for k in a["kiosques"] if k["quartier_id"]
+    }
+    libres_par_pays: dict[str, list[dict[str, Any]]] = {}
+    for quartier in referentiel.quartiers.values():
+        if quartier.district_id in pris:
+            continue
+        ville = referentiel.villes.get(quartier.city_id)
+        if ville is None:
+            continue
+        libres_par_pays.setdefault(ville.country_iso2, []).append(
+            {
+                "district_id": quartier.district_id,
+                "quartier": quartier.name,
+                "ville": ville.name,
+                "region": _nom_region(ville.region_id),
+            }
+        )
+    for entree in arbre_pays:
+        libres = sorted(
+            libres_par_pays.get(str(entree["iso2"]), []),
+            key=lambda q: (str(q["region"]), str(q["ville"]), str(q["quartier"])),
+        )
+        entree["quartiers_libres"] = {
+            "compte": len(libres),
+            # Bornee : un pays peut en avoir des centaines, et l'ecran n'a pas
+            # besoin de les porter tous pour dire « il en reste 137 ».
+            "exemples": libres[:25],
+        }
+
+    # --- LES TROIS MESURES ------------------------------------------------
+    #
+    # Un compteur dit COMBIEN. Ces trois-la disent SI C'EST CREDIBLE, et
+    # c'est la seule question qui compte devant un bailleur.
+
+    # 1. CONCENTRATION — le CDC veut un reseau reparti. Le defaut mesure au
+    #    Senegal le 22/08 : une IMF raflait Pikine, Thies ET Saint-Louis
+    #    pendant que l'autre restait confinee a Dakar.
+    toutes_imf = [c for p in arbre_pays for c in p["companies"]]
+    total_kiosques = sum(c["agregats"]["kiosques"] for c in toutes_imf)
+    plus_grosse = max(toutes_imf, key=lambda c: c["agregats"]["kiosques"], default=None)
+    part_max = (
+        round(100 * plus_grosse["agregats"]["kiosques"] / total_kiosques, 1)
+        if plus_grosse and total_kiosques
+        else 0.0
+    )
+    #: Seuil ASSUME : avec deux IMF par pays, une repartition parfaite donne
+    #: 50 %. Au-dela de 60 % pour UNE institution sur l'ensemble du reseau, ce
+    #: n'est plus un ecosysteme concurrentiel.
+    concentration = {
+        "part_max_pourcent": part_max,
+        "imf": (plus_grosse or {}).get("nom") or (plus_grosse or {}).get("id"),
+        "nb_imf": len(toutes_imf),
+        "verdict": "concentre" if part_max > 60 else "reparti",
+    }
+
+    # 2. COUVERTURE — un reseau national, ou trois agences ?
+    villes_couvertes = {
+        a["ville_id"]
+        for p in arbre_pays for c in p["companies"] for b in c["branches"] for a in b["agences"]
+        if a["ville_id"]
+    }
+    quartiers_couverts = {
+        k["quartier_id"]
+        for p in arbre_pays for c in p["companies"] for b in c["branches"]
+        for a in b["agences"] for k in a["kiosques"] if k["quartier_id"]
+    }
+    couverture = {
+        "pays": len(arbre_pays),
+        "regions": len(
+            {
+                b["region_id"]
+                for p in arbre_pays
+                for c in p["companies"]
+                for b in c["branches"]
+            }
+        ),
+        "villes": len(villes_couvertes),
+        "villes_du_referentiel": len(referentiel.villes),
+        "quartiers": len(quartiers_couverts),
+        "quartiers_du_referentiel": len(referentiel.quartiers),
+        # Ce qui reste a couvrir, tous pays confondus — la reponse a « ou
+        # creer le prochain depositaire ».
+        "quartiers_libres": sum(
+            int(p["quartiers_libres"]["compte"]) for p in arbre_pays
+        ),
+    }
+
+    # 3. INTEGRITE — l'invariant `EF-18` rendu VISIBLE plutot que suppose.
+    tous_kiosques = [
+        k for p in arbre_pays for c in p["companies"] for b in c["branches"]
+        for a in b["agences"] for k in a["kiosques"]
     ]
+    toutes_agences = [
+        a for p in arbre_pays for c in p["companies"] for b in c["branches"] for a in b["agences"]
+    ]
+    toutes_branches = [b for p in arbre_pays for c in p["companies"] for b in c["branches"]]
+    integrite = {
+        "kiosques_sans_agent": sum(1 for k in tous_kiosques if k["agregats"]["agents"] == 0),
+        "kiosques_sans_depositaire": sum(1 for k in tous_kiosques if not k["depositary_id"]),
+        "kiosques_sans_client": sum(1 for k in tous_kiosques if k["agregats"]["clients"] == 0),
+        "agences_sans_kiosque": sum(1 for a in toutes_agences if not a["kiosques"]),
+        "branches_sans_agence": sum(1 for b in toutes_branches if not b["agences"]),
+        "imf_sans_nom": sum(1 for c in toutes_imf if c["nom_inconnu"]),
+    }
+
     return {
         "run_id": str(run_id),
         "comptes": {n.value.lower() + "s": len(v) for n, v in par_niveau.items()},
+        # L'arbre a CINQ niveaux, celui qu'on lit.
+        "pays": arbre_pays,
+        # Conservee pour ne casser aucun appelant existant : la meme matiere,
+        # a plat. Un ecran qui migre ne tombe pas en marche.
         "branches": branches,
+        "mesures": {
+            "concentration": concentration,
+            "couverture": couverture,
+            "integrite": integrite,
+        },
+        "note": (
+            "les identifiants sont RESOLUS en noms (region, ville, quartier, "
+            "IMF) : un ecran qui oblige a ouvrir la base pour savoir ce qu'il "
+            "affiche n'a pas fait son travail. Branche et Agence n'existent "
+            "QUE chez nous — la plateforme n'a aucune route pour elles"
+        ),
     }
 
 

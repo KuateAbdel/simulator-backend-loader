@@ -37,7 +37,13 @@ class OrgHierarchyRepository(RepositoryBase):
     collection_name = COLLECTION_ORG_HIERARCHY
 
     async def ajouter_branche(
-        self, run_id: UUID, company_id: UUID, name: str, country_code: str, region_id: str
+        self,
+        run_id: UUID,
+        company_id: UUID,
+        name: str,
+        country_code: str,
+        region_id: str,
+        company_nom: str | None = None,
     ) -> OrgHierarchyNode:
         noeud = OrgHierarchyNode(
             id=uuid4(),
@@ -46,6 +52,7 @@ class OrgHierarchyRepository(RepositoryBase):
             parent_id=None,
             company_id=company_id,
             name=name,
+            company_nom=company_nom,
             country_code=country_code.upper(),
             region_id=region_id,
         )

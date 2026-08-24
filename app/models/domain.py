@@ -285,6 +285,17 @@ class OrgHierarchyNode(LoaderDocument):
     gender: str | None = Field(default=None, description="MALE|FEMALE — quota EF-22")
     occupation: str | None = Field(default=None, description="Une des 576 professions")
     categorie: str | None = Field(default=None, description="INDIVIDUAL|CORPORATE — EF-23")
+    #: `V-03` (23/08) — la RAISON SOCIALE de l'IMF, rangee sur la BRANCHE.
+    #:
+    #: L'ecran Ecosysteme groupait par `company_id` : des UUID, illisibles.
+    #: Deux IMF du meme pays ont chacune une branche « Centre » — a l'ecran,
+    #: deux lignes identiques dont on ne peut pas dire a qui elles sont.
+    #:
+    #: Le nom est en main au moment ou la branche s'ecrit (`CompanyPorteuse`),
+    #: le ranger ne coute aucun appel. `None` sur les runs ANTERIEURS a ce
+    #: champ : l'ecran le DIT (« nom inconnu — run anterieur ») plutot que
+    #: d'inventer une correspondance qu'il n'a pas.
+    company_nom: str | None = Field(default=None)
 
 
 class SuperAdminAccount(LoaderDocument):

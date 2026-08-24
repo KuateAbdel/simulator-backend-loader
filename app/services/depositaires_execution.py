@@ -522,6 +522,10 @@ class ExecuteurDepositaires:
                             name=nom_branche,
                             country_code=plan_pays.country_code,
                             region_id=plan_branche.region_id,
+                            # `V-03` — la raison sociale voyage avec la
+                            # branche : sans elle, l'ecran groupe par UUID et
+                            # deux IMF du meme pays deviennent indiscernables.
+                            company_nom=company.nom,
                         )
                     except DuplicateKeyError as exc:
                         # L'index d'unicite a refuse — c'est son role. On le
