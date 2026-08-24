@@ -312,7 +312,34 @@ class ExecuteurDepositaires:
             self._quartiers_pris.add(district_id)
             rapport.kiosques_sautes.append((nom, "deja present cote serveur"))
             identifiant = self._depositaires.identifiant(existant)
-            return (UUID(identifiant), nom) if identifiant else None
+            if identifiant is None:
+                return None
+
+            # `CR-02` / `UC-09` — REUTILISER N'EST PAS NE PAS AVOIR D'ARBRE.
+            #
+            # Cette branche rendait AVANT d'ecrire le noeud. Consequence : sur
+            # tout run rejoue, `org_hierarchy` ne portait AUCUN Kiosque — les
+            # 47 Depositaires etaient retrouves cote serveur, donc sautes, donc
+            # jamais cartographies. L'arbre de ce run naissait vide, `CR-02`
+            # devenait invérifiable, l'Observatoire n'avait rien a montrer, et
+            # le module Staff — qui compte ses Agents sur les Kiosques REELS
+            # (`UC-09`) — n'en trouvait aucun a servir.
+            #
+            # `org_hierarchy` est NOTRE carte de l'arbre, pas un journal de
+            # creations : un Kiosque reutilise fait partie de l'arbre de ce run
+            # exactement comme un Kiosque cree. Le Depositaire distant, lui,
+            # n'est ni recree ni duplique — c'est le sens de `D-DEP-3`.
+            if self.ecriture_reelle:
+                await self._hierarchie.ajouter_kiosque(
+                    run_id=self.run_id,
+                    agence_id=agence_id,
+                    company_id=company.company_id,
+                    name=nom,
+                    country_code=company.country_code,
+                    district_id=district_id,
+                    depositary_id=UUID(identifiant),
+                )
+            return UUID(identifiant), nom
 
         if not self.ecriture_reelle:
             self._quartiers_pris.add(district_id)
