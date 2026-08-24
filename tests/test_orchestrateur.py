@@ -213,3 +213,50 @@ class TestPlafondDeConcurrence:
         """`H14`/`H15` : degradation SILENCIEUSE au-dela de 20 a 30 workers,
         sans `429`. On ne s'approche pas du bord d'une falaise invisible."""
         assert PLAFOND_WORKERS == 20
+
+
+class TestLigneEssentielle:
+    """24/08 — la ligne d'un module dans le rapport de run.
+
+    Defaut MESURE sur le DRY_RUN du 24/08 : DEPOSITAIRES affichait
+    « Branches : 19 » et cachait « Kiosques : 28 crees, 32 sautes, 0 en
+    echec ». Le detail existait, range dans les checkpoints — mais il fallait
+    aller le chercher. Devant l'administration, personne ne saura qu'il est la.
+    """
+
+    def test_la_grandeur_DECISIVE_prime_sur_la_premiere_ligne(self) -> None:
+        from app.services.orchestrateur import _essentiel
+
+        resume = (
+            "Mode : DRY_RUN\n"
+            "Branches : 19\n"
+            "Agences  : 21\n"
+            "Kiosques : 28 crees, 32 sautes, 0 en echec\n"
+            "Souscriptions : 360 creees, 0 deja presentes, 0 en echec\n"
+            "STATUT : COMPLETED"
+        )
+        assert _essentiel(resume).startswith("Kiosques : 28 crees")
+
+    def test_un_ECHEC_prime_sur_TOUT_le_reste(self) -> None:
+        """Un rapport d'echec qui ne dit pas pourquoi ne sert a rien."""
+        from app.services.orchestrateur import _essentiel
+
+        resume = (
+            "Mode : REAL\n"
+            "Kiosques : 0 crees, 0 sautes, 12 en echec\n"
+            "ECHEC Kiosque Bastos : HTTP 502\n"
+            "STATUT : FAILED"
+        )
+        assert _essentiel(resume).startswith("ECHEC Kiosque Bastos")
+
+    def test_un_resume_SANS_grandeur_connue_garde_l_ancien_comportement(self) -> None:
+        """Un intitule qui change ne doit jamais rendre le rapport VIDE."""
+        from app.services.orchestrateur import _essentiel
+
+        resume = "Mode : DRY_RUN\nQuelque chose : 42\nSTATUT : COMPLETED"
+        assert _essentiel(resume) == "Quelque chose : 42"
+
+    def test_l_en_tete_n_est_JAMAIS_la_ligne_rendue(self) -> None:
+        from app.services.orchestrateur import _essentiel
+
+        assert not _essentiel("Mode : DRY_RUN\nCompanies  : 19 creees").startswith("Mode")

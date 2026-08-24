@@ -398,4 +398,21 @@ def _essentiel(resume: str) -> str:
     utiles = [
         ligne for ligne in lignes if not ligne.startswith(("Mode", "STATUT")) and ":" in ligne
     ]
+
+    # LA LIGNE QUI COMPTE N'EST PAS TOUJOURS LA PREMIERE (24/08).
+    #
+    # Defaut mesure sur le DRY_RUN du 24/08 : DEPOSITAIRES affichait
+    # « Branches : 19 » — la premiere ligne utile — et cachait ce qui
+    # interesse vraiment : « Kiosques : 28 crees, 32 sautes, 0 en echec ».
+    # Le detail existait (range dans les checkpoints), mais il fallait aller
+    # le chercher : devant l'administration, personne ne saura qu'il est la.
+    #
+    # Chaque module a UNE grandeur qui le juge. On la nomme, et si elle est
+    # absente du resume on retombe sur l'ancien comportement — jamais un
+    # rapport vide parce qu'un intitule a change.
+    GRANDEUR_DECISIVE = ("Kiosques", "Clients crees", "Companies", "Staff cree", "Produits crees")
+    for cle in GRANDEUR_DECISIVE:
+        for ligne in utiles:
+            if ligne.startswith(cle):
+                return ligne[:160]
     return (utiles[0] if utiles else lignes[0] if lignes else "")[:160]
