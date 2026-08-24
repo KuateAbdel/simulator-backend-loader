@@ -408,7 +408,26 @@ async def _referentiel_applique() -> Any:
 
 
 async def _exiger_pays_operationnel(pays: str, referentiel: Any) -> None:
-    """La distinction du 22/08 (Yaniv) : le Loader PORTE l'information — il
+    """`I-ENT-1` 🔸 — ON NE CREE UNE ENTITE QUE DANS UN PAYS EN OPERATION.
+
+    Eleve au rang d'INVARIANT le 24/08 (Yaniv) : « si la base se vide, on ne
+    voit plus aucun pays sur l'ecran Company — c'est cette regle qui fait que
+    le systeme dit la verite ».
+
+    config-service est le SOCLE : les huit autres services s'y appuient. Un
+    pays qui n'y est pas n'existe pour personne — ni company, ni depositaire,
+    ni client. Creer une company dans un pays absent produirait une entite
+    orpheline sur des services qui n'ont AUCUN DELETE.
+
+    L'invariant porte donc DEUX faces, et les deux comptent :
+      - le BACKEND refuse (ici, en 422 qui nomme la matiere manquante) ;
+      - l'ECRAN n'offre que les pays `sur_config_service` — la meme regle,
+        lue de la meme source. Offrir un choix que la porte refusera ensuite
+        ferait cliquer pour rien ; l'ecran a porte une liste FIGEE de quatre
+        pays jusqu'au 24/08, alors que le verrou statique avait ete retire
+        ici le 22/08.
+
+    La distinction du 22/08 (Yaniv) : le Loader PORTE l'information — il
     peut porter le globe entier — mais l'OPERATION est definie par ce qui
     existe sur la plateforme. Aucun marqueur artificiel : l'etat operationnel
     EST la presence sur config-service, verifiee en direct.

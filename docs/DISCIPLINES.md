@@ -310,3 +310,38 @@ place ses garde-fous **avant** le réseau — `RegistreUnicite`, le registre de 
 *Sources : les modules `app/clients/*.py` et `app/services/*_execution.py`, où
 chaque discipline vit à l'endroit où elle s'applique · mesures des 8 et 9 août
 2026 · `docs/empirical/`.*
+
+---
+
+## Entités — `I-ENT-*` 🔸 · nos invariants de création
+
+### `I-ENT-1` 🔸 — on ne crée une entité que dans un pays **EN OPÉRATION**
+
+Élevé au rang d'invariant le **24/08** (Yaniv) : *« si la base se vide, on ne
+voit plus aucun pays sur l'écran Company — c'est cette règle qui fait que le
+système dit la vérité »*.
+
+**Pourquoi c'est un invariant et pas une préférence.** `config-service` est le
+socle : les huit autres services s'y appuient. Un pays qui n'y est pas
+n'existe pour personne — ni company, ni dépositaire, ni client. Créer une
+company dans un pays absent produirait une entité **orpheline** sur des
+services qui n'ont **aucun DELETE**.
+
+**Deux faces, et les deux comptent :**
+
+| Face | Ce qu'elle fait | Où |
+|---|---|---|
+| backend | refuse en **422** qui nomme la matière manquante | `_exiger_pays_operationnel` |
+| écran | n'offre **que** les pays `sur_config_service`, lu de la même source | `EntitesCompany.tsx` |
+
+Une seule face ne suffit pas. Le verrou statique `Literal["CM","CI","BF","SN"]`
+a été retiré du backend le **22/08** — mais l'écran a gardé sa liste figée de
+quatre pays jusqu'au **24/08**. Pendant deux jours, mettre un 5ᵉ pays en
+opération ne changeait rien à l'écran, sans qu'aucun message ne l'explique.
+
+**Trois états, jamais confondus** (l'écran les dit tous les trois) :
+
+- des pays en opération → ils sont offerts
+- **aucun** pays en opération → dit, avec le geste (« pousser un pays »)
+- plateforme **muette** (`sur_config_service: null`) → dit aussi. Offrir « tous
+  les pays du Loader » serait inventer une opération qu'on n'a pas vérifiée.

@@ -246,6 +246,20 @@ async def classer_companies(plateforme: list[dict[str, Any]]) -> dict[str, Any]:
     # La source est `lenders_registry`, qui porte `country_code` (EF-12). Une
     # company absente du registre — creee sans role de Lender — n'a pas de
     # pays connu : on rend `None`, jamais un pays devine.
+    # L'ETAT ACTIF/INACTIF (demande Yaniv, 24/08) — meme doctrine que les
+    # depositaires : `is_active` de la fiche PLATEFORME, reporte tel quel.
+    # `None` si la fiche ne le porte pas : on ne suppose pas qu'une company
+    # est active parce qu'elle existe. Un ecran qui n'offre QUE les actives
+    # doit savoir distinguer « inactive » de « on ne sait pas ».
+    etats = {
+        _normaliser_id(d): d.get("is_active")
+        for d in plateforme
+        if isinstance(d.get("is_active"), bool)
+    }
+    for statut in (STATUT_A_NOUS, STATUT_ETRANGER, STATUT_MARQUE_INCONNU):
+        for ligne in classement.get(statut, []):
+            ligne["actif"] = etats.get(str(ligne.get("id")))
+
     pays_par_company: dict[str, str | None] = {}
     curseur = get_collection(COLLECTION_LENDERS_REGISTRY).find(
         {}, {"company_id": 1, "country_code": 1}
