@@ -59,6 +59,10 @@ class CompanyClientMuet:
     async def chercher_par_short_name(self, short_name: str) -> dict[str, Any] | None:
         return None
 
+    async def chercher_par_nom(self, name: str) -> dict[str, Any] | None:
+        """`INV-CPY-02` — la garde interroge LES DEUX champs d'unicite."""
+        return None
+
     async def creer_company(self, **kwargs: Any) -> dict[str, Any]:
         self.ecritures += 1
         return {"_id": str(uuid4()), "name": kwargs["name"], "owner": {"_id": str(uuid4())}}

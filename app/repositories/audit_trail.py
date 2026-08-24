@@ -59,6 +59,16 @@ STATUT_SUCCES = "SUCCES"
 STATUT_ECHEC = "ECHEC"
 
 
+def _filtre_run(run_id: UUID | None) -> dict[str, Any]:
+    """`P-06` — `None` = tous les runs, jamais « aucun ».
+
+    Meme regle que `OrgHierarchyRepository.filtre_run` : le run est un
+    filtre offert a l'operateur, pas une frontiere imposee a ce que le
+    systeme montre de lui-meme.
+    """
+    return {} if run_id is None else {"run_id": str(run_id)}
+
+
 @dataclass(slots=True)
 class SuiviIntention:
     """Poignee rendue par `intention()` — sert a declarer l'issue.
@@ -199,7 +209,7 @@ class AuditTrailRepository(RepositoryBase):
                 suivi.reussi()
             await self.resoudre_intention(run_id, entity_type, suivi)
 
-    async def intentions_orphelines(self, run_id: UUID) -> list[AuditTrailEntry]:
+    async def intentions_orphelines(self, run_id: UUID | None) -> list[AuditTrailEntry]:
         """Les intentions restees sans resultat — **le vrai livrable de ce module**.
 
         Chacune designe une ecriture dont on ignore si le serveur l'a
@@ -210,10 +220,10 @@ class AuditTrailRepository(RepositoryBase):
         resolues = {
             str((document.get("before") or {}).get("intention_id"))
             async for document in self.collection.find(
-                {"run_id": str(run_id), "action": ACTION_RESULTAT}, {"before": 1}
+                {**_filtre_run(run_id), "action": ACTION_RESULTAT}, {"before": 1}
             )
         }
-        curseur = self.collection.find({"run_id": str(run_id), "action": ACTION_INTENTION}).sort(
+        curseur = self.collection.find({**_filtre_run(run_id), "action": ACTION_INTENTION}).sort(
             "timestamp", 1
         )
         return [
@@ -222,9 +232,9 @@ class AuditTrailRepository(RepositoryBase):
             if str(document.get("_id")) not in resolues
         ]
 
-    async def exporter_run(self, run_id: UUID) -> list[AuditTrailEntry]:
+    async def exporter_run(self, run_id: UUID | None) -> list[AuditTrailEntry]:
         """EF-62 : export du journal d'une execution, ordonne chronologiquement."""
-        curseur = self.collection.find({"run_id": str(run_id)}).sort("timestamp", 1)
+        curseur = self.collection.find(_filtre_run(run_id)).sort("timestamp", 1)
         return [AuditTrailEntry.model_validate(d) async for d in curseur]
 
     async def lister_admin(
@@ -264,10 +274,10 @@ class AuditTrailRepository(RepositoryBase):
         }
         return [(entree, issues.get(str(entree.id))) for entree in intentions]
 
-    async def compter_par_type(self, run_id: UUID) -> dict[str, int]:
+    async def compter_par_type(self, run_id: UUID | None) -> dict[str, int]:
         """Statistiques de fin d'execution (EF-61)."""
         pipeline: list[dict[str, Any]] = [
-            {"$match": {"run_id": str(run_id)}},
+            {"$match": _filtre_run(run_id)},
             {"$group": {"_id": "$entity_type", "n": {"$sum": 1}}},
         ]
         return {str(d["_id"]): int(d["n"]) async for d in self.collection.aggregate(pipeline)}

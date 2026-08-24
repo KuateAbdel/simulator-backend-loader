@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from app.clients.base import ClientFinZuu, JournalRequetes, normaliser_id
+from app.clients.config_service import cle_comparaison
 from app.clients.contracts import CompanyType, PackageName
 from app.core.config import settings
 
@@ -68,9 +69,36 @@ class CompanyServiceClient:
         On parcourt la liste plutot que d'utiliser `GET /companies/{name}` :
         cette route est du code mort, interceptee par `{company_id}`.
         """
-        cible = short_name.strip().lower()
+        return await self._chercher(short_name, "short_name")
+
+    async def chercher_par_nom(self, name: str) -> dict[str, Any] | None:
+        """GET-avant-POST sur la RAISON SOCIALE.
+
+        `INV-CPY-02` — company-service refuse en `HTTP 400` *« A company with
+        this **name** or short name already exists »*. Le nom est donc, a
+        egalite avec le nom court, un champ d'unicite — et c'est celui qui
+        IDENTIFIE la Company d'un run a l'autre : il est compose depuis le
+        plan, la ou le nom court a longtemps porte un discriminant tire au
+        sort. Chercher le nom court seul manquait toute Company creee par un
+        run anterieur, y compris les 5 encore presentes du 21/08 (`I405`,
+        `A770`, `B760`, `NM742`, ...) que la correction du discriminant ne
+        renomme pas retroactivement — company-service n'expose aucun DELETE.
+        """
+        return await self._chercher(name, "name")
+
+    async def _chercher(self, valeur: str, champ: str) -> dict[str, Any] | None:
+        """Comparaison REPLIEE, jamais une egalite de chaines.
+
+        `RC-183` vaut ici comme chez config-service : « Societe Generale »,
+        « Societe  Generale » et « SOCIETE GENERALE » designent la MEME
+        Company. Une garde qui compare les chaines exactes laisse passer le
+        `POST`, et le doublon est definitif (aucun DELETE cote serveur).
+        """
+        cible = cle_comparaison(valeur)
+        if not cible:
+            return None
         for company in await self.lister_companies():
-            if str(company.get("short_name", "")).strip().lower() == cible:
+            if cle_comparaison(str(company.get(champ, ""))) == cible:
                 return company
         return None
 

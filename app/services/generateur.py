@@ -466,13 +466,36 @@ class Generateur:
     def nom_court(self, raison_sociale: str) -> str:
         """`short_name` — declare unique par company-service (INV-CPY-01).
 
-        On y adjoint un discriminant court derive du run pour eviter toute
-        collision entre executions, sans rendre le nom illisible.
+        `INV-CPY-02` — LE DISCRIMINANT DERIVE DU NOM, PAS DU RUN.
+
+        Il derivait de `self._alea`, seme par le `run_id` : « IFC » devenait
+        `I405` un jour et `I722` le lendemain. Le `GET`-avant-`POST` de
+        `creer_company`, qui cherche sur `short_name`, ne pouvait alors
+        JAMAIS reconnaitre une Company deja creee — il interrogeait un nom
+        court que ce run venait d'inventer. Le `POST` partait, et
+        company-service le refusait sur l'AUTRE champ unique :
+        `HTTP 400 « A company with this name or short name already exists »`.
+        Mesure du run REEL `9e2369bf` (24/08) : **16 Companies sur 18
+        refusees**, 3 pays prives de reseau, 500 clients au lieu de 2000.
+
+        La meme cause rendait `CR-03` inatteignable par construction : deux
+        executions du meme perimetre ne pouvaient pas se reconnaitre.
+
+        L'empreinte est donc prise sur la RAISON SOCIALE, qui est stable d'un
+        run a l'autre (elle est composee depuis le plan, pas tiree au sort).
+        Deux Companies aux memes initiales restent distinctes — l'empreinte
+        porte le nom entier, pas les trois premieres lettres.
         """
         # `replace` garde le nom court propre meme sur une raison sociale du
         # stock historique encore prefixee (lecture seule).
-        lettres = "".join(m[0] for m in raison_sociale.replace(PREFIXE_DONNEES, "").split()[:3])
-        return f"{lettres.upper()}{self._alea.randrange(100, 999)}"
+        propre = raison_sociale.replace(PREFIXE_DONNEES, "")
+        lettres = "".join(m[0] for m in propre.split()[:3])
+        # Repliee comme `cle_comparaison` : « Societe Generale » et
+        # « SOCIETE GENERALE » designent la meme Company, donc le meme
+        # discriminant.
+        plie = _sans_accents(propre).casefold()
+        empreinte = sha256(plie.encode("utf-8")).digest()
+        return f"{lettres.upper()}{100 + int.from_bytes(empreinte[:8], 'big') % 900}"
 
     def nom_kiosque(self, quartier: str, pays: str | None = None) -> str:
         """Le Kiosque porte son quartier dans son nom.

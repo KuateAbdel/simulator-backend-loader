@@ -70,6 +70,15 @@ from app.models.enums import EtatConsommationFaker, FakerConsumptionType
 from app.repositories.base import RepositoryBase, en_document
 
 
+def _filtre_run(run_id: UUID | None) -> dict[str, Any]:
+    """`P-06` — `None` = tous les runs, jamais « aucun ».
+
+    Meme regle que `OrgHierarchyRepository.filtre_run` : le run est un
+    filtre offert a l'operateur, pas une frontiere imposee a ce que le
+    systeme montre de lui-meme.
+    """
+    return {} if run_id is None else {"run_id": str(run_id)}
+
 class ConsommationIncoherente(RuntimeError):
     """Une transition d'etat impossible a atteindre par un chemin correct.
 
@@ -204,7 +213,7 @@ class FakerLedgerRepository(RepositoryBase):
     # Reconciliation
     # ------------------------------------------------------------------
 
-    async def reservations_orphelines(self, run_id: UUID) -> list[FakerConsumptionLedger]:
+    async def reservations_orphelines(self, run_id: UUID | None) -> list[FakerConsumptionLedger]:
         """Les clients revendiques par CE run et qui n'ont rien produit.
 
         Ce sont elles qui comptent. Une orpheline dit soit qu'un worker est mort
@@ -213,7 +222,7 @@ class FakerLedgerRepository(RepositoryBase):
         le registre la relie a son client Faker.
         """
         curseur = self.collection.find(
-            {"run_id": str(run_id), "state": EtatConsommationFaker.RESERVE.value}
+            {**_filtre_run(run_id), "state": EtatConsommationFaker.RESERVE.value}
         ).sort("reserved_at", 1)
         return [FakerConsumptionLedger.model_validate(d) async for d in curseur]
 
@@ -267,7 +276,7 @@ class FakerLedgerRepository(RepositoryBase):
         """Total des consommations scellees, tous usages et tous runs confondus."""
         return await self._compter({"state": EtatConsommationFaker.CONSOMME.value})
 
-    async def compter_par_pays(self, run_id: UUID) -> dict[str, int]:
+    async def compter_par_pays(self, run_id: UUID | None) -> dict[str, int]:
         """Repartition par pays pour CE run — `OBJ-01` exige les 4 pays.
 
         Le Senegal y apparaitra a zero tant que ses clients viennent du
@@ -277,7 +286,7 @@ class FakerLedgerRepository(RepositoryBase):
         pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
-                    "run_id": str(run_id),
+                    **_filtre_run(run_id),
                     "state": EtatConsommationFaker.CONSOMME.value,
                 }
             },

@@ -312,14 +312,15 @@ class OrgHierarchyRepository(RepositoryBase):
         )
         return bool(resultat.matched_count)
 
-    async def clients_par_produit(self, run_id: UUID) -> dict[str, int]:
+    async def clients_par_produit(self, run_id: UUID | None) -> dict[str, int]:
         """`P-01`, la question du plan de sprints : « combien de clients par
         produit ? » — UNE agregation chez nous, jamais 20 requetes paginees
         vers FinZuu. Sur l'index `idx_run_niveau`."""
         pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
-                    "run_id": str(run_id),
+                    # `P-06` — perimetre cumulatif par defaut (voir `filtre_run`).
+                    **self.filtre_run(run_id),
                     "niveau": NiveauOrganisation.CLIENT.value,
                 }
             },
@@ -331,16 +332,39 @@ class OrgHierarchyRepository(RepositoryBase):
             async for d in self.collection.aggregate(pipeline)
         }
 
-    async def clients_par_kiosque(self, run_id: UUID) -> dict[str, int]:
+    async def clients_par_kiosque(self, run_id: UUID | None) -> dict[str, int]:
         """`P-01` — le versant kiosque : compte par `parent_id`, meme index."""
         pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
-                    "run_id": str(run_id),
+                    # `P-06` — perimetre cumulatif par defaut (voir `filtre_run`).
+                    **self.filtre_run(run_id),
                     "niveau": NiveauOrganisation.CLIENT.value,
                 }
             },
             {"$group": {"_id": "$parent_id", "clients": {"$sum": 1}}},
+        ]
+        return {
+            str(d["_id"]): int(d["clients"])
+            async for d in self.collection.aggregate(pipeline)
+        }
+
+    async def clients_par_pays(self, run_id: UUID | None = None) -> dict[str, int]:
+        """`P-06` — LE COMPTE REEL DE CLIENTS PAR PAYS, MAINTENANT.
+
+        Sert le recoupement de l'ecran Population : les mesures d'un run sont
+        un INSTANTANE range a la fin de son execution, ces noeuds sont l'ETAT
+        de la base. Les deux doivent concorder ; quand ils divergent, l'ecran
+        affiche les deux plutot que de choisir le plus flatteur.
+        """
+        pipeline: list[dict[str, Any]] = [
+            {
+                "$match": {
+                    **self.filtre_run(run_id),
+                    "niveau": NiveauOrganisation.CLIENT.value,
+                }
+            },
+            {"$group": {"_id": "$country_code", "clients": {"$sum": 1}}},
         ]
         return {
             str(d["_id"]): int(d["clients"])
@@ -393,13 +417,36 @@ class OrgHierarchyRepository(RepositoryBase):
         }
         return sorted(k.name for k in kiosques if str(k.id) not in avec_agent)
 
-    async def par_niveau(self, run_id: UUID, niveau: NiveauOrganisation) -> list[OrgHierarchyNode]:
-        curseur = self.collection.find({"run_id": str(run_id), "niveau": niveau.value})
+    @staticmethod
+    def filtre_run(run_id: UUID | None) -> dict[str, Any]:
+        """`P-06` — LE PERIMETRE DE LECTURE DE L'OBSERVATOIRE.
+
+        `run_id=None` ne veut PAS dire « aucun resultat » : il veut dire **tout
+        ce que le Loader a construit et qui existe encore**, tous runs
+        confondus. C'est le defaut, et c'est le seul honnete.
+
+        Le contre-exemple qui a impose cette regle, mesure le 24/08 :
+        l'Observatoire etait cable sur `_dernier_run()`. Le run `7e3f3f83`
+        avait bati BF + CI + CM ; le run suivant, `9e2369bf`, n'a bati que BF.
+        L'ecran Ecosysteme annoncait donc « voici l'ecosysteme » en montrant
+        1 pays et 4 Kiosques, alors que 49 Depositaires a nous vivaient sur la
+        plateforme. Vrai au sens strict, MENSONGER a l'usage — et l'operateur
+        n'avait aucun moyen de voir le reste.
+
+        Le run reste un FILTRE offert (« qu'a fait cette execution ? »),
+        jamais une frontiere imposee a ce que le systeme montre de lui-meme.
+        """
+        return {} if run_id is None else {"run_id": str(run_id)}
+
+    async def par_niveau(
+        self, run_id: UUID | None, niveau: NiveauOrganisation
+    ) -> list[OrgHierarchyNode]:
+        curseur = self.collection.find({**self.filtre_run(run_id), "niveau": niveau.value})
         return [OrgHierarchyNode.model_validate(d) async for d in curseur]
 
     async def clients_filtres(
         self,
-        run_id: UUID,
+        run_id: UUID | None,
         *,
         pays: str | None = None,
         genre: str | None = None,
@@ -422,7 +469,8 @@ class OrgHierarchyRepository(RepositoryBase):
         pour un seul affichage.
         """
         filtre: dict[str, Any] = {
-            "run_id": str(run_id),
+            # `P-06` — sans `run_id`, TOUS les clients que le Loader a crees.
+            **self.filtre_run(run_id),
             "niveau": NiveauOrganisation.CLIENT.value,
         }
         if pays:

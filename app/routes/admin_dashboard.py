@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Annotated, Any
+from collections import Counter
+from typing import Annotated, Any, Final
 from uuid import UUID
 
 import httpx
@@ -77,6 +78,66 @@ async def _sonder(client: httpx.AsyncClient, nom: str, base: str) -> dict[str, A
 async def _dernier_run() -> Any:
     runs = await LoaderRunRepository().lister(limite=1)
     return runs[0] if runs else None
+
+
+#: Combien de runs l'entete de perimetre enumere au plus. L'Observatoire doit
+#: rester lisible : au-dela, le compte suffit.
+PLAFOND_RUNS_ENUMERES: Final = 50
+
+
+async def _perimetre(run_id: UUID | None) -> dict[str, Any]:
+    """`P-06` — CE QUE L'ECRAN COUVRE, DIT EXPLICITEMENT.
+
+    **Le defaut de conception que cette fonction corrige.** Tout l'Observatoire
+    etait cable sur `_dernier_run()`. Un ecran intitule « Ecosysteme »
+    n'affichait donc pas l'ecosysteme : il affichait la derniere execution.
+    Mesure du 24/08 — le run `7e3f3f83` avait bati BF + CI + CM ; le run
+    suivant, `9e2369bf`, n'avait bati que BF (ses IMF ont ete refusees,
+    `INV-CPY-02`). L'ecran annoncait 1 pays et 4 Kiosques quand la plateforme
+    en portait 49 a nous. L'operateur n'avait AUCUN moyen de voir le reste, et
+    aucune mention ne lui disait qu'il regardait une tranche.
+
+    Un ecran qui montre une PARTIE en se presentant comme le TOUT ment, meme
+    si chaque chiffre qu'il affiche est exact.
+
+    Regle : **sans `run_id`, le perimetre est TOUT ce que le Loader a bati**,
+    tous runs confondus — l'etat reel du systeme. Le `run_id` reste un filtre
+    offert (« qu'a fait cette execution ? »), jamais une frontiere imposee.
+
+    L'entete est rendu avec CHAQUE reponse de l'Observatoire pour que l'ecran
+    puisse toujours dire ce qu'il couvre, et proposer les autres runs.
+    """
+    if run_id is not None and await LoaderRunRepository().obtenir(run_id) is None:
+        # Un `run_id` EXPLICITE qui ne designe rien est une erreur d'appel, pas
+        # un perimetre vide : on repond 404. La nuance compte — « ce run
+        # n'existe pas » et « ce perimetre n'a rien produit » sont deux
+        # reponses differentes, et les confondre laisse l'operateur croire
+        # qu'un run a echoue alors qu'il s'est trompe d'identifiant.
+        raise HTTPException(status_code=404, detail=f"run {run_id} inconnu")
+
+    runs = await LoaderRunRepository().lister(limite=PLAFOND_RUNS_ENUMERES)
+    connus = [
+        {
+            "run_id": str(r.id),
+            "mode": r.mode.value,
+            "statut": r.status.value,
+            "cree_le": r.cree_le.isoformat() if r.cree_le else None,
+        }
+        for r in runs
+    ]
+    if run_id is None:
+        return {
+            "run_id": None,
+            "portee": "tous",
+            "libelle": f"tout le perimetre du Loader — {len(connus)} run(s)",
+            "runs_connus": connus,
+        }
+    return {
+        "run_id": str(run_id),
+        "portee": "run",
+        "libelle": f"run {str(run_id)[:8]} seul",
+        "runs_connus": connus,
+    }
 
 
 @router.get("")
@@ -145,18 +206,25 @@ async def ecosysteme(
     Quatre lectures par niveau puis assemblage en memoire — jamais une requete
     par noeud : 80 kiosques et 2000 clients tiendraient mal autrement.
     """
-    if run_id is None:
-        run = await _dernier_run()
-        if run is None:
-            return {"run_id": None, "branches": [], "note": "aucun run en base"}
-        run_id = run.id
+    # `P-06` — sans `run_id`, on montre TOUT ce que le Loader a bati. Le repli
+    # sur `_dernier_run()` faisait passer une tranche pour le tout.
+    perimetre = await _perimetre(run_id)
 
     arbre = OrgHierarchyRepository()
     par_niveau = {
         niveau: await arbre.par_niveau(run_id, niveau) for niveau in NiveauOrganisation
     }
     if not any(par_niveau.values()):
-        raise HTTPException(status_code=404, detail=f"aucun noeud pour le run {run_id}")
+        # Pas une erreur : un Loader qui n'a encore rien bati est un etat
+        # legitime. L'ecran doit le DIRE, pas afficher une erreur technique.
+        return {
+            **perimetre,
+            "pays": [],
+            "note": (
+                "aucune entite construite sur ce perimetre — "
+                "l'arbre se remplit au module DEPOSITAIRES d'un run REEL"
+            ),
+        }
 
     enfants_de: dict[UUID | None, list[Any]] = {}
     for noeuds in par_niveau.values():
@@ -559,7 +627,7 @@ async def ecosysteme(
         integrite["kiosques_disparus_la_bas"] = None
 
     return {
-        "run_id": str(run_id),
+        **perimetre,
         "comptes": {n.value.lower() + "s": len(v) for n, v in par_niveau.items()},
         "verification": verification,
         # L'arbre a CINQ niveaux, celui qu'on lit.
@@ -588,11 +656,8 @@ async def tracabilite(
 ) -> dict[str, Any]:
     """`US-E4` — « d'ou vient cette entite ? » : le registre Faker et le
     journal d'intentions, avec leurs reconciliations."""
-    if run_id is None:
-        run = await _dernier_run()
-        if run is None:
-            return {"run_id": None, "note": "aucun run en base"}
-        run_id = run.id
+    # `P-06` — sans `run_id`, le journal couvre TOUTES les executions.
+    perimetre = await _perimetre(run_id)
 
     ledger = FakerLedgerRepository()
     audit = AuditTrailRepository()
@@ -601,7 +666,7 @@ async def tracabilite(
     orphelines_faker = await ledger.reservations_orphelines(run_id)
 
     return {
-        "run_id": str(run_id),
+        **perimetre,
         "registre_faker": {
             "par_pays": await ledger.compter_par_pays(run_id),
             "reservations_orphelines": [
@@ -638,6 +703,90 @@ async def tracabilite(
     }
 
 
+
+def _somme_paire(cible: dict[str, Any], ajout: Any) -> None:
+    """Additionne un couple `{mesure, cible}` en place, en ignorant le reste.
+
+    Les mesures sont des COMPTES : deux runs qui ont peuple le meme pays ont
+    cree deux populations distinctes, et leur somme est la population reelle.
+    Rien n'est moyenne, rien n'est interpole.
+    """
+    if not isinstance(ajout, dict):
+        return
+    for cle in ("mesure", "cible"):
+        valeur = ajout.get(cle)
+        if isinstance(valeur, int):
+            cible[cle] = cible.get(cle, 0) + valeur
+
+
+def _fusionner_mesures(runs: list[Any]) -> dict[str, Any]:
+    """`P-06` — LES MESURES DE TOUS LES RUNS, ADDITIONNEES.
+
+    On ne fusionne que des comptes deja enregistres. Aucune valeur n'est
+    recalculee, aucune n'est deduite : ce que le rapport de chaque run a
+    juge reste ce qui est servi, seule la SOMME est nouvelle.
+
+    Les runs sont pris du plus ancien au plus recent pour que `top` des
+    metiers reste stable d'un appel a l'autre.
+    """
+    QUOTAS = ("clients", "corporate", "femmes", "jeunes", "agricoles")
+
+    pays: dict[str, dict[str, Any]] = {}
+    occupations: Counter[str] = Counter()
+    occupations_total = 0
+    occupations_distinctes = 0
+    tranches: Counter[str] = Counter()
+    total_dote = 0.0
+    naissances = {"a_l_etranger": 0, "au_pays": 0}
+
+    for run in reversed(runs):
+        mesures = run.mesures or {}
+        for ligne in mesures.get("quotas_par_pays", []):
+            code = str(ligne.get("pays", "")).upper()
+            if not code:
+                continue
+            cumul = pays.setdefault(
+                code,
+                {"pays": code, **{q: {} for q in QUOTAS}, "profils": {}, "runs": []},
+            )
+            for quota in QUOTAS:
+                _somme_paire(cumul[quota], ligne.get(quota))
+            for nom, paire in (ligne.get("profils") or {}).items():
+                _somme_paire(cumul["profils"].setdefault(nom, {}), paire)
+            cumul["runs"].append(str(run.id))
+
+        occ = mesures.get("occupations") or {}
+        occupations_total += int(occ.get("total") or 0)
+        # `distinctes` est un CARDINAL mesure par le run sur les 576 metiers,
+        # pas un compte sommable : deux runs peuvent avoir tire les memes.
+        # On garde le plus grand — un PLANCHER honnete. Le recomposer depuis
+        # `top` (20 entrees) l'aurait fait chuter de 300 a 20 : une donnee
+        # exacte remplacee par un artefact d'affichage.
+        occupations_distinctes = max(occupations_distinctes, int(occ.get("distinctes") or 0))
+        for nom, compte in (occ.get("top") or {}).items():
+            occupations[str(nom)] += int(compte or 0)
+
+        sol = mesures.get("soldes") or {}
+        for borne, compte in (sol.get("tranches") or {}).items():
+            tranches[str(borne)] += int(compte or 0)
+        total_dote += float(sol.get("total_dote") or 0)
+
+        nai = mesures.get("naissances") or {}
+        for cle in naissances:
+            naissances[cle] += int(nai.get(cle) or 0)
+
+    return {
+        "quotas_par_pays": sorted(pays.values(), key=lambda ligne: ligne["pays"]),
+        "occupations": {
+            "distinctes": occupations_distinctes,
+            "total": occupations_total,
+            "top": dict(occupations.most_common(20)),
+        },
+        "soldes": {"tranches": dict(tranches), "total_dote": round(total_dote, 2)},
+        "naissances": naissances,
+    }
+
+
 @router.get("/population")
 async def population(
     _: Annotated[SessionAdmin, Depends(admin_complet)],
@@ -652,21 +801,67 @@ async def population(
     run — identiques a ce que la recette a juge, JAMAIS recalculees ici et
     jamais demandees a FinZuu.
     """
-    if run_id is None:
-        run = await _dernier_run()
-    else:
+    perimetre = await _perimetre(run_id)
+
+    if run_id is not None:
         run = await LoaderRunRepository().obtenir(run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="aucun run en base")
-    if not run.mesures:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"le run {run.id} ne porte pas de mesures de population — "
-                "anterieur a US-E3, ou son module CLIENTS n'a pas tourne"
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"run {run_id} inconnu")
+        if not run.mesures:
+            # Un run EXPLICITEMENT demande qui ne porte pas de mesures : on
+            # explique pourquoi plutot que de rendre un ecran vide. La nuance
+            # avec le cas cumulatif ci-dessous tient : ici l'operateur a
+            # designe CE run, il a droit a la raison.
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"le run {run.id} ne porte pas de mesures de population — "
+                    "anterieur a US-E3, ou son module CLIENTS n'a pas tourne"
+                ),
+            )
+        porteurs = [run]
+    else:
+        # `P-06` — LA POPULATION ACTUELLE, C'EST TOUT CE QUI A ETE PEUPLE.
+        #
+        # Cette route ne servait que `_dernier_run().mesures`. Le run
+        # `9e2369bf` n'ayant peuple que le Burkina, l'ecran affichait CI, CM
+        # et SN **a zero** — alors que le run `7e3f3f83` y avait bel et bien
+        # cree des clients. Trois pays effaces de l'ecran par le seul fait
+        # qu'une execution plus recente ne les avait pas touches.
+        porteurs = [r for r in await LoaderRunRepository().lister(limite=200) if r.mesures]
+
+    if not porteurs:
+        return {
+            **perimetre,
+            "quotas_par_pays": [],
+            "note": (
+                "aucun run ne porte de mesures de population sur ce perimetre — "
+                "elles sont rangees a la fin du module CLIENTS d'un run REEL"
             ),
-        )
-    return {"run_id": str(run.id), "mode": run.mode.value, **run.mesures}
+        }
+
+    fusion = _fusionner_mesures(porteurs)
+
+    # `P-06` — LE RECOUPEMENT QUI INTERDIT DE MENTIR. Les mesures sont un
+    # instantane range a la fin du run ; les noeuds clients sont l'etat reel de
+    # la base MAINTENANT. Si les deux divergent, on le DIT au lieu de servir le
+    # chiffre le plus flatteur.
+    reels = await OrgHierarchyRepository().clients_par_pays(run_id)
+    for ligne in fusion["quotas_par_pays"]:
+        constate = reels.get(ligne["pays"], 0)
+        ligne["clients"]["en_base"] = constate
+        if constate != ligne["clients"]["mesure"]:
+            ligne["clients"]["ecart"] = (
+                f"{ligne['clients']['mesure']} mesure(s) au run, "
+                f"{constate} noeud(s) en base"
+            )
+
+    return {
+        **perimetre,
+        "modes": sorted({r.mode.value for r in porteurs}),
+        "runs_mesures": [str(r.id) for r in porteurs],
+        **fusion,
+    }
 
 
 @router.get("/clients")
@@ -700,11 +895,8 @@ async def clients(
     """
     from app.routes.admin_referentiels import _geo
 
-    if run_id is None:
-        run = await _dernier_run()
-        if run is None:
-            raise HTTPException(status_code=404, detail="aucun run en base")
-        run_id = run.id
+    # `P-06` — sans `run_id`, la liste couvre TOUS les clients du Loader.
+    perimetre = await _perimetre(run_id)
 
     depot = OrgHierarchyRepository()
     taille = max(1, min(int(taille), 200))
@@ -756,7 +948,7 @@ async def clients(
 
     pages = (total + taille - 1) // taille
     return {
-        "run_id": str(run_id),
+        **perimetre,
         "filtres": {
             "pays": pays,
             "genre": genre,
@@ -793,28 +985,24 @@ async def index_inverse(
     viennent des noeuds du meme run : le marqueur pour le produit (CAT 6),
     le nom du Kiosque pour le kiosque.
     """
-    if run_id is None:
-        run = await _dernier_run()
-    else:
-        run = await LoaderRunRepository().obtenir(run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="aucun run en base")
+    # `P-06` — sans `run_id`, l'index couvre TOUS les clients du Loader.
+    perimetre = await _perimetre(run_id)
 
     arbre = OrgHierarchyRepository()
-    par_produit = await arbre.clients_par_produit(run.id)
-    par_kiosque = await arbre.clients_par_kiosque(run.id)
+    par_produit = await arbre.clients_par_produit(run_id)
+    par_kiosque = await arbre.clients_par_kiosque(run_id)
 
     marqueurs = {
         str(noeud.product_id): noeud.name
-        for noeud in await arbre.par_niveau(run.id, NiveauOrganisation.PRODUIT)
+        for noeud in await arbre.par_niveau(run_id, NiveauOrganisation.PRODUIT)
         if noeud.product_id
     }
     noms_kiosques = {
         str(noeud.id): noeud.name
-        for noeud in await arbre.par_niveau(run.id, NiveauOrganisation.KIOSQUE)
+        for noeud in await arbre.par_niveau(run_id, NiveauOrganisation.KIOSQUE)
     }
     return {
-        "run_id": str(run.id),
+        **perimetre,
         "clients_par_produit": sorted(
             (
                 {

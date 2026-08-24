@@ -390,11 +390,21 @@ class ExecuteurOrganisation:
         )
         court = self._generateur.nom_court(raison)
 
-        # INV-CPY-01 — GET-avant-POST. Une Company deja presente n'est jamais
-        # recreee : company-service n'expose aucun DELETE.
-        existante = await self._companies.chercher_par_short_name(court)
+        # INV-CPY-01 / INV-CPY-02 — GET-avant-POST sur LES DEUX champs
+        # d'unicite. company-service refuse en HTTP 400 « A company with this
+        # NAME OR SHORT NAME already exists » : interroger le seul nom court
+        # laissait passer toute Company reconnue par son nom, et le run du
+        # 24/08 y a perdu 16 Companies sur 18.
+        #
+        # Le NOM d'abord : c'est lui qui identifie la Company d'un run a
+        # l'autre. Les Companies creees avant `INV-CPY-02` portent un nom
+        # court tire au sort qu'aucun calcul ne retrouve, et company-service
+        # n'expose aucun DELETE pour les reprendre.
+        existante = await self._companies.chercher_par_nom(
+            raison
+        ) or await self._companies.chercher_par_short_name(court)
         if existante is not None:
-            logger.info("Company %s deja presente, reutilisee", court)
+            logger.info("Company %s deja presente, reutilisee (CR-03)", raison)
             return existante
 
         secteurs_defaut, industries_defaut = secteurs_et_industrie(

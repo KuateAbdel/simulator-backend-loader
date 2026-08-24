@@ -1519,8 +1519,18 @@ class TestUSE3Population:
         reponse = await client.get("/admin/dashboard/population", headers=entetes)
         assert reponse.status_code == 200, reponse.text
         corps = reponse.json()
-        assert corps["run_id"] == str(run.id)
-        assert corps["quotas_par_pays"][0]["clients"] == {"mesure": 500, "cible": 500}
+        # `P-06` — sans `run_id`, la Population couvre TOUS les runs porteurs
+        # de mesures : l'entete l'annonce (`portee`), et `runs_mesures` dit
+        # lesquels. Un `run_id` nul n'est pas une absence, c'est le cumul.
+        assert corps["run_id"] is None
+        assert corps["portee"] == "tous"
+        assert corps["runs_mesures"] == [str(run.id)]
+        # Le recoupement contre les noeuds reellement en base accompagne
+        # chaque pays — un ecran qui affirme sans avoir mesure est un ecran
+        # qui ment.
+        assert corps["quotas_par_pays"][0]["clients"]["mesure"] == 500
+        assert corps["quotas_par_pays"][0]["clients"]["cible"] == 500
+        assert "en_base" in corps["quotas_par_pays"][0]["clients"]
         assert corps["occupations"]["distinctes"] == 300
         assert "150 000 a 300 000" in corps["soldes"]["tranches"], (
             "150 000 doit etre une FRONTIERE de tranche — le seuil EF-68"
@@ -1544,9 +1554,27 @@ class TestUSE3Population:
             sim_end_date=_date(2026, 8, 1), status=RunStatus.PARTIAL,
         )
         await LoaderRunRepository().remplacer(run)
+        # `P-06` — UN PERIMETRE VIDE N'EST PAS UNE ERREUR, C'EST UN ETAT.
+        #
+        # Cette route rendait 404 : l'ecran Population affichait alors une
+        # erreur technique la ou la verite est simple — le Loader n'a encore
+        # peuple personne. On sert donc 200 et on EXPLIQUE, pour que l'ecran
+        # rende un texte plutot qu'un vide ou une erreur.
+        #
+        # Le 404 reste, et il est teste juste apres : il vaut quand
+        # l'operateur designe UN run precis qui, lui, ne porte pas de mesures.
         reponse = await client.get("/admin/dashboard/population", headers=entetes)
-        assert reponse.status_code == 404
-        assert "mesures" in reponse.json()["detail"]
+        assert reponse.status_code == 200, reponse.text
+        corps = reponse.json()
+        assert corps["quotas_par_pays"] == []
+        assert "mesures" in corps["note"]
+
+        # Le meme run, DESIGNE explicitement : 404 explique.
+        cible = await client.get(
+            f"/admin/dashboard/population?run_id={run.id}", headers=entetes
+        )
+        assert cible.status_code == 404
+        assert "mesures" in cible.json()["detail"]
 
     async def test_le_MOTEUR_produit_reellement_ces_mesures(self) -> None:
         """Pas seulement la route : l'agregateur du moteur, sur un rapport
