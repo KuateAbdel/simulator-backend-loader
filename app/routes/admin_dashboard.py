@@ -28,7 +28,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.config import settings
-from app.models.enums import NiveauOrganisation
+from app.models.enums import NiveauOrganisation, RunMode
 from app.repositories.audit_trail import AuditTrailRepository
 from app.repositories.faker_ledger import FakerLedgerRepository
 from app.repositories.loader_runs import LoaderRunRepository
@@ -828,15 +828,33 @@ async def population(
         # et SN **a zero** — alors que le run `7e3f3f83` y avait bel et bien
         # cree des clients. Trois pays effaces de l'ecran par le seul fait
         # qu'une execution plus recente ne les avait pas touches.
-        porteurs = [r for r in await LoaderRunRepository().lister(limite=200) if r.mesures]
+        # `P-06` — SEULS LES RUNS REELS COMPTENT DANS LA POPULATION ACTUELLE.
+        #
+        # Un DRY_RUN mesure ce qu'il AURAIT cree : il n'ecrit pas une ligne.
+        # Sommer ses mesures avec celles des runs REELS gonfle la population
+        # d'entites qui n'existent pas — le premier cumul servi le 24/08
+        # annoncait 2000 clients au Burkina pour 500 noeuds reellement en base,
+        # et 1500 en Cote d'Ivoire pour zero. C'est le recoupement `en_base`
+        # ci-dessous qui l'a montre.
+        #
+        # Les mesures d'un DRY_RUN restent consultables : il suffit de le
+        # DESIGNER par son `run_id`. Ce qu'on refuse, c'est de les faire passer
+        # pour la realite dans la vue d'ensemble.
+        porteurs = [
+            r
+            for r in await LoaderRunRepository().lister(limite=200)
+            if r.mesures and r.mode is RunMode.REAL
+        ]
 
     if not porteurs:
         return {
             **perimetre,
             "quotas_par_pays": [],
             "note": (
-                "aucun run ne porte de mesures de population sur ce perimetre — "
-                "elles sont rangees a la fin du module CLIENTS d'un run REEL"
+                "aucun run REEL ne porte de mesures de population — elles sont "
+                "rangees a la fin du module CLIENTS. Un DRY_RUN n'ecrit rien : "
+                "ses mesures sont consultables en le designant par son run_id, "
+                "jamais comptees comme population existante"
             ),
         }
 

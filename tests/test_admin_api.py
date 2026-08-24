@@ -1485,13 +1485,16 @@ class TestUSE3Population:
         from uuid import uuid4 as _uuid4
 
         from app.models.domain import LoaderRun
-        from app.models.enums import RunStatus
+        from app.models.enums import RunMode, RunStatus
         from app.repositories.loader_runs import LoaderRunRepository
 
         await database.get_database().drop_collection("loader_runs")
+        # `P-06` — REEL, parce que la vue cumulative ne compte QUE ce qui a
+        # ete ecrit : un DRY_RUN mesure ce qu'il aurait fait, il ne peuple pas.
         run = LoaderRun(
             _id=_uuid4(), sim_start_date=_date(2026, 2, 14),
             sim_end_date=_date(2026, 8, 13), status=RunStatus.PARTIAL,
+            mode=RunMode.REAL,
         )
         depot = LoaderRunRepository()
         await depot.remplacer(run)
@@ -1536,6 +1539,54 @@ class TestUSE3Population:
             "150 000 doit etre une FRONTIERE de tranche — le seuil EF-68"
         )
         assert corps["naissances"]["a_l_etranger"] == 52
+
+    async def test_un_DRY_RUN_ne_compte_PAS_dans_la_population_actuelle(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """`P-06` — un DRY_RUN mesure ce qu'il AURAIT cree, il n'ecrit rien.
+
+        Le premier cumul servi le 24/08 sommait les DRY_RUN avec les runs
+        REELS : la prod annoncait 2000 clients au Burkina pour 500 noeuds
+        reellement en base, et 1500 en Cote d'Ivoire pour zero. C'est le
+        recoupement `en_base` qui l'a montre.
+        """
+        from datetime import date as _date
+        from uuid import uuid4 as _uuid4
+
+        from app.models.domain import LoaderRun
+        from app.models.enums import RunMode, RunStatus
+        from app.repositories.loader_runs import LoaderRunRepository
+
+        entetes = await _session_complete(client)
+        reel = await self._semer_mesures()
+
+        blanc = LoaderRun(
+            _id=_uuid4(), sim_start_date=_date(2026, 2, 14),
+            sim_end_date=_date(2026, 8, 13), status=RunStatus.PARTIAL,
+            mode=RunMode.DRY_RUN,
+        )
+        depot = LoaderRunRepository()
+        await depot.remplacer(blanc)
+        await depot.attacher_mesures(
+            blanc.id,
+            {"quotas_par_pays": [{"pays": "CM", "clients": {"mesure": 500, "cible": 500}}]},
+        )
+
+        corps = (
+            await client.get("/admin/dashboard/population", headers=entetes)
+        ).json()
+        assert corps["runs_mesures"] == [str(reel.id)], "le DRY_RUN a ete compte"
+        assert corps["quotas_par_pays"][0]["clients"]["mesure"] == 500, (
+            "500 + 500 = les mesures du DRY_RUN ont ete sommees a celles du REEL"
+        )
+
+        # Il reste CONSULTABLE en le designant : on refuse de le faire passer
+        # pour la realite, pas de le montrer.
+        vise = await client.get(
+            f"/admin/dashboard/population?run_id={blanc.id}", headers=entetes
+        )
+        assert vise.status_code == 200, vise.text
+        assert vise.json()["quotas_par_pays"][0]["clients"]["mesure"] == 500
 
     async def test_un_run_sans_mesures_est_un_404_explique(
         self, client: httpx.AsyncClient
