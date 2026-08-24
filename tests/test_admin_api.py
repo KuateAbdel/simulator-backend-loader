@@ -3219,6 +3219,80 @@ class TestPermissionsEtCreationDeGroupe:
         assert "relecture" in reponse.json()["detail"]
 
 
+class TestV04DatesDeCreation:
+    """`V-04` (23/08, demande administration) — la DATE de creation dans
+    l'inventaire ET la purge.
+
+    Devant un ecran de purge, la premiere question est « ca date de quand ? ».
+    Un residu de la semaine derniere ne se traite pas comme une entite du run
+    d'aujourd'hui — et on ne supprime pas a l'aveugle sur un ecosysteme ou
+    trois services n'ont AUCUN DELETE.
+    """
+
+    async def test_une_entite_A_NOUS_porte_sa_date(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from uuid import uuid4 as _uuid4
+
+        from app.repositories.audit_trail import AuditTrailRepository
+        from app.routes import admin_inventaire
+        from app.routes.admin_entites import RUN_ADMIN
+
+        await _registre_vierge()
+        groupe = _uuid4()
+        audit = AuditTrailRepository()
+        async with audit.intention(
+            RUN_ADMIN, entity_type="Group", entity_id=groupe, operation="CREATE",
+            cible="user-service", payload={"name": "Role Test V04"},
+        ) as suivi:
+            suivi.reussi({"group_id": str(groupe), "name": "Role Test V04"})
+
+        class _Faux:
+            async def lister_groupes(self):  # type: ignore[no-untyped-def]
+                return [{"_id": str(groupe), "name": "Role Test V04"}]
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_inventaire, "_client_users", lambda: _Faux())
+        entetes = await _session_complete(client)
+        corps = (
+            await client.get("/admin/inventaire/groupes", headers=entetes)
+        ).json()
+        ligne = next(g for g in corps["a_nous"] if g["id"] == str(groupe))
+        assert ligne["cree_le"], "la date vient du journal, seul a la connaitre"
+        assert ligne["cree_le"].startswith("20"), ligne["cree_le"]
+
+    async def test_une_entite_ETRANGERE_a_une_date_NULLE_jamais_inventee(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On ne connait la date que de ce que NOUS avons cree. Pour le reste
+        la plateforme ne l'expose pas : `null` est une INFORMATION — pas de
+        date, pas de nous."""
+        from uuid import uuid4 as _uuid4
+
+        from app.routes import admin_inventaire
+
+        await _registre_vierge()
+        etranger = str(_uuid4())
+
+        class _Faux:
+            async def lister_groupes(self):  # type: ignore[no-untyped-def]
+                return [{"_id": etranger, "name": "Groupe d une autre equipe"}]
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(admin_inventaire, "_client_users", lambda: _Faux())
+        entetes = await _session_complete(client)
+        corps = (
+            await client.get("/admin/inventaire/groupes", headers=entetes)
+        ).json()
+        ligne = next(g for g in corps["etranger"] if g["id"] == etranger)
+        assert "cree_le" in ligne, "la cle est TOUJOURS presente"
+        assert ligne["cree_le"] is None, "et vaut null — jamais une date inventee"
+
+
 class TestP04ListeDesClientsFiltrable:
     """`P-04` (23/08) — la LISTE des clients, filtrable par pays, sexe et
     profession. Le dashboard rendait des DISTRIBUTIONS, jamais un client :

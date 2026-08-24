@@ -79,8 +79,14 @@ async def _groupes_a_nous(client: Any) -> list[dict[str, Any]]:
     et la purge aurait ete un mensonge silencieux. La reconnaissance est celle
     de la reconciliation : creations journalisees moins suppressions."""
     classement = await classer_groupes(await client.lister_groupes())
+    # `V-04` — la DATE voyage jusqu'a l'ecran de purge. C'est la premiere
+    # question qu'on se pose avant de supprimer : « ca date de quand ? ». Un
+    # residu de la semaine derniere ne se traite pas comme une entite du run
+    # d'aujourd'hui, et on ne supprime pas a l'aveugle sur un ecosysteme ou
+    # trois services n'ont AUCUN DELETE.
     return [
-        {"id": g["id"], "nom": g["nom"]} for g in classement[STATUT_A_NOUS]
+        {"id": g["id"], "nom": g["nom"], "cree_le": g.get("cree_le")}
+        for g in classement[STATUT_A_NOUS]
     ]
 
 

@@ -71,8 +71,23 @@ def _normaliser_id(document: dict[str, Any]) -> str:
     return str(document.get("_id") or document.get("id") or "")
 
 
+#: `V-04` (23/08) — quand chaque entite a ete creee, relu du journal.
+#: Rempli par `_registre_journal`, consomme par les classements.
+_DATES_CREATION: dict[str, dict[str, str]] = {}
+
+
 async def _registre_journal(entity_type: str, cle_id: str) -> tuple[dict[str, str], set[str]]:
     """(crees id -> nom, supprimes ids) relus du journal pour un type d'entite.
+
+    `V-04` — remplit aussi `_DATES_CREATION[entity_type]` : la DATE de
+    creation, que seul le journal connait. Devant un ecran de PURGE, la
+    premiere question est « ca date de quand ? » — un residu de la semaine
+    derniere ne se traite pas comme une entite du run d'aujourd'hui, et on ne
+    supprime pas a l'aveugle sur des services qui n'ont AUCUN DELETE.
+
+    On ne la connait QUE pour ce que NOUS avons cree. Pour une entite
+    etrangere, la plateforme ne l'expose pas : l'ecran affiche `null`, et
+    c'est une information en soi — pas de date, pas de nous.
 
     Le journal porte trois formes d'entrees, toutes traitees :
       - INTENTION/RESULTAT en write-ahead : le RESULTAT `SUCCES` porte
@@ -92,6 +107,13 @@ async def _registre_journal(entity_type: str, cle_id: str) -> tuple[dict[str, st
 
     crees: dict[str, str] = {}
     supprimes: set[str] = set()
+    dates: dict[str, str] = {}
+
+    def _horodater(identifiant: str, document: dict[str, Any]) -> None:
+        quand = document.get("timestamp")
+        if identifiant and quand is not None:
+            dates[identifiant] = quand.isoformat() if hasattr(quand, "isoformat") else str(quand)
+
     for document in faits:
         action = str(document.get("action"))
         apres = dict(document.get("after") or {})
@@ -99,6 +121,7 @@ async def _registre_journal(entity_type: str, cle_id: str) -> tuple[dict[str, st
             supprimes.add(str(document.get("entity_id", "")))
         elif action == "CREATE":
             crees[str(document.get("entity_id", ""))] = str(apres.get("name", ""))
+            _horodater(str(document.get("entity_id", "")), document)
         elif action == "RESULTAT" and apres.get("statut") == "SUCCES":
             reference = str((document.get("before") or {}).get("intention_id"))
             intention = intentions.get(reference, {})
@@ -113,6 +136,8 @@ async def _registre_journal(entity_type: str, cle_id: str) -> tuple[dict[str, st
                     or ""
                 )
                 crees[identifiant] = nom
+                _horodater(identifiant, document)
+    _DATES_CREATION[entity_type] = dates
     return crees, supprimes
 
 
@@ -142,7 +167,13 @@ async def classer_groupes(plateforme: list[dict[str, Any]]) -> dict[str, Any]:
         {"id": gid, "nom": registre[gid], "statut": STATUT_DISPARU}
         for gid in sorted(set(registre) - presents)
     ]
-    return _bilan(a_nous=a_nous, etrangers=etrangers, disparus=disparus, inconnus=[])
+    return _bilan(
+        a_nous=a_nous,
+        etrangers=etrangers,
+        disparus=disparus,
+        inconnus=[],
+        entity_type="Group",
+    )
 
 
 async def registre_produits() -> dict[str, str]:
@@ -167,7 +198,7 @@ async def classer_produits(plateforme: list[dict[str, Any]]) -> dict[str, Any]:
     `short_name` (CR-07). Les quatre statuts sont possibles ici."""
     registre = await registre_produits()
     return await _classer_par_marqueur(
-        plateforme, registre, champ_marqueur="short_name"
+        plateforme, registre, champ_marqueur="short_name", entity_type="Product"
     )
 
 
@@ -201,7 +232,7 @@ async def classer_companies(plateforme: list[dict[str, Any]]) -> dict[str, Any]:
     DELETE, une company du registre absente la-bas ne devrait pas exister."""
     registre = {cid: "" for cid in await registre_companies()}
     return await _classer_par_marqueur(
-        plateforme, registre, champ_marqueur="short_name"
+        plateforme, registre, champ_marqueur="short_name", entity_type="Company"
     )
 
 
@@ -233,7 +264,9 @@ async def classer_depositaires(plateforme: list[dict[str, Any]]) -> dict[str, An
     sont possibles ; AUCUN n'est supprimable (D-DEP-3, desactivation
     cosmetique — D-DEP-8)."""
     registre = await registre_depositaires()
-    classement = await _classer_par_marqueur(plateforme, registre, champ_marqueur="name")
+    classement = await _classer_par_marqueur(
+        plateforme, registre, champ_marqueur="name", entity_type="Depositary"
+    )
     # L'ETAT fait partie de la visibilite (Yaniv 16/08) : `is_active` de la
     # fiche plateforme, reporte sur chaque ligne (None si la fiche ne le
     # porte pas — dit tel quel, jamais invente).
@@ -253,6 +286,7 @@ async def _classer_par_marqueur(
     registre: dict[str, str],
     *,
     champ_marqueur: str,
+    entity_type: str = "",
 ) -> dict[str, Any]:
     presents: set[str] = set()
     a_nous: list[dict[str, Any]] = []
@@ -277,7 +311,13 @@ async def _classer_par_marqueur(
         {"id": identifiant, "nom": registre[identifiant], "statut": STATUT_DISPARU}
         for identifiant in sorted(set(registre) - presents)
     ]
-    return _bilan(a_nous=a_nous, etrangers=etrangers, disparus=disparus, inconnus=inconnus)
+    return _bilan(
+        a_nous=a_nous,
+        etrangers=etrangers,
+        disparus=disparus,
+        inconnus=inconnus,
+        entity_type=entity_type,
+    )
 
 
 def _bilan(
@@ -286,10 +326,20 @@ def _bilan(
     etrangers: list[dict[str, Any]],
     disparus: list[dict[str, Any]],
     inconnus: list[dict[str, Any]],
+    entity_type: str = "",
 ) -> dict[str, Any]:
     """La forme unique rendue a l'ecran — les quatre colonnes TOUJOURS
     presentes (vides s'il le faut) : une anomalie absente de la reponse
-    serait une anomalie cachee."""
+    serait une anomalie cachee.
+
+    `V-04` — chaque ligne porte sa DATE DE CREATION quand nous la connaissons,
+    et `null` sinon. Un `null` n'est pas un trou : c'est le fait que cette
+    entite ne vient pas de nous, dit sans detour.
+    """
+    dates = _DATES_CREATION.get(entity_type, {})
+    for lignes in (a_nous, etrangers, disparus, inconnus):
+        for ligne in lignes:
+            ligne["cree_le"] = dates.get(str(ligne.get("id", "")))
     return {
         STATUT_A_NOUS: a_nous,
         STATUT_DISPARU: disparus,
