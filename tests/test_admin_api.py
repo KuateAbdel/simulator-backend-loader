@@ -1371,6 +1371,56 @@ class TestLotCDashboard:
         )
         assert mesures["integrite"]["branches_sans_agence"] == 0
 
+    async def test_V03_l_arbre_AVOUE_quand_ses_kiosques_ont_disparu(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Question de Yaniv (24/08) : « si je purge la base, plus rien ne
+        s'affiche, n'est-ce pas ? » — NON, et c'etait un mensonge par omission.
+
+        `org_hierarchy` est NOTRE memoire d'un run. La purge n'y touche pas, et
+        la plateforme peut etre videe de son cote : l'arbre continuait a
+        afficher des kiosques dont le Depositaire n'existait plus, sans le dire.
+
+        Le double rend une plateforme SANS aucun depositaire — l'etat exact
+        d'une base fraichement videe. L'arbre doit l'avouer."""
+        entetes = await _session_complete(client)
+        await self._semer_un_run()
+        corps = (
+            await client.get("/admin/dashboard/ecosysteme", headers=entetes)
+        ).json()
+        verif = corps["verification"]
+        assert verif["verifie"] is True, "la plateforme a repondu, on a donc mesure"
+        assert verif["kiosques_disparus"] == 1, verif
+        assert "etat PASSE" in verif["motif"], verif["motif"]
+        assert corps["mesures"]["integrite"]["kiosques_disparus_la_bas"] == 1
+
+    async def test_V03_une_plateforme_MUETTE_ne_conclut_PAS_que_tout_va_bien(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Un ecran qui affirme sans avoir mesure est pire que muet."""
+
+        class _Muet:
+            async def lister(self):  # type: ignore[no-untyped-def]
+                raise ConnectionError("depositary-service injoignable")
+
+            async def fermer(self):  # type: ignore[no-untyped-def]
+                return None
+
+        monkeypatch.setattr(
+            "app.clients.depositary_service.DepositaryServiceClient",
+            lambda *a, **k: _Muet(),
+        )
+        entetes = await _session_complete(client)
+        await self._semer_un_run()
+        corps = (
+            await client.get("/admin/dashboard/ecosysteme", headers=entetes)
+        ).json()
+        assert corps["verification"]["verifie"] is False
+        assert corps["verification"]["motif"] == "non verifie"
+        assert corps["mesures"]["integrite"]["kiosques_disparus_la_bas"] is None, (
+            "on ne dit pas 0 quand on ne sait pas — 0 serait une affirmation"
+        )
+
     async def test_V03_la_couverture_INVERSE_dit_ou_creer_le_prochain(
         self, client: httpx.AsyncClient
     ) -> None:
@@ -3638,6 +3688,25 @@ def _config_service_double(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(admin_referentiels, "_config_admin", lambda: _Admin())
     monkeypatch.setattr(admin_referentiels, "_config_lecture", lambda: _Lecture())
+
+    # `V-03` — l'ecosysteme CONFRONTE son arbre a depositary-service. Un test
+    # qui touche le reseau est un mauvais test : il est lent, il depend d'un
+    # service qui n'est pas sous test, et il echoue pour de mauvaises raisons.
+    # On double donc aussi ce client. `lister()` rend une liste VIDE : la
+    # plateforme ne porte AUCUN depositaire, ce qui est l'etat par defaut d'un
+    # environnement de test — et c'est le cas le plus interessant, celui ou
+    # l'arbre doit avouer que ses kiosques ont disparu.
+    class _Depositaires:
+        async def lister(self):  # type: ignore[no-untyped-def]
+            return []
+
+        async def fermer(self):  # type: ignore[no-untyped-def]
+            return None
+
+    monkeypatch.setattr(
+        "app.clients.depositary_service.DepositaryServiceClient",
+        lambda *a, **k: _Depositaires(),
+    )
     return traces
 
 

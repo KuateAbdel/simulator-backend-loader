@@ -477,7 +477,7 @@ async def ecosysteme(
         a for p in arbre_pays for c in p["companies"] for b in c["branches"] for a in b["agences"]
     ]
     toutes_branches = [b for p in arbre_pays for c in p["companies"] for b in c["branches"]]
-    integrite = {
+    integrite: dict[str, int | None] = {
         "kiosques_sans_agent": sum(1 for k in tous_kiosques if k["agregats"]["agents"] == 0),
         "kiosques_sans_depositaire": sum(1 for k in tous_kiosques if not k["depositary_id"]),
         "kiosques_sans_client": sum(1 for k in tous_kiosques if k["agregats"]["clients"] == 0),
@@ -486,9 +486,82 @@ async def ecosysteme(
         "imf_sans_nom": sum(1 for c in toutes_imf if c["nom_inconnu"]),
     }
 
+    # --- L'ARBRE SE CONFRONTE AU REEL -------------------------------------
+    #
+    # Question de Yaniv (24/08) : « si je purge la base, plus rien ne s'affiche,
+    # n'est-ce pas ? » — NON, et c'etait un mensonge par omission.
+    #
+    # `org_hierarchy` est NOTRE memoire d'un run. La purge n'y touche pas, et
+    # la plateforme peut etre videe de son cote : l'arbre continuerait a
+    # afficher des kiosques dont le Depositaire n'existe plus, sans le dire.
+    #
+    # On CONFRONTE donc les kiosques de l'arbre a ce que la plateforme porte
+    # VRAIMENT, par la meme reconciliation que l'ecran Inventaire — une seule
+    # verite, pas deux implementations. Un kiosque disparu la-bas est nomme.
+    #
+    # Si la plateforme est MUETTE, on ne conclut pas : `verifie` reste `false`
+    # et l'ecran dit « non verifie » plutot qu'un faux « tout va bien ».
+    verification: dict[str, Any] = {
+        "verifie": False,
+        "kiosques_disparus": 0,
+        "motif": "non verifie",
+    }
+    try:
+        from app.clients.depositary_service import DepositaryServiceClient
+        from app.services.inventaire import classer_depositaires
+
+        client_dep = DepositaryServiceClient()
+
+        async def _reconcilier_depositaires() -> dict[str, Any]:
+            # `lister()` — la VRAIE lecture de depositary-service, la meme que
+            # l'ecran Inventaire. Aucune donnee simulee ne rentre ici.
+            return await classer_depositaires(await client_dep.lister())
+
+        try:
+            # BORNE DE TEMPS : un ecran ne doit JAMAIS attendre un service
+            # mort. Au-dela de 4 s la verification est abandonnee et l'ecran
+            # dit « non verifie » — ce qui est VRAI — au lieu de faire patienter
+            # devant une page blanche.
+            #
+            # L'APPEL EST DANS LA COROUTINE, pas avant : ecrit
+            # `wait_for(f(await g()))`, le `await g()` s'evalue AVANT que le
+            # delai ne l'enveloppe, et la borne ne protege plus rien. Defaut
+            # attrape sur la duree des tests (49 s au lieu de 4).
+            classement = await asyncio.wait_for(_reconcilier_depositaires(), timeout=4.0)
+        finally:
+            await client_dep.fermer()
+        disparus = {str(x["id"]) for x in classement.get("disparu_la_bas", [])}
+        nos_depositaires = {
+            str(k["depositary_id"])
+            for p in arbre_pays for c in p["companies"] for b in c["branches"]
+            for a in b["agences"] for k in a["kiosques"] if k["depositary_id"]
+        }
+        manquants = sorted(nos_depositaires & disparus)
+        verification = {
+            "verifie": True,
+            "kiosques_disparus": len(manquants),
+            "depositaires_disparus": manquants[:20],
+            "motif": (
+                "chaque Kiosque de l'arbre existe encore sur la plateforme"
+                if not manquants
+                else (
+                    f"{len(manquants)} Kiosque(s) de cet arbre n'ont PLUS de "
+                    "Depositaire sur la plateforme — cet arbre decrit un etat "
+                    "PASSE, pas l'etat courant"
+                )
+            ),
+        }
+        # L'anomalie remonte AUSSI dans l'integrite : c'en est une.
+        integrite["kiosques_disparus_la_bas"] = len(manquants)
+    except Exception:
+        # Plateforme muette : on ne dit pas « tout va bien », on dit qu'on ne
+        # sait pas. Un ecran qui affirme sans avoir mesure est pire que muet.
+        integrite["kiosques_disparus_la_bas"] = None
+
     return {
         "run_id": str(run_id),
         "comptes": {n.value.lower() + "s": len(v) for n, v in par_niveau.items()},
+        "verification": verification,
         # L'arbre a CINQ niveaux, celui qu'on lit.
         "pays": arbre_pays,
         # Conservee pour ne casser aucun appelant existant : la meme matiere,
