@@ -545,3 +545,81 @@ class TestFonctionDuDirigeant:
         a = _fonction_du_dirigeant_pour("DEMO_SA Fall", False, STATIQUE)
         b = _fonction_du_dirigeant_pour("DEMO_SA Fall", False, STATIQUE)
         assert a == b
+
+class CompanyClientPeuple(CompanyClientMuet):
+    """Repond « cette Company existe deja » — l'etat REEL de la plateforme
+    des le second run sur le meme perimetre."""
+
+    def __init__(self, noms_presents: set[str] | None = None) -> None:
+        super().__init__()
+        self.noms_presents = noms_presents
+        self.consultations = 0
+        self.companies_creees = 0
+
+    async def chercher_par_nom(self, name: str) -> dict[str, Any] | None:
+        self.consultations += 1
+        if self.noms_presents is not None and name not in self.noms_presents:
+            return None
+        return {"_id": str(uuid4()), "name": name, "owner": {"_id": str(uuid4())}}
+
+    async def creer_company(self, **kwargs: Any) -> dict[str, Any]:
+        """Compte SEPAREMENT les creations de Company : `ecritures` agrege
+        aussi les licences, et une licence posee sur une Company reutilisee est
+        legitime."""
+        self.companies_creees += 1
+        return await super().creer_company(**kwargs)
+
+
+class TestCR03UneIMFReutiliseeResteporteuse:
+    """`UC-09` / `CR-03` — le defaut mesure sur le DRY_RUN `abfd9876`.
+
+    `INV-CPY-02` a rendu la reconnaissance efficace : les 15 Companies deja
+    sur la plateforme ont cesse d'etre recreees. Mais `rapport.porteuses`
+    n'etait alimente qu'aux branches qui CREENT — le retour anticipe passait
+    avant. Resultat : les QUATRE pays sautes au module Depositaires,
+    « aucune IMF creee — hierarchie sans porteur », 0 Branche et 0 Kiosque,
+    alors que 47 Depositaires vivaient sur la plateforme.
+
+    « Creee » et « porteuse » sont deux choses differentes : une IMF porte une
+    hierarchie parce qu'elle EXISTE, pas parce que CE run l'a fabriquee.
+    """
+
+    async def test_une_company_reconnue_est_declaree_porteuse(
+        self, referentiel: ReferentielGeo
+    ) -> None:
+        executeur, _ = _executeur(RunMode.REAL, referentiel, CompanyClientPeuple())
+        rapport = await executeur.executer(planifier(referentiel, RUN_ID), SIM_START, SIM_END)
+        assert rapport.porteuses, (
+            "aucune porteuse declaree alors que toutes les Companies existent — "
+            "le module Depositaires sauterait les 4 pays"
+        )
+
+    async def test_autant_de_porteuses_que_le_plan_en_prevoit(
+        self, referentiel: ReferentielGeo
+    ) -> None:
+        """Reconnaitre ne doit pas non plus en declarer MOINS : le rang de
+        chaque IMF voyage jusqu'aux Depositaires (crash du 21/08)."""
+        plan = planifier(referentiel, RUN_ID)
+
+        neuf, _ = _executeur(RunMode.REAL, referentiel, CompanyClientMuet())
+        attendu = await neuf.executer(plan, SIM_START, SIM_END)
+
+        peuple, _ = _executeur(RunMode.REAL, referentiel, CompanyClientPeuple())
+        obtenu = await peuple.executer(planifier(referentiel, RUN_ID), SIM_START, SIM_END)
+
+        assert len(obtenu.porteuses) == len(attendu.porteuses)
+        assert sorted(p.imf_rang for p in obtenu.porteuses) == sorted(
+            p.imf_rang for p in attendu.porteuses
+        )
+
+    async def test_aucune_company_n_est_recreee(self, referentiel: ReferentielGeo) -> None:
+        """`CR-03` — la contrepartie : zero ecriture COMPANY quand tout existe."""
+        client = CompanyClientPeuple()
+        executeur, _ = _executeur(RunMode.REAL, referentiel, client)
+        await executeur.executer(planifier(referentiel, RUN_ID), SIM_START, SIM_END)
+        assert client.companies_creees == 0, (
+            f"{client.companies_creees} Company(ies) recree(s) alors que toutes existent — "
+            "CR-03 viole"
+        )
+        assert client.consultations > 0, "le GET-avant-POST n'a pas ete exerce"
+

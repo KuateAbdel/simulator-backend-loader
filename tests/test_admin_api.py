@@ -6391,3 +6391,129 @@ class TestC1FichesPays:
         )
         assert reponse.status_code == 404
         assert "classeur est immuable" in reponse.json()["detail"]
+
+class TestUSF3VIDERNOTRECARTE:
+    """`US-F3` — LA PURGE QUI SERT ENFIN A QUELQUE CHOSE.
+
+    La purge v1 ne visait que FinZuu. Or aucun de leurs services n'expose de
+    `DELETE` hors des groupes, et il ne restait plus un seul groupe a nous :
+    le bouton occupait l'ecran sans rien pouvoir faire. Attendre que FinZuu
+    ouvre un DELETE, c'est attendre indefiniment.
+
+    Ce qu'il fallait pouvoir vider, c'est NOTRE CARTE — l'arbre, les runs, le
+    journal, les registres. Et surtout PAS le referentiel : les pays, villes,
+    devises et telcos sont le travail de l'operateur, jamais un sous-produit
+    d'execution.
+    """
+
+    @staticmethod
+    async def _semer() -> None:
+        """Semis IDEMPOTENT : ces tests partagent la base, et un `insert_one`
+        nu echouait sur le second a s'executer (`DuplicateKeyError`)."""
+        from app.core.database import get_collection
+
+        graines = {
+            "org_hierarchy": {"_id": "n1", "niveau": "KIOSQUE"},
+            "lenders_registry": {"_id": "l1"},
+            # `_id` DEDIE, jamais « surcouche » : ce document a la forme d'un
+            # temoin, pas d'une vraie surcouche, et il polluait la base de test
+            # partagee — `SurcoucheRepository.charger()` lisait alors `pays`
+            # comme une liste et faisait tomber deux tests d'assemblage. Ce
+            # qu'on prouve ici, c'est que la COLLECTION est epargnee.
+            "loader_configuration": {"_id": "temoin-usf3", "pays": ["CM", "CI", "BF", "SN"]},
+            "notifications": {"_id": "no1"},
+        }
+        for nom, document in graines.items():
+            await get_collection(nom).replace_one(
+                {"_id": document["_id"]}, document, upsert=True
+            )
+
+    async def test_notre_carte_est_videe(self, client: httpx.AsyncClient) -> None:
+        from app.core.database import get_collection
+
+        entetes = await _session_complete(client)
+        await self._semer()
+        reponse = await client.post(
+            "/admin/purge/confirmer",
+            json={"supprimer_groupes": False, "vider_notre_base": True},
+            headers=entetes,
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert await get_collection("org_hierarchy").count_documents({}) == 0
+        assert await get_collection("lenders_registry").count_documents({}) == 0
+
+    async def test_LE_REFERENTIEL_SURVIT(self, client: httpx.AsyncClient) -> None:
+        """Le test qui compte. Six semaines de travail de l'operateur vivent
+        dans `loader_configuration` : la purge ne doit JAMAIS y toucher."""
+        from app.core.database import get_collection
+
+        entetes = await _session_complete(client)
+        await self._semer()
+        await client.post(
+            "/admin/purge/confirmer",
+            json={"supprimer_groupes": False, "vider_notre_base": True},
+            headers=entetes,
+        )
+        surcouche = await get_collection("loader_configuration").find_one({"_id": "temoin-usf3"})
+        assert surcouche is not None, "LE REFERENTIEL A ETE EFFACE"
+        assert surcouche["pays"] == ["CM", "CI", "BF", "SN"]
+        # `>= 1` et non `== 1` : cette collection porte aussi les notifications
+        # des autres tests. Ce qu'on prouve ici, c'est qu'elle a SURVECU — pas
+        # son cardinal exact, qui ne nous appartient pas.
+        assert await get_collection("notifications").count_documents({}) >= 1
+
+    async def test_par_defaut_notre_carte_n_est_PAS_touchee(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Ce geste se demande. Il ne s'obtient jamais par omission."""
+        from app.core.database import get_collection
+
+        entetes = await _session_complete(client)
+        await self._semer()
+        reponse = await client.post(
+            "/admin/purge/confirmer", json={"supprimer_groupes": False}, headers=entetes
+        )
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json()["notre_base_videe"] is None
+        assert await get_collection("org_hierarchy").count_documents({}) == 1
+
+    async def test_la_purge_laisse_une_trace_dans_le_journal_neuf(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Le journal fait partie de ce qu'on efface : on journalise APRES.
+        Une purge sans trace est exactement ce qu'un audit reproche."""
+        from app.core.database import get_collection
+
+        entetes = await _session_complete(client)
+        await get_collection("audit_trail").delete_many({"entity_type": "LoaderCarte"})
+        await self._semer()
+        await client.post(
+            "/admin/purge/confirmer",
+            json={"supprimer_groupes": False, "vider_notre_base": True},
+            headers=entetes,
+        )
+        trace = await get_collection("audit_trail").find_one({"entity_type": "LoaderCarte"})
+        assert trace is not None, "la purge n'a laisse aucune trace"
+        assert trace["action"] == "DELETE"
+
+    async def test_les_deux_listes_couvrent_TOUTES_les_collections(self) -> None:
+        """Garde d'evolution : une collection ajoutee demain doit etre classee
+        EXPLICITEMENT effacable ou protegee. Sans ce test, elle serait effacee
+        par defaut le jour ou quelqu'un l'ajoute a la mauvaise liste."""
+        from app.core import database as db
+        from app.routes.admin_purge import COLLECTIONS_NOTRE_CARTE, COLLECTIONS_PROTEGEES
+
+        toutes = {
+            valeur
+            for nom, valeur in vars(db).items()
+            if nom.startswith("COLLECTION_") and isinstance(valeur, str)
+        }
+        classees = set(COLLECTIONS_NOTRE_CARTE) | set(COLLECTIONS_PROTEGEES)
+        assert toutes - classees == set(), (
+            f"collections non classees : {sorted(toutes - classees)} — "
+            "declarer chacune effacable ou protegee dans admin_purge.py"
+        )
+        assert set(COLLECTIONS_NOTRE_CARTE) & set(COLLECTIONS_PROTEGEES) == set(), (
+            "une collection ne peut pas etre a la fois effacable et protegee"
+        )
+

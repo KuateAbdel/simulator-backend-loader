@@ -47,7 +47,7 @@ from app.routes.admin_dashboard import SERVICES_SONDES, _sonder
 from app.routes.dependances import (
     SessionAdmin,
     admin_complet,
-    exige_admin,
+    exige_super_admin,
     refuser_si_run_en_cours,
 )
 from app.services.pilotage import executer
@@ -123,7 +123,7 @@ def _fiche(run: LoaderRun) -> dict[str, Any]:
 @router.post("", status_code=202)
 async def preparer(
     demande: LancementDemande,
-    _: Annotated[SessionAdmin, Depends(exige_admin)],
+    _: Annotated[SessionAdmin, Depends(exige_super_admin)],
 ) -> dict[str, Any]:
     """`US-C1` — la PREPARATION : un DRY_RUN complet sur l'intention persistee.
 
@@ -218,10 +218,23 @@ async def _derive_du_perimetre(codes: list[str]) -> list[str]:
     return motifs
 
 
+#: `RBAC` — LES RUNS SONT UNE ACTION DE SUPER-ADMIN.
+#:
+#: Les trois routes qui AGISSENT sur un run — preparer, confirmer, arreter —
+#: portaient `exige_admin`. `docs/MODELE_UTILISATEURS.md` dit pourtant
+#: l'inverse, sans ambiguite :
+#:
+#:   « Le passage du mode DRY_RUN a REAL est toujours une action explicite du
+#:     Super-Admin du Loader, jamais un defaut. »
+#:
+#: Le code divergeait donc de la conception sur le geste le plus lourd du
+#: systeme : celui qui ecrit definitivement chez FinZuu, ou aucun service
+#: n'expose de DELETE. Les routes de LECTURE restent ouvertes a tous les roles
+#: (`admin_complet`) : observer n'est pas agir.
 @router.post("/{run_id}/confirmer", status_code=202)
 async def confirmer(
     run_id: UUID,
-    _: Annotated[SessionAdmin, Depends(exige_admin)],
+    _: Annotated[SessionAdmin, Depends(exige_super_admin)],
 ) -> dict[str, Any]:
     """`US-C2` — le REAL, sur le perimetre FIGE de la preparation.
 
@@ -374,7 +387,7 @@ async def progression(
 @router.post("/{run_id}/arreter")
 async def arreter(
     run_id: UUID,
-    _: Annotated[SessionAdmin, Depends(exige_admin)],
+    _: Annotated[SessionAdmin, Depends(exige_super_admin)],
 ) -> dict[str, Any]:
     """`US-C4` — l'arret. Dit avec exactitude ce qu'il fait en v1 : la tache
     est annulee, le moteur clot le run en FAILED — un etat terminal et VRAI,

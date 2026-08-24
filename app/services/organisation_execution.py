@@ -390,6 +390,11 @@ class ExecuteurOrganisation:
         )
         court = self._generateur.nom_court(raison)
 
+        # La devise ne depend que du pays : la resoudre AVANT le controle
+        # d'existence permet de declarer une porteuse reutilisee sans dupliquer
+        # ce calcul plus bas.
+        devise = self._devise_du_pays(pays)
+
         # INV-CPY-01 / INV-CPY-02 — GET-avant-POST sur LES DEUX champs
         # d'unicite. company-service refuse en HTTP 400 « A company with this
         # NAME OR SHORT NAME already exists » : interroger le seul nom court
@@ -405,6 +410,34 @@ class ExecuteurOrganisation:
         ) or await self._companies.chercher_par_short_name(court)
         if existante is not None:
             logger.info("Company %s deja presente, reutilisee (CR-03)", raison)
+            # `UC-09` — UNE IMF REUTILISEE RESTE UNE IMF PORTEUSE.
+            #
+            # `rapport.porteuses` n'etait alimente qu'aux deux branches qui
+            # CREENT (le DRY_RUN fictif et la creation reelle). Ce retour
+            # anticipe passait avant les deux : des que `INV-CPY-02` a rendu la
+            # reconnaissance efficace, les 15 Companies deja sur la plateforme
+            # ont cesse d'etre declarees porteuses, et le module Depositaires a
+            # saute les QUATRE pays — « aucune IMF creee — hierarchie sans
+            # porteur ». Mesure sur le DRY_RUN abfd9876 : 0 Branche, 0 Agence,
+            # 0 Kiosque, alors que 47 Depositaires vivaient sur la plateforme.
+            #
+            # « Creee » et « porteuse » sont deux choses differentes : une IMF
+            # porte une hierarchie parce qu'elle EXISTE, pas parce que CE run
+            # l'a fabriquee. Confondre les deux rendait le Loader incapable de
+            # travailler deux fois sur le meme ecosysteme — c'est-a-dire
+            # incapable de faire ce pour quoi `CR-03` existe.
+            if est_imf:
+                identifiant_existant = self._companies.identifiant(existante)
+                if identifiant_existant:
+                    rapport.porteuses.append(
+                        CompanyPorteuse(
+                            UUID(identifiant_existant), raison, pays, devise, imf_rang=imf_rang
+                        )
+                    )
+                else:
+                    rapport.companies_echouees.append(
+                        (raison, "reconnue mais sans identifiant — porteuse non declarable")
+                    )
             return existante
 
         secteurs_defaut, industries_defaut = secteurs_et_industrie(
@@ -453,7 +486,6 @@ class ExecuteurOrganisation:
         # mais jamais hors des invariants : la fusion valide avant de remplacer.
         if owner_override is not None:
             owner = self._fusion_owner(owner, owner_override)
-        devise = self._devise_du_pays(pays)
 
         # Le payload CONTRACTUEL qui part (ou partirait) — les champs
         # scalaires dont l'alteration silencieuse importe. `owner` et
