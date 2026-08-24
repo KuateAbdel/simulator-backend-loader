@@ -42,6 +42,7 @@ from uuid import UUID, uuid4
 from app.core.cdc import AGE_SEUIL_JEUNE, PREFIXE_DONNEES
 from app.core.invariants import (
     InvariantViole,
+    valider_coherence_matrimoniale,
     valider_coherence_territoriale,
     valider_coherence_ville_pays,
 )
@@ -293,6 +294,14 @@ class IdentiteGeneree:
     phone: str
     email: str
     occupation: str
+    #: `SD-7` — LA SITUATION FAMILIALE. Le contrat serveur la porte
+    #: (`marital_status`), `valider_coherence_matrimoniale` en garde la
+    #: vraisemblance depuis le depart, `AGE_PLANCHER_SITUATION` en fixe les
+    #: bornes... et AUCUN client ne la portait : le champ n'existait pas sur
+    #: cette dataclasse, donc ne partait jamais. Les 2000 clients du run du
+    #: 24/08 sont tous arrives chez identity-service sans situation familiale.
+    #: Seul le Staff en envoyait une, par un chemin separe.
+    marital_status: str
     adresse: Adresse
     type_identite: str = "INDIVIDUAL"
 
@@ -314,6 +323,7 @@ class IdentiteGeneree:
             "phone": self.phone,
             "email": self.email,
             "occupation": self.occupation,
+            "marital_status": self.marital_status,
             "address": self.adresse.en_payload(),
         }
 
@@ -556,11 +566,12 @@ class Generateur:
             referentiel=referentiel,
             statique=statique,
         )
+        naissance = self._date_de_naissance(jeune=jeune, ancre=ancre_client)
         return IdentiteGeneree(
             identity_id=uuid4(),
             first_name=first_name,
             last_name=last_name,
-            date_of_birth=self._date_de_naissance(jeune=jeune, ancre=ancre_client),
+            date_of_birth=naissance,
             gender=gender.upper(),
             # `nationality` exige un code ISO 3166-1 alpha-2, JAMAIS le libelle
             # du pays. Mesure du 08/08 : « Cameroun » -> HTTP 422
@@ -579,7 +590,66 @@ class Generateur:
             phone=telephone,
             email=self.email(first_name, last_name),
             occupation=occupation or "Commercant",
+            marital_status=self.situation_familiale(naissance, ancre=ancre_client),
             adresse=self.adresse(quartier, ville, region, pays, latitude, longitude, referentiel),
+        )
+
+    #: `SD-7` — REPARTITION DES SITUATIONS FAMILIALES PAR TRANCHE D'AGE.
+    #:
+    #: Le CDC ne fixe AUCUN quota matrimonial : ce n'est ni `EF-22` (sexe et
+    #: age), ni `EF-23` (80/20), ni `EF-24` (agriculture). C'est donc une borne
+    #: de CREDIBILITE, declaree comme telle, jamais presentee comme une regle
+    #: du CDC.
+    #:
+    #: Les tranches suivent `AGE_PLANCHER_SITUATION`, qui interdit deja
+    #: DIVORCED avant 21 ans et WIDOWED avant 30 : aucune combinaison produite
+    #: ici ne peut violer `valider_coherence_matrimoniale`, et le test le
+    #: verifie sur toute la population plutot que sur un echantillon.
+    #:
+    #: Les proportions refletent une population ouest-africaine jeune : le
+    #: mariage devient majoritaire a partir de 25 ans, le veuvage reste
+    #: marginal avant 45. Devant un bailleur, une population de 2000 clients
+    #: tous « SINGLE » — ce que produisait l'absence du champ — se remarque
+    #: aussi vite qu'une population de veufs de 18 ans.
+    SITUATIONS_PAR_AGE: Final[tuple[tuple[int, tuple[tuple[str, int], ...]], ...]] = (
+        (21, (("SINGLE", 88), ("MARRIED", 12))),
+        (30, (("SINGLE", 55), ("MARRIED", 42), ("DIVORCED", 3))),
+        (45, (("MARRIED", 66), ("SINGLE", 25), ("DIVORCED", 7), ("WIDOWED", 2))),
+        (200, (("MARRIED", 68), ("SINGLE", 12), ("DIVORCED", 10), ("WIDOWED", 10))),
+    )
+
+    def situation_familiale(self, naissance: date, *, ancre: str) -> str:
+        """`SD-7` — la situation familiale, coherente avec l'age.
+
+        Ancree sur le client (`ancre`) et non sur un tirage libre : `CR-03`
+        exige que deux executions du meme perimetre produisent le MEME client,
+        situation familiale comprise.
+        """
+        age = self._age_au(naissance)
+        repartition = next(
+            (parts for plafond, parts in self.SITUATIONS_PAR_AGE if age < plafond),
+            self.SITUATIONS_PAR_AGE[-1][1],
+        )
+
+        total = sum(part for _, part in repartition)
+        # Tirage DETERMINISTE dans [0, total) : meme ancre, meme resultat.
+        empreinte = sha256(f"situation:{ancre}".encode()).digest()
+        seuil = int.from_bytes(empreinte[:4], "big") % total
+        cumul = 0
+        for situation, part in repartition:
+            cumul += part
+            if seuil < cumul:
+                return valider_coherence_matrimoniale(situation, age)
+        return valider_coherence_matrimoniale(repartition[0][0], age)
+
+    def _age_au(self, naissance: date) -> int:
+        """L'age a la date de reference du run — jamais « aujourd'hui », qui
+        ferait deriver un run rejoue demain."""
+        reference = self._reference
+        return (
+            reference.year
+            - naissance.year
+            - ((reference.month, reference.day) < (naissance.month, naissance.day))
         )
 
     def _lieu_de_naissance(

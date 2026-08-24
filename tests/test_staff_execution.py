@@ -13,7 +13,7 @@ from __future__ import annotations
 import random
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -231,3 +231,116 @@ class TestResilience:
         rapport = await executeur.executer()
         assert "Refuses avant reseau" in rapport.resume()
         assert "Echecs serveur" in rapport.resume()
+
+class ArbreDouble:
+    """Un arbre en memoire : les Kiosques que Depositaires aurait crees, et
+    les Agents que le Staff y rattache."""
+
+    def __init__(self, kiosques_par_pays: dict[str, int]) -> None:
+        from types import SimpleNamespace
+
+        self.kiosques = [
+            SimpleNamespace(
+                id=uuid4(),
+                company_id=uuid4(),
+                country_code=pays,
+                name=f"Kiosque {pays}-{i}",
+            )
+            for pays, nombre in kiosques_par_pays.items()
+            for i in range(nombre)
+        ]
+        self.agents: list[dict[str, Any]] = []
+
+    async def par_niveau(self, run_id: Any, niveau: Any) -> list[Any]:
+        from app.models.enums import NiveauOrganisation
+
+        return self.kiosques if niveau is NiveauOrganisation.KIOSQUE else []
+
+    async def ajouter_agent(self, **champs: Any) -> None:
+        self.agents.append(champs)
+
+
+class TestUC09UnAgentParKiosque:
+    """`UC-09` postcondition — « chaque Kiosque possede au moins un Agent ».
+
+    Le defaut que ces tests verrouillent : `org_hierarchy.ajouter_agent()`
+    n'avait AUCUN appelant dans tout le depot. Le niveau AGENT etait declare,
+    la recette comptait les Agents par Kiosque, et rien n'en creait jamais un.
+    Chaque run REEL violait donc la postcondition PAR CONSTRUCTION, quel que
+    soit le budget — le run du 24/08 a conclu « 4 Kiosque(s) sans Agent ».
+
+    Second defaut, meme cause racine : le plan tirait son `nb_kiosques` dans
+    `alea.randint()`, sans regarder ce que le module Depositaires venait de
+    creer. Il a planifie 17 Agents pour le Cameroun quand la plateforme
+    portait 4 Kiosques au Burkina.
+    """
+
+    async def test_chaque_kiosque_REEL_recoit_au_moins_un_agent(
+        self, base: ReferentielGeo
+    ) -> None:
+        arbre = ArbreDouble({"CM": 4, "CI": 3})
+        executeur = ExecuteurStaff(
+            run_id=RUN_ID,
+            mode=RunMode.REAL,
+            configuration=ConfigurationExecution.defaut_cdc(),
+            referentiel=base,
+            identity_client=IdentityDouble(),
+            user_client=UserDouble(),
+            arbre=arbre,
+        )
+        await executeur.executer()
+
+        servis = {champs["kiosque_id"] for champs in arbre.agents}
+        attendus = {k.id for k in arbre.kiosques if k.country_code in {"CM", "CI"}}
+        assert attendus <= servis, (
+            f"{len(attendus - servis)} Kiosque(s) sans Agent — UC-09 viole"
+        )
+
+    async def test_le_plan_se_recadre_sur_les_kiosques_qui_EXISTENT(
+        self, base: ReferentielGeo
+    ) -> None:
+        """4 Kiosques reels => 4 Agents, jamais les 17 du tirage."""
+        arbre = ArbreDouble({"CM": 4})
+        executeur = ExecuteurStaff(
+            run_id=RUN_ID,
+            mode=RunMode.REAL,
+            configuration=ConfigurationExecution.defaut_cdc(),
+            referentiel=base,
+            identity_client=IdentityDouble(),
+            user_client=UserDouble(),
+            arbre=arbre,
+        )
+        rapport = await executeur.executer()
+        plan_cm = next(p for p in rapport.plans if p.pays == "CM")
+        assert plan_cm.nb_kiosques == 4
+        assert plan_cm.nb_agents == 4
+
+    async def test_l_encadrement_n_est_affilie_a_AUCUN_kiosque(
+        self, base: ReferentielGeo
+    ) -> None:
+        """Un Comptable ne tient pas un guichet. Seuls les Agents sont
+        rattaches — sinon le compte par Kiosque devient un mensonge."""
+        arbre = ArbreDouble({"CM": 2})
+        executeur = ExecuteurStaff(
+            run_id=RUN_ID,
+            mode=RunMode.REAL,
+            configuration=ConfigurationExecution.defaut_cdc(),
+            referentiel=base,
+            identity_client=IdentityDouble(),
+            user_client=UserDouble(),
+            arbre=arbre,
+        )
+        rapport = await executeur.executer()
+        plan_cm = next(p for p in rapport.plans if p.pays == "CM")
+        assert len(arbre.agents) == plan_cm.nb_agents
+        assert sum(plan_cm.encadrement.values()) > 0, "l'encadrement doit exister"
+
+    async def test_sans_arbre_le_staff_ne_fabrique_aucune_affectation(
+        self, base: ReferentielGeo
+    ) -> None:
+        """DRY_RUN, ou module Depositaires non execute : on ne rattache rien a
+        un Kiosque qui n'existe pas."""
+        executeur, _, _ = _executeur(RunMode.REAL, base)
+        rapport = await executeur.executer()
+        assert rapport.affectations == []
+

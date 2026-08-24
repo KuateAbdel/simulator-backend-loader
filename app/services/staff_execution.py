@@ -61,7 +61,7 @@ from app.core.invariants import (
     RegistreUnicite,
     valider_coherence_territoriale,
 )
-from app.models.enums import RunMode, RunStatus
+from app.models.enums import NiveauOrganisation, RunMode, RunStatus
 from app.services.generateur import patronyme, prenom
 from app.services.geographie import ReferentielGeo
 
@@ -109,6 +109,38 @@ class PlanStaffPays:
     def total(self) -> int:
         return self.nb_agents + sum(self.encadrement.values())
 
+    def recadrer_sur(self, kiosques_reels: int) -> None:
+        """`UC-09` — aligne le plan sur les Kiosques qui EXISTENT.
+
+        Le tirage initial (`alea.randint`) est une PREVISION, faite avant que
+        le module Depositaires ne tourne. Une fois l'arbre bati, c'est lui qui
+        fait foi : « un Agent par Kiosque » se compte sur les Kiosques reels,
+        jamais sur une intention.
+
+        Le budget d'encadrement est recalcule dans la foulee, pour qu'un pays
+        qui recoit moins de Kiosques que prevu rende ses postes a
+        l'encadrement plutot que de les perdre.
+        """
+        self.nb_kiosques = kiosques_reels
+        self.nb_agents = kiosques_reels
+        reste = self.budget_staff - self.nb_agents
+        if reste < 0:
+            self.alerte = (
+                f"{self.pays} : {kiosques_reels} Kiosques exigent autant d'Agents, pour un "
+                f"budget de {self.budget_staff} staff — la fourchette UC-09 (15-25) ne couvre "
+                "pas la postcondition « un Agent par Kiosque ». Les Agents sont crees, "
+                "l'encadrement est sacrifie."
+            )
+            reste = 0
+        elif self.alerte and "Kiosques exigent" in self.alerte:
+            # Le recadrage a leve l'alerte du plan : elle ne doit pas survivre
+            # a la cause qui l'a produite.
+            self.alerte = ""
+        self.encadrement.clear()
+        for rang in range(reste):
+            role = ROLES_ENCADREMENT[rang % len(ROLES_ENCADREMENT)]
+            self.encadrement[role] = self.encadrement.get(role, 0) + 1
+
 
 @dataclass(slots=True)
 class RapportStaff:
@@ -120,6 +152,9 @@ class RapportStaff:
     echoues: list[tuple[str, str]] = field(default_factory=list)
     refuses_avant_reseau: list[tuple[str, str]] = field(default_factory=list)
     alertes: list[str] = field(default_factory=list)
+    #: `UC-09` — quel Agent tient quel Kiosque. Le rapport doit pouvoir le
+    #: dire : c'est la preuve de la postcondition, pas un ornement.
+    affectations: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def total_prevu(self) -> int:
@@ -231,6 +266,12 @@ class ExecuteurStaff:
         identity_client: Any,
         user_client: Any,
         registre: RegistreUnicite | None = None,
+        #: `UC-09` — l'arbre des Kiosques REELLEMENT crees par le module
+        #: Depositaires, qui tourne juste avant. Sans lui, le Staff planifiait
+        #: ses Agents sur un tirage INDEPENDANT (`alea.randint`) : il en creait
+        #: 17 pour un pays qui n'avait que 4 Kiosques, et aucun des 4 n'en
+        #: recevait. `None` en DRY_RUN, ou l'arbre n'existe pas encore.
+        arbre: Any = None,
     ) -> None:
         self.run_id = run_id
         self.mode = mode
@@ -239,6 +280,7 @@ class ExecuteurStaff:
         self._identites = identity_client
         self._users = user_client
         self._registre = registre or RegistreUnicite()
+        self._arbre = arbre
         self._alea = random.Random(run_id.int)  # noqa: S311 — ENF-15, pas de cryptographie
 
     @property
@@ -248,6 +290,23 @@ class ExecuteurStaff:
     async def executer(self) -> RapportStaff:
         rapport = RapportStaff(mode=self.mode)
         rapport.plans = planifier_staff(self._configuration, self._referentiel, self._alea)
+
+        # `UC-09` — LES AGENTS SE COMPTENT SUR LES KIOSQUES QUI EXISTENT.
+        #
+        # Le plan tirait `nb_kiosques` dans `alea.randint(...)`, INDEPENDAMMENT
+        # du module Depositaires qui venait de tourner. Les deux nombres
+        # n'avaient aucune raison de coincider — et ne coincidaient pas : le run
+        # du 24/08 a planifie 17 Agents pour le Cameroun quand la plateforme
+        # portait 4 Kiosques au Burkina, et la recette a conclu
+        # « 4 Kiosque(s) sans Agent ». La postcondition n'etait pas violee par
+        # un manque de budget : elle l'etait parce que personne ne regardait
+        # les vrais Kiosques.
+        kiosques = await self._kiosques_reels()
+        for plan in rapport.plans:
+            reels = kiosques.get(plan.pays)
+            if reels is not None:
+                plan.recadrer_sur(len(reels))
+
         rapport.alertes = [p.alerte for p in rapport.plans if p.alerte]
 
         for plan in rapport.plans:
@@ -255,13 +314,70 @@ class ExecuteurStaff:
             for role, nombre in sorted(plan.encadrement.items()):
                 postes.extend([role] * nombre)
 
+            # Chaque Agent part avec LE Kiosque qu'il tiendra. `UC-09` en veut
+            # « au moins un » par Kiosque : on sert les Kiosques dans l'ordre,
+            # et le tour recommence si le budget en autorise davantage.
+            libres = list(kiosques.get(plan.pays) or [])
             for rang, role in enumerate(postes):
-                await self._creer_un_staff(plan, role, rang, rapport)
+                affectation = (
+                    libres[rang % len(libres)] if role == ROLE_AGENT and libres else None
+                )
+                await self._creer_un_staff(plan, role, rang, rapport, affectation)
 
         return rapport
 
+    @staticmethod
+    def _identifiant_user(utilisateur: Any, identity_id: str) -> UUID | None:
+        """L'identifiant du `User` cree, ou a defaut celui de son Identity.
+
+        `D1` vaut aussi ici : selon l'endpoint, user-service rend `_id` ou
+        `id`. Le repli sur l'Identity garde la trace quand la reponse est
+        muette.
+
+        **Ne leve JAMAIS.** Une valeur non conforme rend `None` : le noeud est
+        ecrit quand meme, et le lien Agent -> Kiosque — qui est ce que `UC-09`
+        verifie — tient. Faire echouer le staff entier parce qu'un service a
+        rendu un identifiant non canonique reviendrait a perdre l'Agent pour
+        preserver son numero.
+        """
+        for brut in (
+            (utilisateur.get("_id") or utilisateur.get("id"))
+            if isinstance(utilisateur, dict)
+            else None,
+            identity_id,
+        ):
+            if not brut:
+                continue
+            try:
+                return UUID(str(brut))
+            except (ValueError, AttributeError, TypeError):
+                continue
+        return None
+
+    async def _kiosques_reels(self) -> dict[str, list[Any]]:
+        """Les Kiosques de CE run, par pays, tels que Depositaires les a crees.
+
+        Rend un dictionnaire VIDE quand l'arbre n'est pas disponible (DRY_RUN,
+        ou module Depositaires non execute) : le plan garde alors son tirage,
+        et le rapport le dit. On ne fabrique pas d'affectation vers un Kiosque
+        qui n'existe pas.
+        """
+        if self._arbre is None:
+            return {}
+        par_pays: dict[str, list[Any]] = {}
+        for noeud in await self._arbre.par_niveau(self.run_id, NiveauOrganisation.KIOSQUE):
+            par_pays.setdefault(noeud.country_code, []).append(noeud)
+        return par_pays
+
     async def _creer_un_staff(
-        self, plan: PlanStaffPays, role: str, rang: int, rapport: RapportStaff
+        self,
+        plan: PlanStaffPays,
+        role: str,
+        rang: int,
+        rapport: RapportStaff,
+        #: `UC-09` — le Kiosque que cet Agent tiendra. `None` pour
+        #: l'encadrement, qui n'est affilie a aucun guichet.
+        kiosque: Any = None,
     ) -> None:
         pays = plan.pays
         etiquette = f"{pays}-{role}-{rang:03d}"
@@ -284,7 +400,7 @@ class ExecuteurStaff:
             if not identity_id:
                 raise RuntimeError("identity-service n'a rendu aucun identifiant")
 
-            await self._users.creer_utilisateur_applicatif(
+            utilisateur = await self._users.creer_utilisateur_applicatif(
                 user_name=payload["user_name"],
                 email=payload["identity"]["email"],
                 mot_de_passe_initial=payload["mot_de_passe_initial"],
@@ -293,6 +409,25 @@ class ExecuteurStaff:
                 type_user=UserType.STAFF,
                 groupes=[role],
             )
+
+            # `UC-09` postcondition — LE RATTACHEMENT AGENT -> KIOSQUE.
+            #
+            # `org_hierarchy.ajouter_agent()` existait, la recette comptait les
+            # Agents par Kiosque, le niveau AGENT etait declare... et PERSONNE
+            # ne l'appelait : zero appelant dans tout le depot. Le lien n'etait
+            # donc ecrit nulle part — ni chez nous, ni chez FinZuu, ou `User`
+            # ne porte aucune reference vers un Depositaire. Chaque run REEL
+            # violait UC-09 par construction, quel que soit le budget.
+            if kiosque is not None and self._arbre is not None:
+                await self._arbre.ajouter_agent(
+                    run_id=self.run_id,
+                    kiosque_id=kiosque.id,
+                    company_id=kiosque.company_id,
+                    name=f"{payload['identity']['first_name']} {payload['identity']['last_name']}",
+                    country_code=plan.pays,
+                    user_id=self._identifiant_user(utilisateur, identity_id),
+                )
+                rapport.affectations.append((etiquette, kiosque.name))
         except Exception as erreur:
             motif = f"{type(erreur).__name__}: {erreur}"[:600]
             logger.warning("staff %s en echec : %s", etiquette, motif)

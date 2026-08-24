@@ -126,7 +126,10 @@ class OrgHierarchyRepository(RepositoryBase):
         company_id: UUID,
         name: str,
         country_code: str,
-        user_id: UUID,
+        #: `None` quand user-service a rendu un identifiant non canonique. Le
+        #: LIEN Agent -> Kiosque, que `UC-09` verifie, tient sans lui : on
+        #: n'abandonne pas l'Agent pour preserver son numero.
+        user_id: UUID | None,
     ) -> OrgHierarchyNode:
         """Rattache un Agent a son Kiosque — `UC-09` point 4, `D-11`.
 

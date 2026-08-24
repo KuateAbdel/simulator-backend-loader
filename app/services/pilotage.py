@@ -428,6 +428,9 @@ async def executer(
             referentiel=referentiel,
             identity_client=identites,
             user_client=users,
+            # `UC-09` — le Staff tourne APRES les Depositaires : l'arbre porte
+            # les Kiosques reels sur lesquels compter et affilier ses Agents.
+            arbre=hierarchie,
         ).executer()
 
     tous: dict[Etape, Travail] = {

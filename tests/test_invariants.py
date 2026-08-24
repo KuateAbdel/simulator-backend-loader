@@ -613,3 +613,100 @@ class TestAdresseDansLePays:
                 quartier="Bastos",
                 referentiel=geo,
             )
+
+class TestSD7SituationFamiliale:
+    """`SD-7` — la situation familiale des clients.
+
+    Le champ existait au contrat serveur, la regle de vraisemblance existait
+    dans `app/core/invariants.py`, ses bornes d'age existaient... et AUCUN
+    client ne portait de situation familiale : `IdentiteGeneree` n'avait pas
+    le champ, donc le payload ne l'avait pas non plus. Les 2000 clients du run
+    du 24/08 sont arrives chez identity-service sans elle.
+    """
+
+    def _generateur(self) -> object:
+        from datetime import date as _date
+        from uuid import UUID as _UUID
+
+        from app.services.generateur import Generateur
+
+        return Generateur(
+            _UUID("9e2369bf-eb8c-4b16-8c69-6cfddcb6ee10"), reference=_date(2026, 8, 24)
+        )
+
+    def test_les_2000_situations_respectent_les_planchers_d_age(self) -> None:
+        """Sur TOUTE la population, pas sur un echantillon : c'est le seul
+        moyen de prouver qu'aucune combinaison invraisemblable ne passe."""
+        from app.core.invariants import AGE_PLANCHER_SITUATION
+
+        gen = self._generateur()
+        for i in range(2000):
+            ancre = f"client:{i}"
+            naissance = gen._date_de_naissance(jeune=(i % 10 < 6), ancre=ancre)
+            age = gen._age_au(naissance)
+            situation = gen.situation_familiale(naissance, ancre=ancre)
+            assert age >= AGE_PLANCHER_SITUATION[situation], (
+                f"{situation} a {age} ans — le plancher est "
+                f"{AGE_PLANCHER_SITUATION[situation]} ans"
+            )
+
+    def test_aucun_veuf_avant_30_ans(self) -> None:
+        """La borne la plus visible devant un bailleur, isolee."""
+        gen = self._generateur()
+        for i in range(2000):
+            ancre = f"client:{i}"
+            naissance = gen._date_de_naissance(jeune=(i % 10 < 6), ancre=ancre)
+            if gen._age_au(naissance) < 30:
+                assert gen.situation_familiale(naissance, ancre=ancre) != "WIDOWED"
+
+    def test_la_population_n_est_pas_uniforme(self) -> None:
+        """Le defaut corrige produisait 2000 clients IDENTIQUES sur ce champ
+        (absent, donc nul). Une population credible en porte plusieurs."""
+        gen = self._generateur()
+        vues = {
+            gen.situation_familiale(
+                gen._date_de_naissance(jeune=(i % 10 < 6), ancre=f"client:{i}"),
+                ancre=f"client:{i}",
+            )
+            for i in range(2000)
+        }
+        assert vues == {"SINGLE", "MARRIED", "DIVORCED", "WIDOWED"}, vues
+
+    def test_la_situation_est_REPRODUCTIBLE(self) -> None:
+        """`CR-03` — deux executions du meme perimetre doivent produire le
+        MEME client. Un tirage libre l'aurait casse en silence."""
+        a, b = self._generateur(), self._generateur()
+        for i in range(200):
+            ancre = f"client:{i}"
+            naissance = a._date_de_naissance(jeune=False, ancre=ancre)
+            assert a.situation_familiale(naissance, ancre=ancre) == b.situation_familiale(
+                naissance, ancre=ancre
+            )
+
+    def test_le_champ_PART_REELLEMENT_dans_le_payload(self) -> None:
+        """Composer la valeur ne suffit pas : c'est `en_payload()` qui part sur
+        le reseau, et c'est lui qui ne la portait pas."""
+        from app.core.invariants import SITUATIONS_FAMILIALES
+
+        gen = self._generateur()
+        identite = gen.identite(
+            first_name="Aissatou",
+            last_name="Diallo",
+            gender="FEMALE",
+            country_code="SN",
+            ville="Dakar",
+            region="Dakar",
+            quartier=None,
+            telephone="221770000001",
+            jeune=False,
+            ancre_client="client:preuve",
+            occupation="Commercante",
+            latitude=None,
+            longitude=None,
+            referentiel=None,
+            statique=None,
+        )
+        payload = identite.en_payload()
+        assert "marital_status" in payload
+        assert payload["marital_status"] in SITUATIONS_FAMILIALES
+
