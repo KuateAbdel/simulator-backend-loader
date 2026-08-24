@@ -1,10 +1,18 @@
 # Contrat — Service d'attribution
 
-**Référence** FZ-CONTRAT-ATTRIB-2026-001 · version 0.3 · **VALIDÉ** (QA Lead, 24/08)
+**Référence** FZ-CONTRAT-ATTRIB-2026-001 · version 0.3.1 · **VALIDÉ** (QA Lead, 24/08)
 **Consommateur** Simulateur USSD FinZuu (application React Native)
 **Fournisseur** Loader FinZuu
-**Couvre** `EF-01` `EF-02` `EF-03` `EF-04` `EF-05` `EF-17` `EF-20` · `INV-SIM-01` `INV-SIM-03` `INV-SIM-04` `INV-SIM-06` `INV-SIM-07` · `CR-04` `CR-05` `CR-06` `CR-08` `CR-14` · `ENF-05` `ENF-07`
+**Couvre** `EF-01` `EF-02` `EF-03` `EF-04` `EF-05` `EF-15` `EF-17` `EF-20` `EF-22` · `INV-SIM-01` `INV-SIM-03` `INV-SIM-04` `INV-SIM-06` `INV-SIM-07` · `CR-04` `CR-05` `CR-06` `CR-08` `CR-14` · `ENF-05` `ENF-07`
 
+> **Révision 0.3.1 — réserve levée (QA Lead, 24/08).** La clé d'idempotence
+> est **persistée dès son émission et effacée à réception du `201`** : sans
+> cela, une application tuée entre l'émission et la réponse — système,
+> batterie, fermeture — perdait la clé, l'usager recommençait avec une
+> nouvelle, et le premier client restait marqué sept jours. Le trou que la
+> clé fermait se rouvrait au redémarrage. Cinq valeurs stockées
+> transitoirement, quatre en régime établi (§2).
+>
 > **Révision 0.3 — validation du 24/08.** Deux corrections : la route de
 > vérification du bail est ajoutée (§3 — sans elle, `EF-15` reposait sur la
 > seule horloge du téléphone, ce que ce contrat interdit) ; la transmission de
@@ -14,7 +22,7 @@
 > d'idempotence confirmée à 72 h ; routes ouvertes confirmées (`ENF-07`).
 >
 > **Révision 0.2 — dossier du 23/08.** Les libellés de `GET /criteres` passent
-> au bilingue : le paramètre de langue (`EF-19` à `EF-22`) fait entrer un choix
+> au bilingue : le paramètre de langue (`EF-19` à `EF-21`) fait entrer un choix
 > d'affichage là où le service détient la donnée. Voir §1.2. L'état local passe
 > de trois à quatre valeurs (`INV-SIM-06` révisé).
 
@@ -138,11 +146,15 @@ laisse un client marqué attribué que personne ne détient. Le numéro est
 **perdu pour sept jours**, et le pool se vide silencieusement à chaque
 démonstration ratée.
 
-L'application génère un UUID v4 **par tentative d'attribution**, le conserve
-pendant ses reprises, et le renouvelle seulement quand l'usager relance une
-attribution depuis l'écran 2. Le service conserve la correspondance
-`clé → attribution` **72 heures au minimum** et rejoue la même réponse `201`
-pour une clé déjà vue, sans tirer un second client.
+L'application génère un UUID v4 **par tentative d'attribution**, et le
+**persiste dès son émission** — pas seulement en mémoire : une application
+tuée entre l'émission et la réponse (système, batterie, fermeture) doit
+retrouver sa clé au redémarrage, sinon l'usager recommence avec une nouvelle
+clé, un second client est tiré et le premier reste marqué sept jours — le
+trou §0 rouvert. La clé est **effacée à réception du `201`**, et renouvelée
+seulement quand l'usager change de profil. Le service conserve la
+correspondance `clé → attribution` **72 heures au minimum** et rejoue la même
+réponse `201` pour une clé déjà vue, sans tirer un second client.
 
 ### Réponse `201`
 
@@ -166,7 +178,10 @@ pour une clé déjà vue, sans tirer un second client.
 
 `msisdn` · `expire_le` · `attribution_id` — auxquels s'ajoute la **langue
 retenue** (`EF-21`), que `INV-SIM-06` autorise explicitement depuis la révision
-du 23/08. Quatre valeurs, pas une de plus.
+du 23/08. Quatre valeurs en régime établi — **cinq transitoirement** : la clé
+d'idempotence et le profil demandé vivent sur l'appareil entre l'émission de
+la demande et la réception du `201`, puis sont effacés (révision 0.3.1). Une
+clé n'est pas une donnée personnelle : c'est un numéro de tentative.
 
 **Aucun identifiant d'appareil n'est demandé ni stocké** : le bail est porté par
 sa poignée, pas par une identité de terminal.
