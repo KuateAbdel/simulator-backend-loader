@@ -713,6 +713,82 @@ jamais comblé par un défaut plausible — pas de date = pas de nous ; pas d'é
 = état inconnu ; pas de mesure = non vérifié. Chaque fois, un test verrouille
 les deux branches.
 
+## D-quindecies. LA JOURNÉE DU 25/08 — LES CINQ POINTS SOLDÉS, v0.1.0 SIGNÉE ET PUBLIÉE
+
+**Matin (avant cette section) : attribution prouvée en prod, 8 CR tenus / 0
+violé (run 0e64a285), app sur Xiaomi — voir la mémoire de session. L'après-
+midi a soldé les 5 points d'avant-contrat du QA Lead, puis livré v0.1.0.**
+
+**1) La séquence de démarrage (FZ-DIAG-BAIL-2026-001 CLOS).** La décision de
+routage est LOCALE (`demarrerLocal()`, quelques ms) ; la vérification serveur
+court en arrière-plan (`verifierBailEnFond()`) et ne fait que corriger — les
+trois conduites du contrat §3 inchangées ; elle ne part que si la décision
+locale sert la carte SIM (un bail échu localement se ré-attribue, EF-15).
+Écran 0 « démarrage » (logo, non interactif). LE TEST QUI PROUVE : bouchon
+`verifierBail` = promesse jamais résolue — le test échoue si le routage
+attend (7 cas, `__tests__/demarrage.test.ts`). PREUVE SUR APPAREIL (Itel
+A665L, APK release minifié) : réinstallation + arrêt forcé + relance →
+ouverture DIRECTE sur la composition avec le numéro — captures versionnées
+dans `docs/recette/` du repo app.
+
+**2) Le vrai logo FinZuu partout** : splash, accueil (l'appui long EF-18
+conservé), icônes Android 5 densités + adaptative API 26+ (zone sûre 66 dp),
+générées depuis `simulator-frontend/public/logo-finzuu.png`.
+
+**3) Le motif « interactif pendant opération » éradiqué** : audit des chemins
+réseau — seule brèche restante, la rupture (écran 8), passée sous le voile ;
+voile générique avec ses propres libellés (plus le texte d'attribution).
+
+**4) Les orphelins : UN seul depuis le premier lancement.** 237686318724
+(1ʳᵉ attribution du téléphone, 04:53, écrasée localement pendant la fenêtre
+du défaut) — libéré par la route publique (204, re-DELETE 404), le bail du
+téléphone intact. GARDE-FOU consigné : la règle « garder le plus récent » ne
+vaut QUE mono-appareil — deux baux actifs légitimes coexistent depuis (Xiaomi
++ Itel).
+
+**5) Le journal élucidé — les traces existaient depuis le premier jour.**
+`_journaliser` écrivait bien CREATE/DELETE sous RUN_ADMIN ; c'est
+`lister_admin` qui ne rendait que les `INTENTION` du write-ahead. Correction
+en LECTURE seule : les faits accomplis entrent au journal (issue SUCCES
+synthétique, cible = msisdn, acteur = « simulateur USSD (route publique) »).
+La spec Journal du dashboard a sa matière. Aucune forme en base ne change.
+
+**Contrat 0.4 rédigé ET en production** : champ `appareil` optionnel
+(marque + modèle via `Platform.constants`, aucune permission, jamais un
+identifiant), normalisé serveur (strip, 64 max, tronqué jamais refusé),
+stocké sur le bail, exposé par la NOUVELLE route `GET /admin/attributions`
+(lecture seule, rôles du Loader, clé d'idempotence comprise — c'est elle qui
+sépare un rejeu d'une re-attribution). Prouvé en prod : le bail Itel porte
+« Itel itel A665L ». Volet durée configurable : NARRATIF au contrat
+(globale + par pays, bornes 1-30 j, option 1 : les baux existants gardent
+leur échéance) — implémentation à venir. 22 tests attribution, 1189 au total.
+
+**v0.1.0 publiée, signée d'une clé PROPRE** (exigence QA — la clé de
+débogage du gabarit est publique) : clé RSA 2048 hors dépôt
+(`C:\dev\cles`), `keystore.properties` gitignoré, repli explicite débogage
+sans le fichier ; signature v2 vérifiée (empreinte `961b9812…30e7d9` publiée
+dans les notes). PR #2 fusionnée (10 commits), tag v0.1.0, release GitHub
+avec APK arm64 15,8 Mo + armeabi-v7a 12,0 Mo (splits ABI + R8 +
+shrinkResources ; l'universel 52,8 Mo ne se distribue pas). **ENF-01 RÉVISÉ
+À 20 Mo par le QA Lead** (l'objectif est « se partage par messagerie », pas
+le chiffre). Écran profil en MENUS DÉROULANTS (exigence QA — champ + liste
+modale, listes toujours fermées et servies par le serveur, l'épuisé grisé
+jamais masqué). Sauvegarde de la clé remise à Yann (Downloads → son drive
+privé) avec procédure de restauration ; SA PERTE INTERDIT TOUTE MISE À JOUR.
+
+**Distribution décidée** : repo PUBLIC → le canal officiel est la page de
+release (le LIEN par e-mail — Gmail/Outlook bloquent les .apk ; le fichier
+passe par WhatsApp) ; un seul fichier par défaut (arm64), le v7a sur refus.
+Message d'invitation transmis à l'équipe QA (première installation) →
+suivre l'arrivée de leurs baux dans `GET /admin/attributions`. Mise à jour
+des 2 téléphones existants : DÉSINSTALLER d'abord (signature changée) et
+libérer le bail serveur du téléphone concerné au moment du geste.
+
+**Reste ouvert** : canal USSD bout-en-bout depuis l'app (*321# → menu — LE
+jalon avant toute idée de v1) · durée configurable (implémentation) ·
+mission dashboard (suite annoncée par le QA) · chantier iOS si décidé
+(un Mac + compte Apple 99 $/an + TestFlight ; ~95 % du code réutilisable).
+
 ## F. Les arbitrages qui n'appartiennent qu'à Yaniv
 
 **A-14 — TRANCHÉ par Yaniv le 23/08 et APPLIQUÉ** : la fiche `CV` du
