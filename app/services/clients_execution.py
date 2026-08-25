@@ -1402,7 +1402,10 @@ class ExecuteurClients:
             )
 
             # --- 2. ARBITRER, sequentiellement ------------------------------
-            retenus: list[tuple[ClientFaker, OrgHierarchyNode, Reservation]] = []
+            # (tirage, kiosque, reservation, ledger_reserve) — le drapeau dit
+            # si CE run a pris la reservation ledger : lui seul a le droit de
+            # la liberer.
+            retenus: list[tuple[ClientFaker, OrgHierarchyNode, Reservation, bool]] = []
             for (seed, kiosque, _), tirage in zip(demandes, tirages, strict=True):
                 if len(retenus) >= reste:
                     break
@@ -1440,25 +1443,34 @@ class ExecuteurClients:
                     ):
                         # REPRISE — une entite existe deja, nee de ce client
                         # Faker par un run anterieur. Elle fait partie de
-                        # l'ecosysteme cible : on la COMPTE.
+                        # l'ecosysteme cible.
                         #
-                        # CE QUI EMPECHE REELLEMENT LE DOUBLON, verifie par
-                        # mutation le 12/08 : la RESERVATION DE QUOTA CONSERVEE.
-                        # Ce client est bien une femme, un corporate ou un jeune
-                        # deja present ; `quota.faits` atteint donc sa cible et
-                        # tout tirage suivant est ecarte « quota sature ». Ma
-                        # premiere redaction attribuait ce role au `reste -= 1`
-                        # ci-dessous — c'etait faux, et le retirer ne creait
-                        # aucun doublon.
+                        # DEFAUT DOUBLE, MESURE SUR LE RUN a73e73e1 (25/08) —
+                        # ce chemin faisait `deja_presents + reste -= 1 +
+                        # continue`, et ce raccourci mentait deux fois :
                         #
-                        # `reste -= 1` sert a autre chose, et ce n'est pas
-                        # cosmetique : sans lui la boucle tourne cinq lots a vide
-                        # et le run se termine sur l'alerte « abandon apres 5
-                        # lots sans aucun client retenu », donc en PARTIAL. Un
-                        # run de reprise parfaite serait signale comme degrade
-                        # alors qu'il vient de DEMONTRER `CR-03`.
-                        rapport.deja_presents.append(tirage.client_id)
-                        reste -= 1
+                        #   1. AUCUN RATTACHEMENT. 950 clients « reconnus »,
+                        #      167 rattaches : le noeud de CE run n'etait
+                        #      jamais ecrit, l'ecosysteme du run restait
+                        #      ampute et CR-04 tombait VIOLE.
+                        #   2. LOT REPUTE STERILE. `retenus` restait vide, et
+                        #      « if not retenus: tours_infructueux += 1 »
+                        #      comptait un lot de PURE reconnaissance comme un
+                        #      echec — cinq lots plus tard : « abandon », a
+                        #      200/500, en pleine reussite. Le commentaire
+                        #      d'origine affirmait que `reste -= 1` evitait
+                        #      cet abandon : c'etait faux, le compteur
+                        #      s'incremente sur `retenus`, pas sur `reste`.
+                        #
+                        # LE RECONNU EST DONC RETENU, comme un client normal :
+                        # `_creer` compose, retrouve l'entite par msisdn
+                        # (stable, D-CLI-11), la SCELLE au kiosque de ce run et
+                        # la compte `deja_presents` — sans une ecriture
+                        # serveur, sans un franc redote. Seule difference :
+                        # AUCUNE reservation ledger n'a ete prise ici
+                        # (`ledger_reserve=False`), donc l'echec eventuel ne
+                        # doit pas liberer la consommation d'UN AUTRE run.
+                        retenus.append((tirage, kiosque, reservation, False))
                         continue
                     # Cache deterministe : la collision est prevue par le CDC §185
                     # — mais uniquement DANS le run courant. Rendre la reservation
@@ -1481,7 +1493,7 @@ class ExecuteurClients:
                 # La decision remonte donc ICI, dans le temps SEQUENTIEL, et le
                 # compteur est incremente a la reservation — pas apres l'ecriture.
                 # Un quota qui se decide concurremment n'est pas un quota.
-                retenus.append((tirage, kiosque, reservation))
+                retenus.append((tirage, kiosque, reservation, True))
 
             if not retenus:
                 tours_infructueux += 1
@@ -1490,15 +1502,20 @@ class ExecuteurClients:
             # --- 3. ECRIRE, concurremment -----------------------------------
             issues = await asyncio.gather(
                 *(
-                    self._creer(faker, kiosque, reservation, collect, rapport)
-                    for faker, kiosque, reservation in retenus
+                    self._creer(
+                        faker, kiosque, reservation, collect, rapport,
+                        ledger_reserve=ledger_reserve,
+                    )
+                    for faker, kiosque, reservation, ledger_reserve in retenus
                 ),
                 return_exceptions=True,
             )
 
             # L'enregistrement au quota, sequentiel, sur le resultat REEL.
             gagnes = 0
-            for (faker, _, reservation), issue in zip(retenus, issues, strict=True):
+            for (faker, _, reservation, ledger_reserve), issue in zip(
+                retenus, issues, strict=True
+            ):
                 if isinstance(issue, BaseException):
                     rapport.echoues.append((faker.client_id, str(issue)[:600]))
                     issue = None
@@ -1517,7 +1534,7 @@ class ExecuteurClients:
                     #
                     # Compte a part : ce n'est pas un rejet de quota, c'est le
                     # fonctionnement normal du mode a blanc.
-                    if not self.ecriture_reelle:
+                    if not self.ecriture_reelle and ledger_reserve:
                         await self._ledger.liberer(faker.client_id)
                         rapport.liberes_a_blanc += 1
                     continue
@@ -1526,8 +1543,11 @@ class ExecuteurClients:
                 # Le quota avait pre-reserve un jeune et un secteur : ils sont
                 # rendus, sinon la cible se remplirait de clients inexistants.
                 quota.rendre(reservation)
-                await self._ledger.liberer(faker.client_id)
-                rapport.liberes += 1
+                if ledger_reserve:
+                    # On ne libere QUE ce qu'on a reserve : la consommation
+                    # d'un run anterieur ne nous appartient pas.
+                    await self._ledger.liberer(faker.client_id)
+                    rapport.liberes += 1
 
             reste -= gagnes
             tours_infructueux = 0 if gagnes else tours_infructueux + 1
@@ -1556,6 +1576,8 @@ class ExecuteurClients:
         reservation: Reservation,
         collect: list[ProduitSouscriptible],
         rapport: RapportClients,
+        *,
+        ledger_reserve: bool = True,
     ) -> ClientCompose | None:
         """Compose puis ecrit UN client. Rend ce qu'il faut au quota, ou `None`.
 
@@ -1659,7 +1681,7 @@ class ExecuteurClients:
             # existe deja.
             await self._sceller(
                 faker.client_id, deja, kiosque, compose, rapport, produit_entree=None
-            )
+            , ledger_reserve=ledger_reserve)
             rapport.deja_presents.append(faker.client_id)
             return compose
 
@@ -1722,7 +1744,7 @@ class ExecuteurClients:
         try:
             entite = await self._sceller(
                 faker.client_id, fiche, kiosque, compose, rapport, produit_entree=produit
-            )
+            , ledger_reserve=ledger_reserve)
             await self._doter(compose, faker, fiche, rapport)
             await self._souscrire_le_reste(compose, suivants, rapport, client_id=entite)
         except Exception as erreur:
@@ -1859,6 +1881,14 @@ class ExecuteurClients:
         compose: ClientCompose,
         rapport: RapportClients,
         produit_entree: ProduitSouscriptible | None,
+        *,
+        #: `False` quand CE run n'a pris AUCUNE reservation ledger — le client
+        #: est reconnu d'un run anterieur, sa consommation appartient a l'autre
+        #: run. Confirmer sans reservation levait `ConsommationIncoherente`,
+        #: et cette levee transformait 39 reconnaissances sur 40 en echecs qui
+        #: rendaient leur quota... rempli ensuite par 39 creations NOUVELLES.
+        #: On ne confirme que ce qu'on a reserve.
+        ledger_reserve: bool = True,
     ) -> UUID | None:
         """Scelle le client : registre `D-FAKER-1` ET rattachement `EF-26`.
 
@@ -1895,7 +1925,8 @@ class ExecuteurClients:
                 brut,
                 entite,
             )
-        await self._ledger.confirmer(faker_client_id, entite)
+        if ledger_reserve:
+            await self._ledger.confirmer(faker_client_id, entite)
 
         # `EF-26` — LE RATTACHEMENT. Un echec ici ne perd pas le client : il
         # existe cote serveur, definitivement, et l'annuler est impossible. Mais

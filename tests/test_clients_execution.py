@@ -1233,12 +1233,19 @@ class TestReprise:
         premier = await ex.executer()
         assert len(premier.crees) == 40
 
+        # LE SCENARIO COHERENT — corrige le 25/08. La premiere version de ce
+        # test donnait au second run un serveur VIERGE avec un ledger PLEIN :
+        # un etat impossible en production (le ledger EST notre Mongo — s'il
+        # dit consomme, l'entite est sur la plateforme). Le vrai second run,
+        # c'est : la plateforme CONNAIT les msisdn, le ledger aussi.
+        msisdns_premiers = {k["msisdn"] for k in clients.onboardes}
+        ledger_2 = FauxLedger(deja_consommes=set(ledger.confirmes))
         rejoue = _executeur(
             mode=RunMode.REAL,
             nb_clients=40,
             pays_actifs=("CM",),
-            ledger=FauxLedger(deja_consommes=set(ledger.confirmes)),
-            clients=FauxClientService(),
+            ledger=ledger_2,
+            clients=FauxClientService(msisdns_existants=msisdns_premiers),
             arbre=FauxArbre(_kiosques("CM")),
             run_id=AUTRE_RUN,
         )
@@ -1251,20 +1258,37 @@ class TestReprise:
             "un client reconnu compte dans la cible : sans cela la boucle "
             "continuerait et creerait 40 doublons"
         )
+        # LA REGRESSION DU RUN a73e73e1 (25/08), verrouillee : 950 reconnus,
+        # 167 rattaches — le raccourci ledger comptait sans SCELLER. Un client
+        # reconnu doit etre rattache au kiosque de CE run, sinon CR-04 et
+        # l'ecosysteme du run sont amputes.
+        assert second.rattaches == 40, (
+            f"{second.rattaches}/40 rattaches — le reconnu doit etre scelle"
+        )
+        # Et la consommation de l'AUTRE run ne nous appartient pas : zero
+        # liberation sur son ledger.
+        assert ledger_2.liberations == 0
 
     async def test_un_run_de_pure_reprise_n_est_pas_declare_FAILED(self) -> None:
         """Il ne cree rien parce que tout existe deja — c'est une REUSSITE, et
         c'est meme la demonstration de `CR-03`."""
         ledger = FauxLedger()
+        ex_clients = FauxClientService()
         ex = _executeur(
             mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
-            ledger=ledger, clients=FauxClientService(), arbre=FauxArbre(_kiosques("CM")),
+            ledger=ledger, clients=ex_clients, arbre=FauxArbre(_kiosques("CM")),
         )
         premier = await ex.executer()
         rejoue = _executeur(
             mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
             ledger=FauxLedger(deja_consommes=set(ledger.confirmes)),
-            clients=FauxClientService(), arbre=FauxArbre(_kiosques("CM")),
+            # Scenario coherent (25/08) : la plateforme connait les msisdn du
+            # premier run — le ledger est notre Mongo, il ne peut pas etre en
+            # avance sur elle.
+            clients=FauxClientService(
+                msisdns_existants={k["msisdn"] for k in ex_clients.onboardes}
+            ),
+            arbre=FauxArbre(_kiosques("CM")),
             run_id=AUTRE_RUN,
         )
         second = await rejoue.executer()
