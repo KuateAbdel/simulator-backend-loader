@@ -36,12 +36,25 @@ numerotation. Le `sim_number` de Faker n'est conserve que pour la tracabilite. �
 Confirme le 11/08 en detaillant la cause, LUE DANS LES REGEX et non supposee :
 
     CM  ^237(67\\d{7}|68[0-4]\\d{6}|65[0-4]\\d{6})$   -> 9 chiffres nationaux
-    CI  ^225(07\\d{8}|47\\d{8}|57\\d{8})$             -> 10 chiffres
-    BF  ^226(0[56]\\d{7}|5[45]\\d{7})$                -> 9 chiffres
+    CI  ^225(07\\d{8})$                            -> 10 chiffres
+    BF  ^226(0[4-7]\\d{6}|4[4-6]\\d{6}|...)$        -> 8 chiffres
 
-Faker emet **8 chiffres nationaux pour les trois pays** : il est trop court
-PARTOUT, et ses prefixes (`38`, `10`, `33`) n'appartiennent a aucun operateur.
-Un seul numero uniforme pour trois plans de numerotation differents.
+Faker emet un corps **sans prefixe operateur**, qui est implicite pour un
+habitant du pays. Ses numeros n'appartiennent a aucun reseau reel.
+
+**RE-MESURE DU 25/08** — Faker a corrige les LONGUEURS (CM 9, BF 8, CI 10,
+chacune conforme a son pays) mais **pas les prefixes**, qu'il ne peut pas
+deviner : il n'a aucune notion d'operateur (verifie : ni `operator` ni
+`network` dans ses 11 champs, et `IS_TELCO_ACTIVE` dit seulement OUI/NON).
+Juges par `libphonenumber` : CM 0/12, BF 2/12, CI 0/12 valides.
+
+**Et le meme jour, deux de NOS plans se sont reveles faux** — le classeur
+composait NEUF chiffres au Burkina (le plan en a HUIT) et gardait pour la
+Cote d'Ivoire les series `4X`/`5X` que la migration de 2021 n'a attribuees
+a personne. Corriges dans `Loader_Base_FinZuu_v1_1.xlsx` ; desormais tenus
+par `tests/test_plans_numerotation.py`, qui juge par une autorite EXTERIEURE
+(l'ancien test demandait a la regex de valider ce qu'elle venait de produire
+— il etait circulaire, un plan faux passait vert).
 
 `D-CFG-1` dit d'ou vient l'autorite, et ce n'est PAS config-service :
 
