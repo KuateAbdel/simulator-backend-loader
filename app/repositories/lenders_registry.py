@@ -57,6 +57,43 @@ class LendersRegistryRepository(RepositoryBase):
         try:
             await self.collection.insert_one(en_document(entree))
         except DuplicateKeyError:
+            # LE ROLE EXISTE DEJA — MAIS SES COMPTES PEUVENT ETRE INCOMPLETS.
+            #
+            # Defaut de second ordre, mesure sur le DRY_RUN 2fe90bec (25/08) :
+            # le run 71fd97aa avait inscrit 15 Lenders avec `comptes={}` (le
+            # compte reconnu etait saute sans etre enregistre, corrige depuis),
+            # et CE retour `None` sec rendait ces lignes IRREPARABLES — aucun
+            # run futur ne pouvait les completer, EF-13 restait viole a vie.
+            #
+            # On COMPLETE donc les identifiants manquants, sans JAMAIS ecraser
+            # un existant : `$ifNull` garde la valeur en place si elle y est.
+            # Le role, lui, n'est toujours pas duplique — c'est tout le sens
+            # du retour None.
+            complements = {
+                champ: str(valeur)
+                for champ, valeur in (
+                    ("capital_account_id", comptes.get("capital")),
+                    ("interest_account_id", comptes.get("interest")),
+                    ("penalty_account_id", comptes.get("penalty")),
+                    ("taxe_account_id", comptes.get("taxe")),
+                )
+                if valeur is not None
+            }
+            if complements:
+                await self.collection.update_one(
+                    {
+                        "company_id": str(company_id),
+                        "lender_type": lender_type.value,
+                    },
+                    [
+                        {
+                            "$set": {
+                                champ: {"$ifNull": [f"${champ}", valeur]}
+                                for champ, valeur in complements.items()
+                            }
+                        }
+                    ],
+                )
             return None
         return entree
 
