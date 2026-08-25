@@ -178,3 +178,75 @@ existantes.
 | Collectes / épargne | **module VIE requis** | ∅ |
 | Échecs par code, compteur de rejeux | **à construire (léger)** | ∅ |
 | Expirations comme événements | dérivable des baux morts | ⚡ |
+
+---
+
+## 8. Le dossier client 360° — le modèle de jointure formalisé
+
+**Une seule clé d'entrée : le `msisdn`** — c'est ce que porte le bail, c'est ce
+qui est stable (D-CLI-11), c'est ce que l'opérateur a sous les yeux. Tout le
+dossier se déplie depuis elle, en cinq sources ordonnées du gratuit au coûteux :
+
+```
+                    msisdn (porté par le bail)
+                       │
+   A ─ ⚡ Loader ──────┤  nœud client : profil quota, produits, et LA CHAÎNE
+       (0 réseau)      │  kiosque → depositary_id → agence → branche → IMF
+                       │
+   B ─ client-service ─┤  GET by-msisdn : fiche (15) + identity (17)
+       (1 GET)         │  + address/GPS (11) + product[] + account_id
+                       │
+   C ─ account-service ┤  GET /accounts/{account_id} : STATUT (« ACTIVE »),
+       (1 GET)         │  solde, devise, direct_momo
+                       │
+   D ─ account-service ┤  GET /accounts/{id}/transactions : L'HISTORIQUE —
+       (1 GET)         │  type, sens, montant, frais, libellé humain,
+                       │  statut, référence, horodatage (PROUVÉ le 25/08 :
+                       │  « Solde initial — Ines Kambire », DEPOSIT/CREDIT,
+                       │  161 981,6, SUCCESS, provider MOMO)
+                       │
+   E ─ collect-service ┤  GET collectes du client : épargne et versements —
+       (1 GET)         │  0 aujourd'hui, se remplit avec le module VIE
+```
+
+**Le dossier complet coûte 4 GET par client** (B+C+D+E), la vue de masse
+(baux × territoire × profil) coûte **zéro** (A).
+
+### Les trois questions types, et leur réponse exacte
+
+| Question | Réponse | Source | Dispo |
+|---|---|---|---|
+| « L'historique de ses transactions ? » | **OUI** — relevé complet, libellés humains | D | aujourd'hui |
+| « Le statut de son compte ? » | **OUI** — `status: ACTIVE`, solde, devise | C | aujourd'hui |
+| « Chez quel dépositaire, sur quel produit ? » | **produit : OUI** (double source A + B). **Dépositaire : OUI côté Loader** — le kiosque de rattachement (EF-26) porte `depositary_id`, ⚡ | A + B | aujourd'hui |
+
+### La nuance de senior sur le dépositaire — à connaître avant de dessiner
+
+`D-CLI-6`, mesuré : **la fiche serveur du client ne porte AUCUN lien vers un
+dépositaire ou une company** — nulle part. Côté plateforme, ce lien n'existera
+qu'à la **première collecte** (`Collect: client_id + depositary_id`), donc
+avec le module VIE.
+
+Le tableau de bord a donc deux vérités à distinguer honnêtement :
+- **« rattaché au Kiosque X »** — notre décision de run (EF-26), ⚡, fiable ;
+- **« actif chez X »** — la preuve serveur, qui n'existe pas encore ; la
+  source E la fournira avec VIE.
+
+Afficher la première en la nommant correctement est honnête ; la vendre comme
+un historique d'activité serait un mensonge.
+
+### Transactions — le détail des champs (mesuré)
+
+```
+_id · reference (DEPOSIT-…) · type · sens (CREDIT/DEBIT) · tag
+amount · fees · label (humain) · status (SUCCESS) · provider_src (MOMO)
+src_account · dest_account · created_at · updated_at · trans_config
+```
+
+Routes : `GET /accounts/{id}/transactions`, `GET /transactions/{id}`,
+`GET /transactions/r/{reference}`.
+
+**Règle d'affichage non négociable (`FRA-218`)** : le solde affiché vient du
+compte relu (source C), **jamais** d'une somme de transactions — les frais
+sont retranchés sans être crédités nulle part, la somme mentirait.
+
