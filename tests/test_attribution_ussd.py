@@ -538,3 +538,55 @@ class TestJournalAttributionVisible:
             assert e["cible"] == bail["msisdn"]
             assert e["issue"] == "SUCCES"
             assert e["acteur"] == "simulateur USSD (route publique)"
+
+
+class TestChampAppareil:
+    """Contrat 0.4 — l'etiquette d'appareil : optionnelle, normalisee,
+    rattachee au bail, exposee a l'administration. JAMAIS un identifiant."""
+
+    async def test_transmis_il_est_stocke_et_expose(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await _semer_clients("CM", "FEMALE", "INDIVIDUAL", 1, prefixe="237699990")
+        r = await client.post(
+            ROUTE,
+            json={**PROFIL, "appareil": "  Redmi Note 13  "},
+            headers={"Idempotency-Key": _cle()},
+        )
+        assert r.status_code == 201, r.text
+
+        entetes = await _session_admin(client, "appareil@finzuu.com")
+        corps = (await client.get("/admin/attributions", headers=entetes)).json()
+        assert corps["baux"][0]["appareil"] == "Redmi Note 13"  # normalise
+
+    async def test_absent_ou_vide_vaut_null_et_n_empeche_rien(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Un champ de confort ne fait JAMAIS echouer une attribution : les
+        anciennes versions de l'app (sans le champ) restent servies."""
+        await _semer_clients("CM", "FEMALE", "INDIVIDUAL", 2, prefixe="237699991")
+        sans = await client.post(ROUTE, json=PROFIL, headers={"Idempotency-Key": _cle()})
+        vide = await client.post(
+            ROUTE,
+            json={**PROFIL, "appareil": "   "},
+            headers={"Idempotency-Key": _cle()},
+        )
+        assert sans.status_code == 201 and vide.status_code == 201
+
+        entetes = await _session_admin(client, "appareil-nul@finzuu.com")
+        corps = (await client.get("/admin/attributions", headers=entetes)).json()
+        assert [b["appareil"] for b in corps["baux"]] == [None, None]
+
+    async def test_une_etiquette_demesuree_est_tronquee_pas_refusee(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await _semer_clients("CM", "FEMALE", "INDIVIDUAL", 1, prefixe="237699992")
+        r = await client.post(
+            ROUTE,
+            json={**PROFIL, "appareil": "X" * 500},
+            headers={"Idempotency-Key": _cle()},
+        )
+        assert r.status_code == 201, r.text
+        entetes = await _session_admin(client, "appareil-long@finzuu.com")
+        corps = (await client.get("/admin/attributions", headers=entetes)).json()
+        assert corps["baux"][0]["appareil"] == "X" * 64

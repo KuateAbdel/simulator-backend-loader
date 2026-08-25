@@ -142,7 +142,12 @@ class AttributionBauxRepository:
     # ── L'acquisition — le geste atomique ─────────────────────────────────
 
     async def acquerir(
-        self, msisdn: str, *, cle_idempotence: str, profil: dict[str, str]
+        self,
+        msisdn: str,
+        *,
+        cle_idempotence: str,
+        profil: dict[str, str],
+        appareil: str | None = None,
     ) -> dict[str, Any] | None:
         """Tente de prendre CE msisdn. Rend le bail, ou None s'il est occupe.
 
@@ -159,6 +164,10 @@ class AttributionBauxRepository:
             "attribution_id": str(uuid4()),
             "cle_idempotence": cle_idempotence,
             "profil": dict(profil),
+            # Contrat 0.4 — etiquette d'exploitation (« Redmi Note 13 »),
+            # optionnelle, JAMAIS un identifiant : deux telephones identiques
+            # portent la meme valeur.
+            "appareil": appareil,
             "attribue_le": maintenant,
             "expire_le": maintenant + timedelta(days=BAIL_JOURS),
         }

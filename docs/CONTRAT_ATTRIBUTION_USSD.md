@@ -1,10 +1,29 @@
 # Contrat — Service d'attribution
 
-**Référence** FZ-CONTRAT-ATTRIB-2026-001 · version 0.3.1 · **VALIDÉ** (QA Lead, 24/08)
+**Référence** FZ-CONTRAT-ATTRIB-2026-001 · version 0.4 · en validation (révisions 0.3.x VALIDÉES, QA Lead 24/08)
 **Consommateur** Simulateur USSD FinZuu (application React Native)
 **Fournisseur** Loader FinZuu
 **Couvre** `EF-01` `EF-02` `EF-03` `EF-04` `EF-05` `EF-15` `EF-17` `EF-20` `EF-22` · `INV-SIM-01` `INV-SIM-03` `INV-SIM-04` `INV-SIM-06` `INV-SIM-07` · `CR-04` `CR-05` `CR-06` `CR-08` `CR-14` · `ENF-05` `ENF-07`
 
+> **Révision 0.4 — l'appareil, et la durée (25/08).** LA révision unique
+> convenue après la mise en service. **(a) Le champ `appareil`** : la requête
+> d'attribution PEUT porter une étiquette `appareil` — marque + modèle
+> (« Redmi Note 13 »), telle que l'app la lit sans permission ni dépendance
+> (`Build.BRAND`/`Build.MODEL`). Optionnelle, normalisée par le serveur
+> (blancs retirés, 64 caractères max, tronquée jamais refusée — un champ de
+> confort ne fait pas échouer une attribution), stockée sur le bail, exposée
+> à l'administration en face du msisdn. **Ce n'est PAS un identifiant** :
+> deux téléphones identiques portent la même étiquette ; aucun numéro de
+> série, aucun IMEI, aucun identifiant publicitaire — rien qui désigne UN
+> appareil. **(b) La durée du bail** : les sept jours cessent d'être une
+> constante gravée pour devenir un RÉGLAGE d'administration — valeur globale,
+> surchargeable par pays, bornée 1 à 30 jours, résolue AU MOMENT du tirage.
+> Les baux existants gardent l'échéance qu'ils portent (option 1 : un bail
+> est une promesse datée, on ne réécrit pas une promesse) ; l'application
+> n'affiche plus « sept jours » mais LA DATE d'échéance que le serveur rend —
+> ce qu'elle fait déjà (`expire_le` fait foi). La mécanique (§2, §3, §5) est
+> inchangée : mêmes routes, mêmes conduites, mêmes garanties prouvées.
+>
 > **Révision 0.3.1 — réserve levée (QA Lead, 24/08).** La clé d'idempotence
 > est **persistée dès son émission et effacée à réception du `201`** : sans
 > cela, une application tuée entre l'émission et la réponse — système,
@@ -130,8 +149,18 @@ numéro. C'est le geste central de la phase 1 (`EF-04`, `EF-05`).
 ### Requête
 
 ```json
-{ "pays": "CM", "genre": "FEMALE", "categorie": "INDIVIDUAL" }
+{
+  "pays": "CM",
+  "genre": "FEMALE",
+  "categorie": "INDIVIDUAL",
+  "appareil": "Redmi Note 13"
+}
 ```
+
+`pays`, `genre`, `categorie` : les codes des LISTES FERMÉES servies par
+`GET /criteres` — l'application les présente en menus déroulants, rien n'est
+saisi. `appareil` (révision 0.4) : optionnel — étiquette marque + modèle pour
+la lecture d'exploitation, normalisée serveur (64 max), jamais un identifiant.
 
 En-tête **obligatoire** :
 

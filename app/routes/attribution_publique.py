@@ -174,6 +174,11 @@ class DemandeAttribution(BaseModel):
     pays: str
     genre: str
     categorie: str
+    #: Contrat 0.4 — marque + modele, OPTIONNEL. Pas une cle, pas un
+    #: identifiant : une etiquette de lecture pour l'exploitation. Le serveur
+    #: la normalise (strip, 64 caracteres max) plutot que de refuser — un
+    #: champ de confort ne doit jamais faire echouer une attribution.
+    appareil: str | None = None
 
 
 @router.post("/attributions", status_code=201)
@@ -215,6 +220,7 @@ async def attribuer(
         return _erreur(422, "CRITERE_INVALIDE", invalide)
 
     profil = {"pays": pays, "genre": genre, "categorie": categorie}
+    appareil = (demande.appareil or "").strip()[:64] or None
 
     # 3-4. Candidats moins baux actifs. LE 409 EST UN RESULTAT CALCULE :
     # ensemble vide -> stock epuise. Aucune exception ne mene ici.
@@ -242,7 +248,9 @@ async def attribuer(
     # 6. Acquisition atomique, candidat par candidat. La concurrence ne
     # produit jamais un double — au pire un detour vers le suivant.
     for msisdn in ordre:
-        bail = await baux.acquerir(msisdn, cle_idempotence=cle, profil=profil)
+        bail = await baux.acquerir(
+            msisdn, cle_idempotence=cle, profil=profil, appareil=appareil
+        )
         if bail is not None:
             await _journaliser("CREATE", bail)
             return JSONResponse(status_code=201, content=normaliser_bail(bail))

@@ -41,6 +41,7 @@ async def lister_baux_actifs(
             "msisdn": str(d["_id"]),
             "attribution_id": str(d["attribution_id"]),
             "profil": d.get("profil"),
+            "appareil": d.get("appareil"),
             "attribue_le": _en_datetime(d["attribue_le"]).isoformat(),
             "expire_le": _en_datetime(d["expire_le"]).isoformat(),
             "cle_idempotence": d.get("cle_idempotence"),
