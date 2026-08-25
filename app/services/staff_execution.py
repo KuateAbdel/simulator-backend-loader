@@ -155,6 +155,11 @@ class RapportStaff:
     #: `UC-09` — quel Agent tient quel Kiosque. Le rapport doit pouvoir le
     #: dire : c'est la preuve de la postcondition, pas un ornement.
     affectations: list[tuple[str, str]] = field(default_factory=list)
+    #: `UC-09` — le staff RETROUVE sur user-service et reutilise tel quel.
+    #: Defaut du run 71fd97aa (25/08) : 56 refus « already exists », et chaque
+    #: Agent refuse n'etait PAS rattache — 51 Kiosques sans Agent alors que
+    #: leurs agents existaient. Reconnaitre n'est pas echouer.
+    reconnus: list[str] = field(default_factory=list)
 
     @property
     def total_prevu(self) -> int:
@@ -174,6 +179,7 @@ class RapportStaff:
             f"Mode          : {self.mode.value}",
             f"Staff prevu   : {self.total_prevu}",
             f"Staff cree    : {len(self.crees)}",
+            f"Staff reconnu : {len(self.reconnus)} (deja sur user-service — reutilise, rattache)",
             f"Refuses avant reseau : {len(self.refuses_avant_reseau)}",
             f"Echecs serveur       : {len(self.echoues)}",
             f"STATUT : {self.statut.value}",
@@ -394,8 +400,49 @@ class ExecuteurStaff:
             rapport.crees.append(f"{etiquette} ({payload['identity']['first_name']})")
             return
 
+        # `UC-09` / motif GET-avant-POST — LA RECONNAISSANCE D'ABORD.
+        #
+        # Le staff des runs passes EXISTE sur user-service (emails
+        # deterministes, comptes sans DELETE). Sans cette lecture, le POST
+        # partait et le serveur refusait — 52 « User with this email already
+        # exists » au run 71fd97aa — et l'Agent refuse n'etait pas rattache :
+        # 51 Kiosques sans Agent alors que leurs agents existaient. La 16e
+        # occurrence du motif, fermee comme les autres : on evite le 400, on
+        # ne le decouvre pas.
         try:
-            identite, _ = await self._identites.creer_si_absente(**payload["identity"])
+            existant = await self._users.chercher_par_email(payload["identity"]["email"])
+        except Exception as erreur:  # lecture en echec : on tentera la creation
+            logger.warning("lecture user %s en echec : %s", etiquette, erreur)
+            existant = None
+        if existant is not None:
+            if kiosque is not None and self._arbre is not None:
+                await self._arbre.ajouter_agent(
+                    run_id=self.run_id,
+                    kiosque_id=kiosque.id,
+                    company_id=kiosque.company_id,
+                    name=(
+                        f"{payload['identity']['first_name']} "
+                        f"{payload['identity']['last_name']}"
+                    ),
+                    country_code=plan.pays,
+                    user_id=self._identifiant_user(existant, ""),
+                )
+                rapport.affectations.append((etiquette, kiosque.name))
+            rapport.reconnus.append(etiquette)
+            return
+
+        try:
+            # L'identite : l'email d'abord (creer_si_absente), le TELEPHONE en
+            # eclaireur — 4 refus du run 71fd97aa venaient d'une identite
+            # existante au telephone identique mais a l'email disparu du
+            # perimetre. `chercher_par_telephone` la retrouve AVANT le POST.
+            deja_identite = await self._identites.chercher_par_telephone(
+                payload["identity"]["phone"]
+            )
+            if deja_identite is not None:
+                identite = deja_identite
+            else:
+                identite, _ = await self._identites.creer_si_absente(**payload["identity"])
             identity_id = self._identites.identifiant(identite)
             if not identity_id:
                 raise RuntimeError("identity-service n'a rendu aucun identifiant")

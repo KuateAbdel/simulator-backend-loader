@@ -143,6 +143,9 @@ class RapportOrganisation:
     admins_echoues: list[tuple[str, str]] = field(default_factory=list)
     lenders_enregistres: list[str] = field(default_factory=list)
     comptes_crees: int = 0
+    #: `EF-13` — comptes RETROUVES sur la plateforme et inscrits au registre
+    #: tels quels. Reconnaitre n'est pas creer : les deux comptes se disent.
+    comptes_reconnus: int = 0
     #: `UC-10` point 2 — le capital REELLEMENT dote, relu compte par compte.
     #: Jamais la somme des montants demandes : `FRA-218` les fait diverger.
     capital_dote: float = 0.0
@@ -189,7 +192,8 @@ class RapportOrganisation:
             f"Licences   : {len(self.licences_creees)}",
             f"Admin Users: {len(self.admins_crees)} crees, {len(self.admins_echoues)} en echec",
             f"Lenders    : {len(self.lenders_enregistres)} enregistres",
-            f"Comptes    : {self.comptes_crees} crees, {len(self.comptes_echoues)} en echec",
+            f"Comptes    : {self.comptes_crees} crees, {self.comptes_reconnus} reconnus, "
+            f"{len(self.comptes_echoues)} en echec",
             f"Capital dote: {self.capital_dote:,.0f}".replace(",", " ") + " (UC-10 pt 2)",
             f"Cascade Identity verifiee : {self.cascades_identity_verifiees}",
             f"STATUT : {self.statut.value}",
@@ -760,10 +764,27 @@ class ExecuteurOrganisation:
 
         # Aucun DELETE sur account-service : on ne recree jamais un compte
         # existant. GET-avant-POST strict.
-        deja = self._comptes.types_presents(await self._comptes.comptes_du_proprietaire(company_id))
+        existants = await self._comptes.comptes_du_proprietaire(company_id)
+        deja: dict[str, UUID] = {}
+        for compte_existant in existants:
+            type_compte = str(compte_existant.get("type") or "")
+            identifiant_existant = self._comptes.identifiant(compte_existant)
+            if type_compte and identifiant_existant:
+                deja[type_compte] = UUID(identifiant_existant)
 
         for role, payload in payloads.items():
             if str(payload["type"]) in deja:
+                # `EF-13`, DEFAUT DU RUN 71fd97aa (25/08) : le compte reconnu
+                # etait SAUTE sans etre ENREGISTRE. Le registre recevait
+                # `comptes={}` pour tout Lender reutilise, et la recette
+                # concluait « 15 Lender(s) sur 16 incomplet(s) » alors que
+                # les 64 comptes existaient sur la plateforme. Reconnaitre
+                # n'est pas ignorer : l'identifiant EXISTANT entre au
+                # registre, exactement comme s'il venait d'etre cree — et la
+                # dotation, elle, n'est PAS rejouee (le solde est deja la,
+                # account-service ne sait pas defaire un mouvement).
+                comptes[role] = deja[str(payload["type"])]
+                rapport.comptes_reconnus += 1
                 continue
             try:
                 cree = await self._comptes.creer_compte(payload)
@@ -782,7 +803,10 @@ class ExecuteurOrganisation:
         #
         # L'ordre est impose : on ne peut crediter qu'un compte qui existe.
         capital_id = comptes.get("capital")
-        if capital_id is not None:
+        capital_reconnu = "capital" in comptes and str(
+            payloads["capital"]["type"]
+        ) in deja
+        if capital_id is not None and not capital_reconnu:
             await self._doter_capital(capital_id, dotation, nom, rapport)
 
         entree = await self._registre.enregistrer(

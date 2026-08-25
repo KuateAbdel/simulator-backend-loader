@@ -43,6 +43,10 @@ class IdentityDouble:
     def __init__(self) -> None:
         self.creees: list[dict[str, Any]] = []
 
+    async def chercher_par_telephone(self, telephone: str) -> dict[str, Any] | None:
+        """Motif GET-avant-POST (25/08) : rien ne pre-existe chez la doublure."""
+        return None
+
     async def creer_si_absente(self, **champs: Any) -> tuple[dict[str, Any], bool]:
         self.creees.append(champs)
         return {"_id": f"id-{len(self.creees)}"}, True
@@ -55,6 +59,10 @@ class IdentityDouble:
 class UserDouble:
     def __init__(self) -> None:
         self.creees: list[dict[str, Any]] = []
+
+    async def chercher_par_email(self, email: str) -> dict[str, Any] | None:
+        """Motif GET-avant-POST (25/08) : rien ne pre-existe chez la doublure."""
+        return None
 
     async def creer_utilisateur_applicatif(self, **champs: Any) -> dict[str, Any]:
         self.creees.append(champs)
@@ -343,4 +351,40 @@ class TestUC09UnAgentParKiosque:
         executeur, _, _ = _executeur(RunMode.REAL, base)
         rapport = await executeur.executer()
         assert rapport.affectations == []
+
+class UserDejaConnu(UserDouble):
+    """user-service qui CONNAIT deja tout le monde — l'etat reel de la
+    plateforme au second run."""
+
+    async def chercher_par_email(self, email: str) -> dict[str, Any]:
+        return {"_id": str(uuid4()), "email": email}
+
+
+class TestReconnaissanceDuStaff:
+    """Defaut du run 71fd97aa (25/08) : 52 refus « User with this email
+    already exists », et 51 Kiosques sans Agent alors que leurs agents
+    EXISTAIENT. La reconnaissance repare les deux d'un coup."""
+
+    async def test_un_user_existant_est_reutilise_et_l_agent_RATTACHE(
+        self, base: ReferentielGeo
+    ) -> None:
+        arbre = ArbreDouble({"CM": 3})
+        users = UserDejaConnu()
+        executeur = ExecuteurStaff(
+            run_id=RUN_ID,
+            mode=RunMode.REAL,
+            configuration=ConfigurationExecution.defaut_cdc(),
+            referentiel=base,
+            identity_client=IdentityDouble(),
+            user_client=users,
+            arbre=arbre,
+        )
+        rapport = await executeur.executer()
+
+        assert users.creees == [], "un user existant a ete recree — doublon"
+        assert rapport.echoues == [], "la reconnaissance a ete comptee en echec"
+        assert len(rapport.reconnus) > 0
+        # LE point d'UC-09 : chaque kiosque a recu son agent malgre zero creation.
+        servis = {champs["kiosque_id"] for champs in arbre.agents}
+        assert {k.id for k in arbre.kiosques} <= servis, "Kiosque sans Agent — UC-09"
 
