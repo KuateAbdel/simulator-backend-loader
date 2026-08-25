@@ -35,6 +35,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 
 from app.core.database import (
+    COLLECTION_ATTRIBUTION_BAUX,
     COLLECTION_AUDIT_TRAIL,
     COLLECTION_AUTH_THROTTLE,
     COLLECTION_FAKER_CONSUMPTION_LEDGER,
@@ -171,6 +172,12 @@ COLLECTIONS_PROTEGEES: dict[str, str] = {
     COLLECTION_AUTH_THROTTLE: "l'anti-brute-force du login (I-AUTH-11)",
     COLLECTION_VERSIONS_SERVICES: "le releve de version des services (V-01)",
     COLLECTION_VERROUS: "les verrous de concurrence (C2)",
+    #: ARBITRAGE YANIV 24/08 (conception attribution §1.4-1.5) : un bail
+    #: engage un APPAREIL EXTERNE — la seule collection du Loader dont un
+    #: tiers depend en ce moment meme. Un bail orphelin est inoffensif (il ne
+    #: matche plus aucun tirage, le TTL le ramasse) ; couper une demonstration
+    #: ne se rattrape pas.
+    COLLECTION_ATTRIBUTION_BAUX: "les baux d'attribution USSD — un tiers en depend",
 }
 
 
@@ -189,7 +196,10 @@ async def _notre_base() -> dict[str, Any]:
         nom: {"compte": await get_collection(nom).count_documents({}), "contenu": quoi}
         for nom, quoi in COLLECTIONS_PROTEGEES.items()
     }
+    from app.repositories.attribution_baux import AttributionBauxRepository
+
     return {
+        "baux_attribution": await AttributionBauxRepository().etat_pour_purge(),
         "effacable": effacable,
         "total_effacable": sum(c["compte"] for c in effacable.values()),
         "protege": protege,
@@ -332,6 +342,25 @@ async def _vider_notre_carte() -> dict[str, Any]:
     est la purge elle-meme. Sans cela, la trace du geste disparaitrait avec le
     geste — et une purge sans trace est exactement ce qu'un audit reproche.
     """
+    # ── GARDE D'ATTRIBUTION (conception §1.5, arbitrage Yaniv 24/08) ──
+    # Le POOL des numeros attribuables vit dans org_hierarchy. Vider la carte
+    # avec des baux actifs couperait des demonstrations en cours : des baux
+    # intacts sur un pool disparu. REFUS explicite, jamais muet — et aucun
+    # contournement par defaut.
+    from app.repositories.attribution_baux import AttributionBauxRepository
+
+    etat_baux = await AttributionBauxRepository().etat_pour_purge()
+    if etat_baux["actifs"] > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{etat_baux['actifs']} bail(s) d'attribution actif(s) — le plus "
+                f"long expire le {etat_baux['plus_longue_echeance']}. Vider la "
+                "carte couperait ces demonstrations : la purge rouvrira a "
+                "l'echeance, ou apres liberation par la recette (EF-17)."
+            ),
+        )
+
     videes: dict[str, int] = {}
     for nom in COLLECTIONS_NOTRE_CARTE:
         if nom in COLLECTIONS_PROTEGEES:  # pragma: no cover — garde structurelle

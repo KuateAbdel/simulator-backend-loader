@@ -65,6 +65,7 @@ from app.routes import (
     admin_referentiels,
     admin_runs,
     admin_versions,
+    attribution_publique,
     health,
 )
 from app.services.bootstrap import amorcer_super_admin
@@ -139,4 +140,7 @@ app.include_router(admin_journal.router)
 app.include_router(admin_notifications.router)
 app.include_router(admin_purge.router)
 app.include_router(admin_runs.router)
+# Le mecanisme d'attribution USSD — quatre routes PUBLIQUES (ENF-07), hors
+# /admin : contrat FZ-CONTRAT-ATTRIB v0.3.1, fige.
+app.include_router(attribution_publique.router)
 app.include_router(admin_versions.router)

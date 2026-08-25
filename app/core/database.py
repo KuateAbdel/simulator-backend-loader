@@ -66,6 +66,11 @@ COLLECTION_VERROUS: Final = "verrous"
 #: demande une action.
 COLLECTION_VERSIONS_SERVICES: Final = "service_versions"
 
+#: Les baux d'attribution du simulateur USSD — contrat FZ-CONTRAT-ATTRIB
+#: v0.3.1, conception docs/CONCEPTION_ATTRIBUTION_USSD.md. `_id` = msisdn :
+#: l'unicite d'INV-SIM-01 est l'index primaire, pas un algorithme.
+COLLECTION_ATTRIBUTION_BAUX: Final = "attribution_baux"
+
 logger = logging.getLogger(__name__)
 
 _client: AsyncIOMotorClient[MongoDocument] | None = None
@@ -267,6 +272,22 @@ async def ensure_indexes() -> None:
     # `P-04` — l'ecran « clients » filtre par pays, genre, categorie et
     # profession. Sans cet index, chaque affichage balayait les 2000 noeuds du
     # run. Partiel : seuls les noeuds CLIENT portent ces champs.
+    # ── attribution_baux — la face serveur du simulateur USSD ─────────────
+    # La poignee opaque : seule cle de la verification et de la liberation.
+    await db[COLLECTION_ATTRIBUTION_BAUX].create_index(
+        "attribution_id", name="uniq_attribution_id", unique=True
+    )
+    # Le rejeu du contrat §2 : une cle deja vue rejoue le meme 201.
+    await db[COLLECTION_ATTRIBUTION_BAUX].create_index(
+        "cle_idempotence", name="uniq_cle_idempotence", unique=True, sparse=True
+    )
+    # CONCIERGE, jamais arbitre (doctrine verrous.py) : ramasse les baux morts
+    # 30 jours APRES leur echeance — l'expiration FONCTIONNELLE est decidee a
+    # la lecture (`expire_le < now`), jamais par ce TTL.
+    await db[COLLECTION_ATTRIBUTION_BAUX].create_index(
+        "expire_le", name="ttl_baux_morts", expireAfterSeconds=30 * 86400
+    )
+
     await db[COLLECTION_ORG_HIERARCHY].create_index(
         [("run_id", 1), ("country_code", 1), ("gender", 1), ("categorie", 1)],
         name="idx_profil_client",
