@@ -40,6 +40,15 @@ def _vue(entree: Any, resultat: dict[str, Any] | None) -> dict[str, Any]:
     payload = apres.get("payload") or {}
     acteur = next((payload[c] for c in _CLES_ACTEUR if payload.get(c)), None)
     details = {k: v for k, v in payload.items() if k not in _CLES_ACTEUR}
+    if entree.entity_type == "AttributionBail":
+        # Traces de la route PUBLIQUE d'attribution (élucidation 25/08) :
+        # l'acteur est l'application — il n'y a pas d'opérateur derrière —
+        # et la cible est le msisdn du bail. Les entrées d'avant ce jour
+        # portent le msisdn à la racine de `after`, pas dans un payload.
+        acteur = acteur or "simulateur USSD (route publique)"
+        details = details or {
+            k: v for k, v in apres.items() if k not in {"operation", "cible"}
+        }
     if resultat is None:
         issue, motif = "en_cours", None
     else:
@@ -51,7 +60,7 @@ def _vue(entree: Any, resultat: dict[str, Any] | None) -> dict[str, Any]:
         else str(entree.timestamp),
         "operation": apres.get("operation", entree.action),
         "entite": entree.entity_type,
-        "cible": apres.get("cible", ""),
+        "cible": apres.get("cible") or apres.get("msisdn") or "",
         "acteur": acteur,
         "issue": issue,
         "motif": motif,

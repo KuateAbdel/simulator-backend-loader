@@ -65,6 +65,7 @@ from app.routes import (
     admin_referentiels,
     admin_runs,
     admin_versions,
+    admin_attributions,
     attribution_publique,
     health,
 )
@@ -143,4 +144,6 @@ app.include_router(admin_runs.router)
 # Le mecanisme d'attribution USSD — quatre routes PUBLIQUES (ENF-07), hors
 # /admin : contrat FZ-CONTRAT-ATTRIB v0.3.1, fige.
 app.include_router(attribution_publique.router)
+# Sa face d'administration — lecture seule, roles du Loader (25/08).
+app.include_router(admin_attributions.router)
 app.include_router(admin_versions.router)

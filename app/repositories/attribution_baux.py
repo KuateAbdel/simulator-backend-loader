@@ -110,6 +110,17 @@ class AttributionBauxRepository:
             comptes[cle] = int(d["n"])
         return comptes
 
+    async def lister_actifs(self) -> list[dict[str, Any]]:
+        """Les baux ACTIFS, les plus recents d'abord — le recensement
+        d'exploitation (25/08 : chasse aux baux orphelins nes du defaut de
+        sequence FZ-DIAG-BAIL-2026-001). Rend les documents complets, cle
+        d'idempotence comprise : c'est elle qui dit si deux baux viennent de
+        deux TENTATIVES distinctes du meme appareil."""
+        curseur = self.collection.find({"expire_le": {"$gt": _maintenant()}}).sort(
+            "attribue_le", -1
+        )
+        return [d async for d in curseur]
+
     async def etat_pour_purge(self) -> dict[str, Any]:
         """`§1.5` de la conception — ce que la garde de purge doit dire :
         combien de baux actifs, et jusqu'a quand court le plus long. Jamais

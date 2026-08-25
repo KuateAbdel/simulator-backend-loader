@@ -251,9 +251,17 @@ class AuditTrailRepository(RepositoryBase):
 
         Borne a `limite` — la pagination fine est cote UI (comme les autres
         listes du Loader)."""
+        # 25/08 — elucidation FZ-DIAG-BAIL-2026-001 §6 : les traces
+        # d'attribution (`AttributionBail`, actions CREATE/DELETE ecrites par
+        # la route publique) vivaient sous le run sentinelle mais ce filtre
+        # `action == INTENTION` les rendait INVISIBLES. Elles sont des faits
+        # accomplis, pas des intentions : on les admet telles quelles.
         curseur = (
             self.collection.find(
-                {"run_id": str(UUID(int=0)), "action": ACTION_INTENTION}
+                {
+                    "run_id": str(UUID(int=0)),
+                    "action": {"$in": [ACTION_INTENTION, "CREATE", "DELETE"]},
+                }
             )
             .sort("timestamp", -1)
             .limit(limite)
@@ -272,7 +280,14 @@ class AuditTrailRepository(RepositoryBase):
                 {"before": 1, "after": 1},
             )
         }
-        return [(entree, issues.get(str(entree.id))) for entree in intentions]
+        def _issue(entree: AuditTrailEntry) -> dict[str, Any] | None:
+            if entree.action != ACTION_INTENTION:
+                # CREATE/DELETE d'attribution : la trace est ecrite APRES le
+                # geste reussi — c'est un fait, jamais un « en_cours ».
+                return {"statut": STATUT_SUCCES}
+            return issues.get(str(entree.id))
+
+        return [(entree, _issue(entree)) for entree in intentions]
 
     async def compter_par_type(self, run_id: UUID | None) -> dict[str, int]:
         """Statistiques de fin d'execution (EF-61)."""

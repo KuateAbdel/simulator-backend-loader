@@ -425,3 +425,116 @@ class TestGardeDePurge:
             json={"supprimer_groupes": False, "vider_notre_base": True},
         )
         assert accord.status_code == 200, accord.text
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 6. La face ADMINISTRATION — recensement (25/08) et journal elucide
+# ══════════════════════════════════════════════════════════════════════════
+
+
+async def _session_admin(client: httpx.AsyncClient, email: str) -> dict[str, str]:
+    """Un compte super_admin frais + session pleine — meme parcours que la
+    garde de purge : login initial puis bascule de mot de passe (US-A2)."""
+    from app.repositories.super_admin import SuperAdminRepository
+
+    await database.get_database().drop_collection(
+        database.COLLECTION_SUPER_ADMIN_ACCOUNTS
+    )
+    await database.get_database().drop_collection(database.COLLECTION_AUTH_THROTTLE)
+    await SuperAdminRepository().creer(email, "initial-recense-0101", role="super_admin")
+    connexion = await client.post(
+        "/admin/auth/login",
+        json={"email": email, "mot_de_passe": "initial-recense-0101"},
+    )
+    assert connexion.status_code == 200, connexion.text
+    bascule = await client.post(
+        "/admin/auth/password",
+        headers={"Authorization": f"Bearer {connexion.json()['access_token']}"},
+        json={"ancien": "initial-recense-0101", "nouveau": "granit-fanal-ourlet-88"},
+    )
+    assert bascule.status_code == 200, bascule.text
+    return {"Authorization": f"Bearer {bascule.json()['access_token']}"}
+
+
+class TestRecensementAdministration:
+    async def test_sans_session_la_liste_est_fermee(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """La face admin N'EST PAS publique — contraste voulu avec ENF-07."""
+        reponse = await client.get("/admin/attributions")
+        assert reponse.status_code in (401, 403), reponse.text
+
+    async def test_la_liste_rend_les_baux_actifs_avec_leur_cle(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Deux attributions aux cles distinctes → deux baux listes, cle
+        d'idempotence comprise : c'est elle qui separe le rejeu legitime de
+        la re-attribution orpheline (recensement FZ-DIAG-BAIL-2026-001)."""
+        await _semer_clients("CM", "FEMALE", "INDIVIDUAL", 2, prefixe="237699960")
+        cles = [_cle(), _cle()]
+        baux = []
+        for cle in cles:
+            r = await client.post(ROUTE, json=PROFIL, headers={"Idempotency-Key": cle})
+            assert r.status_code == 201, r.text
+            baux.append(r.json())
+
+        entetes = await _session_admin(client, "recensement@finzuu.com")
+        liste = await client.get("/admin/attributions", headers=entetes)
+        assert liste.status_code == 200, liste.text
+        corps = liste.json()
+        assert corps["actifs"] == 2
+        par_id = {b["attribution_id"]: b for b in corps["baux"]}
+        for bail, cle in zip(baux, cles, strict=True):
+            vu = par_id[bail["attribution_id"]]
+            assert vu["msisdn"] == bail["msisdn"]
+            assert vu["cle_idempotence"] == cle
+            assert vu["profil"] == PROFIL
+            assert vu["expire_le"] == bail["expire_le"]
+
+    async def test_un_bail_libere_disparait_de_la_liste(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Le recensement ne montre que l'ACTIF : apres EF-17, la liste est
+        vide — l'expiration passive et la liberation parlent d'une seule
+        voix (`expire_le < now` EST l'etat libre)."""
+        await _semer_clients("CM", "FEMALE", "INDIVIDUAL", 1, prefixe="237699970")
+        bail = (
+            await client.post(ROUTE, json=PROFIL, headers={"Idempotency-Key": _cle()})
+        ).json()
+        suppression = await client.delete(f"{ROUTE}/{bail['attribution_id']}")
+        assert suppression.status_code == 204
+
+        entetes = await _session_admin(client, "recensement-vide@finzuu.com")
+        corps = (await client.get("/admin/attributions", headers=entetes)).json()
+        assert corps["actifs"] == 0
+        assert corps["baux"] == []
+
+
+class TestJournalAttributionVisible:
+    async def test_creation_et_liberation_apparaissent_au_journal(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """L'elucidation du 25/08 (diagnostic §6) : les traces AttributionBail
+        etaient ECRITES mais invisibles — le journal ne rendait que les
+        INTENTIONS du cycle write-ahead. CREATE et DELETE d'attribution
+        doivent desormais y figurer, en SUCCES (fait accompli), avec le
+        msisdn pour cible et l'application pour acteur."""
+        await _semer_clients("CM", "FEMALE", "INDIVIDUAL", 1, prefixe="237699980")
+        bail = (
+            await client.post(ROUTE, json=PROFIL, headers={"Idempotency-Key": _cle()})
+        ).json()
+        suppression = await client.delete(f"{ROUTE}/{bail['attribution_id']}")
+        assert suppression.status_code == 204
+
+        entetes = await _session_admin(client, "journal-bail@finzuu.com")
+        reponse = await client.get("/admin/journal", headers=entetes)
+        assert reponse.status_code == 200, reponse.text
+        entrees = [
+            e for e in reponse.json()["entrees"] if e["entite"] == "AttributionBail"
+        ]
+        operations = {e["operation"] for e in entrees}
+        assert {"CREATE", "DELETE"} <= operations, entrees
+        for e in entrees:
+            assert e["cible"] == bail["msisdn"]
+            assert e["issue"] == "SUCCES"
+            assert e["acteur"] == "simulateur USSD (route publique)"
