@@ -53,6 +53,7 @@ from fastapi import FastAPI
 from app.core import database
 from app.core.config import settings
 from app.routes import (
+    admin_attributions,
     admin_auth,
     admin_comptes,
     admin_configuration,
@@ -65,7 +66,6 @@ from app.routes import (
     admin_referentiels,
     admin_runs,
     admin_versions,
-    admin_attributions,
     attribution_publique,
     health,
 )
