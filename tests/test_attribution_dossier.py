@@ -516,6 +516,41 @@ class TestPopulationEtJournal:
         assert issues[bail["msisdn"]] == "revoque"
         assert issues["237611111111"] == "aucun_bail_actif"
 
+    async def test_le_journal_d_attribution_ne_montre_QUE_son_domaine(
+        self, client: httpx.AsyncClient, _plateforme_double: dict[str, Any]
+    ) -> None:
+        """La frontiere du role admin : les evenements d'attribution, RIEN
+        d'autre — pas la gestion des comptes, pas les gestes referentiels.
+        Et l'ORIGINE y est, c'est elle que l'ecran Journal affiche."""
+        await _semer_arbre("237600000011")
+        entetes = await _entetes(client)
+        bail = await _attribuer(client)
+        # Un geste HORS domaine, au meme journal sentinelle : la creation du
+        # compte lecteur ci-dessous passe par l'API des comptes.
+        await client.post(
+            "/admin/comptes",
+            json={"email": "temoin-journal@finzuu.com", "role": "viewer"},
+            headers=entetes,
+        )
+
+        journal = await client.get("/admin/attributions/journal", headers=entetes)
+        assert journal.status_code == 200, journal.text
+        entrees = journal.json()["entrees"]
+        assert any(
+            e["operation"] == "CREATE" and e["cible"] == bail["msisdn"] for e in entrees
+        )
+        assert all(e["entite"].startswith("Attribution") for e in entrees), (
+            "un geste hors domaine a fui dans le journal d'attribution"
+        )
+        creation = next(e for e in entrees if e["cible"] == bail["msisdn"])
+        assert creation["origine"] == "appareil"
+
+        #: ...et le journal GENERAL, lui, reste inchange : il voit TOUT.
+        general = await client.get("/admin/journal", headers=entetes)
+        assert any(
+            e["entite"] == "SuperAdminAccount" for e in general.json()["entrees"]
+        )
+
     async def test_les_echus_se_listent(
         self, client: httpx.AsyncClient, _plateforme_double: dict[str, Any]
     ) -> None:
