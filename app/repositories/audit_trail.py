@@ -238,7 +238,9 @@ class AuditTrailRepository(RepositoryBase):
         return [AuditTrailEntry.model_validate(d) async for d in curseur]
 
     async def lister_admin(
-        self, limite: int = 200
+        self,
+        limite: int = 200,
+        entites: set[str] | None = None,
     ) -> list[tuple[AuditTrailEntry, dict[str, Any] | None]]:
         """Le journal « qui a fait quoi, quand » des actions d'ADMINISTRATION :
         les dernieres INTENTIONS sous le run sentinelle RUN_ADMIN (UUID int=0),
@@ -256,10 +258,16 @@ class AuditTrailRepository(RepositoryBase):
         # la route publique) vivaient sous le run sentinelle mais ce filtre
         # `action == INTENTION` les rendait INVISIBLES. Elles sont des faits
         # accomplis, pas des intentions : on les admet telles quelles.
+        # `entites` (27/08, additif) : le tableau de bord d'attribution ne
+        # veut QUE ses evenements — pas la gestion des comptes ni les gestes
+        # referentiels. None = comportement historique, inchange.
+        filtre: dict[str, Any] = {"run_id": str(UUID(int=0))}
+        if entites is not None:
+            filtre["entity_type"] = {"$in": sorted(entites)}
         curseur = (
             self.collection.find(
                 {
-                    "run_id": str(UUID(int=0)),
+                    **filtre,
                     # 27/08 — les REFUS d'attribution (409 STOCK_EPUISE)
                     # entrent au journal : un refus repete sur un profil est
                     # le signal d'epuisement AVANT la panne (spec §12.5).

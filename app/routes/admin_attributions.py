@@ -902,3 +902,40 @@ async def revoquer_plusieurs(
             "autres de partir ; chaque geste est journalisé individuellement"
         ),
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 8. Le journal d'attribution — les événements du domaine, rôle admin
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/journal")
+async def journal_attribution(
+    _: Annotated[SessionAdmin, Depends(exige_admin)],
+    limite: Annotated[int, Query(ge=1, le=1000)] = 200,
+) -> dict[str, Any]:
+    """Les evenements d'ATTRIBUTION seulement — attributions, liberations
+    (avec leur ORIGINE : rendu par l'appareil / repris depuis
+    l'administration), refus, nommages (spec §5.5).
+
+    POURQUOI PAS `/admin/journal` : il est reserve au super_admin — voir
+    l'activite d'administration ENTIERE (comptes, roles) est une capacite
+    sensible — et il melange tous les gestes. Le tableau de bord
+    d'attribution est en lecture `admin` (arbitrage 27/08) et n'a besoin
+    QUE de son domaine : ce filtre par entite EST la frontiere de ce que ce
+    role peut voir. Meme vue ligne a ligne que le journal general — jamais
+    une seconde convention d'affichage.
+    """
+    from app.routes.admin_journal import _vue
+
+    entrees = await AuditTrailRepository().lister_admin(
+        limite, entites={"AttributionBail", "AttributionRefus"}
+    )
+    return {
+        "entrees": [_vue(entree, resultat) for entree, resultat in entrees],
+        "total": len(entrees),
+        "note": (
+            "événements d'attribution seulement — attributions, libérations "
+            "avec leur origine, refus ; lecture seule, 30 jours de rétention"
+        ),
+    }
