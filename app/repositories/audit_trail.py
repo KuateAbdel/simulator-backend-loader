@@ -260,7 +260,10 @@ class AuditTrailRepository(RepositoryBase):
             self.collection.find(
                 {
                     "run_id": str(UUID(int=0)),
-                    "action": {"$in": [ACTION_INTENTION, "CREATE", "DELETE"]},
+                    # 27/08 — les REFUS d'attribution (409 STOCK_EPUISE)
+                    # entrent au journal : un refus repete sur un profil est
+                    # le signal d'epuisement AVANT la panne (spec §12.5).
+                    "action": {"$in": [ACTION_INTENTION, "CREATE", "DELETE", "REFUS"]},
                 }
             )
             .sort("timestamp", -1)

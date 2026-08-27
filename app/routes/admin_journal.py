@@ -45,7 +45,7 @@ def _vue(entree: Any, resultat: dict[str, Any] | None) -> dict[str, Any]:
     #: le payload pour les gestes d'administration, a la racine d'`after` pour
     #: les traces de la route publique.
     origine = payload.get("origine") or apres.get("origine")
-    if entree.entity_type == "AttributionBail":
+    if entree.entity_type in {"AttributionBail", "AttributionRefus"}:
         # Traces de la route PUBLIQUE d'attribution (élucidation 25/08) :
         # l'acteur est l'application — il n'y a pas d'opérateur derrière —
         # et la cible est le msisdn du bail. Les entrées d'avant ce jour

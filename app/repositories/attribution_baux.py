@@ -126,6 +126,46 @@ class AttributionBauxRepository:
         )
         return [d async for d in curseur]
 
+    async def par_msisdn(self, msisdn: str) -> dict[str, Any] | None:
+        """Le bail de CE numero, actif OU echu — la cle d'entree du dossier
+        client (FZ-INV-ATTRIB §8 : « une seule cle d'entree, le msisdn »).
+        Un bail echu reste lisible 30 jours (TTL) : le dossier d'un numero
+        rendu hier se consulte encore — c'est l'echelle de la campagne."""
+        document: dict[str, Any] | None = await self.collection.find_one({"_id": msisdn})
+        return document
+
+    async def lister(self, etat: str = "actifs") -> list[dict[str, Any]]:
+        """Le recensement, par ETAT — `actifs` (l'existant), `echus` (les
+        baux morts que le TTL n'a pas encore ramasses, la matiere de
+        l'historique), ou `tous`. Les plus recents d'abord, comme
+        `lister_actifs` — dont le comportement ne bouge pas d'un octet."""
+        if etat == "actifs":
+            return await self.lister_actifs()
+        filtre: dict[str, Any] = {}
+        if etat == "echus":
+            filtre = {"expire_le": {"$lte": _maintenant()}}
+        curseur = self.collection.find(filtre).sort("attribue_le", -1)
+        return [d async for d in curseur]
+
+    async def nommer_interlocuteur(
+        self, msisdn: str, interlocuteur: str | None
+    ) -> dict[str, Any] | None:
+        """Pose (ou efface) le LIBELLE LIBRE de l'operateur — « le bail de
+        M. Diallo » (spec §5.2, colonne Interlocuteur ; §7, la recherche la
+        plus frequente d'une campagne).
+
+        CHAMP ADDITIF, ecrit par la seule administration : le mecanisme
+        public ne le lit ni ne l'ecrit jamais — `acquerir` n'en connait pas
+        l'existence, un rejeu d'idempotence le laisse intact (le rejeu relit
+        le document, il ne le reecrit pas). Rend le document a jour, ou None
+        si aucun bail (meme echu) ne porte ce numero."""
+        document: dict[str, Any] | None = await self.collection.find_one_and_update(
+            {"_id": msisdn},
+            {"$set": {"interlocuteur": interlocuteur}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return document
+
     async def etat_pour_purge(self) -> dict[str, Any]:
         """`§1.5` de la conception — ce que la garde de purge doit dire :
         combien de baux actifs, et jusqu'a quand court le plus long. Jamais

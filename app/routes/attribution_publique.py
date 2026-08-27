@@ -234,6 +234,7 @@ async def attribuer(
     else:
         libres = []
     if not libres:
+        await _journaliser_refus(profil, "STOCK_EPUISE")
         return _erreur(
             409,
             "STOCK_EPUISE",
@@ -269,6 +270,7 @@ async def attribuer(
 
     # 8. Tous les candidats pris pendant la boucle (concurrence extreme sur un
     # pool presque vide) : au moment du dernier essai, rien n'etait libre.
+    await _journaliser_refus(profil, "STOCK_EPUISE")
     return _erreur(
         409,
         "STOCK_EPUISE",
@@ -330,6 +332,36 @@ async def liberer(attribution_id: str) -> Response:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+
+
+async def _journaliser_refus(profil: dict[str, str], code: str) -> None:
+    """La trace d'un REFUS (409) — spec §12.5 et conception §8.1 : « si le
+    pool se vide, on saura par qui et quand ». Un refus repete sur un profil
+    signale une tension AVANT que la combinaison ne tombe a zero — sans
+    cette trace, l'epuisement se decouvre au moment ou il prive un
+    partenaire.
+
+    TRACE PURE : la reponse 409 etait deja calculee, elle part identique a
+    l'octet pres — le mecanisme ne change pas. Et comme toute trace d'ici,
+    elle ne fait jamais echouer le geste qu'elle documente.
+    """
+    try:
+        from uuid import uuid4 as _uuid4
+
+        await AuditTrailRepository().journaliser(
+            run_id=RUN_ADMIN_ATTRIBUTION,
+            entity_type="AttributionRefus",
+            entity_id=_uuid4(),
+            action="REFUS",
+            after={
+                "cible": f"{profil['pays']}/{profil['genre']}/{profil['categorie']}",
+                "code": code,
+                "profil": dict(profil),
+                "origine": ORIGINE_APPAREIL,
+            },
+        )
+    except Exception:  # pragma: no cover — defense d'exploitation
+        logger.exception("trace de refus non ecrite (%s)", code)
 
 
 async def _journaliser(action: str, bail: dict[str, Any]) -> None:

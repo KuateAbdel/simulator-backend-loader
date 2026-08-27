@@ -124,6 +124,33 @@ class AccountServiceClient:
             "currency": currency,
         }
 
+    async def compte(self, account_id: UUID | str) -> dict[str, Any] | None:
+        """La fiche COMPLETE d'un compte — le tableau de bord d'attribution
+        s'en sert pour le bloc Compte du dossier client (FZ-INV-ATTRIB §2).
+
+        C'est la lecture qui porte `AFF-01` : le solde AFFICHE vient toujours
+        de cette relecture, jamais d'une somme d'operations — `D-ACC-1`, les
+        frais sont retranches du montant et credites nulle part.
+        """
+        reponse = await self._client.get(
+            f"/api/v1/accounts/{account_id}", vide_si_404=True
+        )
+        return reponse.data if isinstance(reponse.data, dict) else None
+
+    async def transactions_du_compte(self, account_id: UUID | str) -> list[dict[str, Any]]:
+        """L'HISTORIQUE d'un compte — `GET /accounts/{id}/transactions`,
+        prouve en production le 25/08 (FZ-INV-ATTRIB §8, source D :
+        « Solde initial — Ines Kambire », DEPOSIT/CREDIT, SUCCESS).
+
+        Champs mesures : reference, type, sens CREDIT/DEBIT, amount, fees,
+        label (humain), status, provider_src, created_at. Le releve du
+        dossier client les affiche TELS QUELS — et jamais leur somme
+        (`AFF-01`/`FRA-218`).
+        """
+        return await self._client.lister_tout(
+            f"/api/v1/accounts/{account_id}/transactions"
+        )
+
     async def creer_compte(self, payload: dict[str, Any]) -> dict[str, Any]:
         reponse = await self._client.requete("POST", "/api/v1/accounts/", json_body=payload)
         return reponse.data if isinstance(reponse.data, dict) else {}
