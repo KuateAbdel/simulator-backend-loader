@@ -5073,20 +5073,103 @@ class TestC2VerrouParRessource:
     DEFINITIF (la plateforme n'a ni index unique ni DELETE)."""
 
     async def test_deux_allers_simultanes_sur_le_meme_pays_UN_SEUL_passe(
-        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+        self,
+        client: httpx.AsyncClient,
+        _config_service_double: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """Le recouvrement est PROVOQUE, jamais espere.
+
+        27/08 — ce test etait INTERMITTENT, et un test instable sur un verrou
+        est pire qu'un test absent : il apprend a ignorer le rouge. Mesure du
+        jour : meme code, deux verdicts (1 echec puis 0) sur la suite
+        complete ; vert en isolation.
+
+        La cause n'etait pas le verrou, elle etait la mise en scene. Un
+        `asyncio.gather` de deux requetes ne garantit AUCUN recouvrement : le
+        double de config-service est entierement en memoire, aucune de ses
+        methodes n'attend d'E/S, et les seuls points ou la main revient a la
+        boucle sont les allers-retours Mongo. Sous charge, la premiere
+        requete pouvait prendre le verrou, faire son travail et le rendre
+        AVANT que la seconde n'atteigne `prendre` — les deux passaient, et
+        l'assertion tombait en accusant un verrou qui avait bien fonctionne.
+
+        On tient donc la premiere requete A L'INTERIEUR du verrou, sur un
+        rendez-vous, et on lance la seconde une fois la detention CERTAINE.
+        L'invariant prouve est le vrai — « un geste a la fois par ressource »
+        — et il ne depend plus de l'ordonnancement de la machine.
+        """
         import asyncio
 
+        from app.routes import admin_referentiels
+
         entetes = await _session_complete(client)
-        reponses = await asyncio.gather(
-            client.post("/admin/referentiels/pays/CM/pousser", headers=entetes),
-            client.post("/admin/referentiels/pays/CM/pousser", headers=entetes),
+
+        #: `dans_le_verrou` : la 1re requete a franchi `prendre` et travaille.
+        #: `relacher` : la 2e a recu sa reponse, la 1re peut finir.
+        dans_le_verrou = asyncio.Event()
+        relacher = asyncio.Event()
+        premiere_entree = True
+        fabrique = admin_referentiels._config_admin
+
+        class _AdminSuspendu:
+            """Le double, avec UN point d'arret place DANS la section critique.
+
+            `resoudre_devise` est le premier appel distant que la route fait
+            apres avoir pris le verrou — s'y suspendre, c'est tenir le verrou
+            de facon certaine et observable."""
+
+            def __init__(self) -> None:
+                self._reel = fabrique()
+
+            async def resoudre_devise(self, code_iso: str) -> Any:
+                # SEULE LA PREMIERE requete se suspend. Sans ce garde-fou, un
+                # verrou CASSE ferait pendre le test au lieu de le faire
+                # echouer : la seconde requete entrerait ici a son tour et
+                # attendrait un `relacher` que personne ne poserait jamais.
+                # Un test qui pend est pire qu'un test qui echoue — il mange
+                # le delai de la CI et ne dit rien. Mesure du 27/08 : verrou
+                # neutralise, ce test pendait 2 min ; avec ce garde-fou il
+                # rend un echec franc sur le 409 attendu.
+                nonlocal premiere_entree
+                if premiere_entree:
+                    premiere_entree = False
+                    dans_le_verrou.set()
+                    # Borne de securite : jamais d'attente infinie dans un test.
+                    await asyncio.wait_for(relacher.wait(), timeout=15)
+                return await self._reel.resoudre_devise(code_iso)
+
+            def __getattr__(self, nom: str) -> Any:
+                return getattr(self._reel, nom)
+
+        monkeypatch.setattr(admin_referentiels, "_config_admin", lambda: _AdminSuspendu())
+
+        premier = asyncio.create_task(
+            client.post("/admin/referentiels/pays/CM/pousser", headers=entetes)
         )
-        statuts = sorted(r.status_code for r in reponses)
-        assert statuts == [200, 409], [r.status_code for r in reponses]
-        refus = next(r for r in reponses if r.status_code == 409)
-        assert "DEJA en cours" in refus.json()["detail"]
-        assert "RC-183" in refus.json()["detail"], "le refus porte sa raison"
+        await asyncio.wait_for(dans_le_verrou.wait(), timeout=10)
+
+        # ICI, et c'est tout l'objet du rendez-vous : le verrou est DETENU.
+        second = await client.post("/admin/referentiels/pays/CM/pousser", headers=entetes)
+        assert second.status_code == 409, second.text
+        assert "DEJA en cours" in second.json()["detail"]
+        assert "RC-183" in second.json()["detail"], "le refus porte sa raison"
+
+        relacher.set()
+        gagnant = await premier
+        assert gagnant.status_code == 200, gagnant.text
+
+    async def test_le_verrou_RENDU_laisse_repasser(
+        self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
+    ) -> None:
+        """Le pendant du refus, et il compte autant : un verrou qui ne se
+        rend pas ne protege plus, il condamne. Apres un aller termine, le
+        meme pays repasse."""
+        entetes = await _session_complete(client)
+        premier = await client.post("/admin/referentiels/pays/CM/pousser", headers=entetes)
+        assert premier.status_code == 200, premier.text
+        second = await client.post("/admin/referentiels/pays/CM/pousser", headers=entetes)
+        assert second.status_code == 200, second.text
 
     async def test_deux_pays_DIFFERENTS_ne_se_bloquent_pas(
         self, client: httpx.AsyncClient, _config_service_double: dict[str, Any]
