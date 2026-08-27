@@ -30,7 +30,7 @@ from app.models.enums import NiveauOrganisation, RunStatus
 MongoDocument = dict[str, Any]
 
 # --------------------------------------------------------------------------
-# Noms des 7 collections proprietaires. Aucune autre collection n'est creee
+# Noms des 13 collections proprietaires. Aucune autre collection n'est creee
 # par le Loader (cf. app/models/domain.py).
 # --------------------------------------------------------------------------
 COLLECTION_FAKER_CONSUMPTION_LEDGER: Final = "faker_consumption_ledger"
@@ -70,6 +70,14 @@ COLLECTION_VERSIONS_SERVICES: Final = "service_versions"
 #: v0.3.1, conception docs/CONCEPTION_ATTRIBUTION_USSD.md. `_id` = msisdn :
 #: l'unicite d'INV-SIM-01 est l'index primaire, pas un algorithme.
 COLLECTION_ATTRIBUTION_BAUX: Final = "attribution_baux"
+
+#: Treizieme collection — le REGLAGE de la duree du bail, contrat 0.4 §(b).
+#: Collection SEPAREE, et c'est delibere : le mecanisme d'attribution ne partage aucun stockage avec
+#: la machinerie d'execution du Loader. Ce n'est PAS la configuration d'un run
+#: (`loader_configuration/_id="courante"`, `ConfigurationExecution`) — un
+#: reglage de bail ne decide d'aucune population, d'aucun rattachement,
+#: d'aucun quota. Deux sujets, deux collections, aucune confusion possible.
+COLLECTION_ATTRIBUTION_REGLAGES: Final = "attribution_reglages"
 
 logger = logging.getLogger(__name__)
 
