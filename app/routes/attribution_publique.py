@@ -35,10 +35,12 @@ from pydantic import BaseModel, ConfigDict
 
 from app.models.enums import NiveauOrganisation
 from app.repositories.attribution_baux import (
+    ORIGINE_APPAREIL,
     RUN_ADMIN_ATTRIBUTION,
     AttributionBauxRepository,
     normaliser_bail,
 )
+from app.repositories.attribution_reglages import jours_pour_le_tirage
 from app.repositories.audit_trail import AuditTrailRepository
 from app.repositories.org_hierarchy import OrgHierarchyRepository
 from app.repositories.surcouche import SurcoucheRepository
@@ -245,17 +247,27 @@ async def attribuer(
     # jamais sur le meme candidat.
     ordre = sorted(libres, key=lambda m: sha256(f"{cle}:{m}".encode()).hexdigest())
 
-    # 6. Acquisition atomique, candidat par candidat. La concurrence ne
+    # 6. La DUREE applicable, resolue MAINTENANT (contrat 0.4 §b) : surcharge
+    # du pays si elle existe, sinon la valeur globale. Lue a chaque demande et
+    # jamais mise en cache — un reglage change vaut des l'attribution
+    # suivante, sans redemarrage du service.
+    #
+    # FAIL-SAFE : cet appel ne leve jamais. Un reglage illisible rend sept
+    # jours et le tirage continue — on ne coupe pas le service pour proteger
+    # un detail de confort (meme doctrine que le champ `appareil`, §0.4a).
+    jours = await jours_pour_le_tirage(pays)
+
+    # 7. Acquisition atomique, candidat par candidat. La concurrence ne
     # produit jamais un double — au pire un detour vers le suivant.
     for msisdn in ordre:
         bail = await baux.acquerir(
-            msisdn, cle_idempotence=cle, profil=profil, appareil=appareil
+            msisdn, cle_idempotence=cle, profil=profil, appareil=appareil, jours=jours
         )
         if bail is not None:
             await _journaliser("CREATE", bail)
             return JSONResponse(status_code=201, content=normaliser_bail(bail))
 
-    # 7. Tous les candidats pris pendant la boucle (concurrence extreme sur un
+    # 8. Tous les candidats pris pendant la boucle (concurrence extreme sur un
     # pool presque vide) : au moment du dernier essai, rien n'etait libre.
     return _erreur(
         409,
@@ -336,6 +348,10 @@ async def _journaliser(action: str, bail: dict[str, Any]) -> None:
                 "msisdn": str(bail["_id"]),
                 "profil": bail.get("profil"),
                 "expire_le": str(bail.get("expire_le")),
+                # L'ORIGINE, ECRITE et non deduite (27/08). Une liberation
+                # `EF-17` et une revocation d'administration effacent le meme
+                # bail ; seule cette ligne dit LEQUEL des deux s'est produit.
+                "origine": ORIGINE_APPAREIL,
             },
         )
     except Exception:  # pragma: no cover — defense d'exploitation

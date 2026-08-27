@@ -22,18 +22,23 @@ ramasse les documents morts, jamais un arbitre — mot pour mot la doctrine de
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.core.database import COLLECTION_ATTRIBUTION_BAUX, get_collection
+from app.repositories.attribution_reglages import BAIL_JOURS_DEFAUT
 
-#: La duree du bail — CDC : sept jours, constante nommee et non parametre
-#: (arbitrage §10.3 de la conception : un parametre inviterait a la derive
-#: sans exigence qui le demande).
-BAIL_JOURS = 7
+#: La duree du bail — SEPT JOURS RESTE LE DEFAUT, plus la loi. L'arbitrage
+#: §10.3 de la conception (« un parametre inviterait a la derive sans exigence
+#: qui le demande ») a ete LEVE par la revision 0.4 du contrat : l'exigence
+#: existe desormais, l'exploitation doit pouvoir raccourcir un bail sans
+#: livraison. La valeur applicable est resolue AU TIRAGE par
+#: `ReglagesBail.jours_pour(pays)` et passee a `acquerir` ; ce defaut ne sert
+#: que lorsque l'appelant n'en fournit aucune.
+BAIL_JOURS = BAIL_JOURS_DEFAUT
 
 
 def _maintenant() -> datetime:
@@ -148,6 +153,7 @@ class AttributionBauxRepository:
         cle_idempotence: str,
         profil: dict[str, str],
         appareil: str | None = None,
+        jours: int | None = None,
     ) -> dict[str, Any] | None:
         """Tente de prendre CE msisdn. Rend le bail, ou None s'il est occupe.
 
@@ -169,7 +175,10 @@ class AttributionBauxRepository:
             # portent la meme valeur.
             "appareil": appareil,
             "attribue_le": maintenant,
-            "expire_le": maintenant + timedelta(days=BAIL_JOURS),
+            # Contrat 0.4 §(b) — la duree est RESOLUE AU TIRAGE et FIGEE ici.
+            # Ce que ce champ porte est une promesse datee : aucun reglage
+            # ulterieur ne la relira (option 1 de la revision).
+            "expire_le": maintenant + timedelta(days=jours or BAIL_JOURS_DEFAUT),
         }
         try:
             await self.collection.insert_one(bail)
@@ -197,6 +206,34 @@ class AttributionBauxRepository:
             return None  # deja echu : fonctionnellement, il n'existait plus
         return document
 
+    # ── La REVOCATION — le geste de l'administration ──────────────────────
+
+    async def revoquer(self, msisdn: str) -> dict[str, Any] | None:
+        """Rompt le bail par son MSISDN — la poignee de l'administration.
+
+        Deux differences deliberees avec `liberer` (le geste de l'appareil) :
+
+        1. **La cle est le msisdn**, pas l'`attribution_id`. L'operateur voit
+           un numero dans le recensement ; exiger la poignee de l'appareil le
+           forcerait a la deviner. C'est exactement ce qui a bloque la chasse
+           au bail orphelin du 25/08.
+        2. **Le filtre porte sur l'echeance** : seul un bail ACTIF se revoque.
+           Un bail echu est deja libre — le supprimer ne changerait rien et
+           ferait mentir le journal, qui inscrirait une revocation la ou il
+           ne s'est rien passe. Le `find_one_and_delete` reste indivisible :
+           deux operateurs sur le meme bail, un seul obtient le document.
+
+        L'appareil n'est pas prevenu — aucune notification n'existe (`ENF-05`,
+        et le contrat n'ouvre aucun canal descendant). Il le decouvre a sa
+        prochaine verification (`GET /attributions/{id}` -> 404), et sa
+        conduite est celle de l'expiration : ecran 13, retour a la
+        composition. C'est le meme chemin, deja prouve.
+        """
+        document: dict[str, Any] | None = await self.collection.find_one_and_delete(
+            {"_id": msisdn, "expire_le": {"$gt": _maintenant()}}
+        )
+        return document
+
 
 def normaliser_bail(document: dict[str, Any]) -> dict[str, Any]:
     """Le corps de reponse du contrat (§2 et §3) — quatre champs, dates ISO."""
@@ -209,3 +246,24 @@ def normaliser_bail(document: dict[str, Any]) -> dict[str, Any]:
 
 
 RUN_ADMIN_ATTRIBUTION = UUID(int=0)
+
+# ── L'ORIGINE d'un geste sur un bail ──────────────────────────────────────
+#
+# Liberation par l'appareil (`EF-17`) et revocation par l'administration font
+# la MEME CHOSE au bail : il disparait, le client retourne au pool. Ce n'est
+# pas un doublon — c'est le meme effet par deux VOLONTES differentes, et au
+# journal cette difference est l'information : « le partenaire a rendu le
+# numero » et « on le lui a repris » ne se lisent pas pareil.
+#
+# L'origine est donc ECRITE, jamais deduite. Avant le 27/08 elle etait
+# INFEREE a l'affichage (« pas d'auteur dans la trace, donc c'est l'app »),
+# ce qui tenait tant qu'un seul chemin existait. Des lors que l'administration
+# peut agir, une deduction devient un pari.
+ORIGINE_APPAREIL: Final = "appareil"
+ORIGINE_ADMINISTRATION: Final = "administration"
+
+#: Les libelles d'affichage — le journal parle a un exploitant, pas a un code.
+LIBELLE_ORIGINE: Final = {
+    ORIGINE_APPAREIL: "simulateur USSD (route publique)",
+    ORIGINE_ADMINISTRATION: "administration du Loader",
+}

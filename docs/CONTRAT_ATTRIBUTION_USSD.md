@@ -15,14 +15,16 @@
 > à l'administration en face du msisdn. **Ce n'est PAS un identifiant** :
 > deux téléphones identiques portent la même étiquette ; aucun numéro de
 > série, aucun IMEI, aucun identifiant publicitaire — rien qui désigne UN
-> appareil. **(b) La durée du bail** : les sept jours cessent d'être une
-> constante gravée pour devenir un RÉGLAGE d'administration — valeur globale,
-> surchargeable par pays, bornée 1 à 30 jours, résolue AU MOMENT du tirage.
-> Les baux existants gardent l'échéance qu'ils portent (option 1 : un bail
-> est une promesse datée, on ne réécrit pas une promesse) ; l'application
-> n'affiche plus « sept jours » mais LA DATE d'échéance que le serveur rend —
-> ce qu'elle fait déjà (`expire_le` fait foi). La mécanique (§2, §3, §5) est
-> inchangée : mêmes routes, mêmes conduites, mêmes garanties prouvées.
+> appareil. **(b) La durée du bail** — **LIVRÉE LE 27/08** : les sept jours
+> **ont cessé** d'être une constante gravée. C'est un RÉGLAGE d'administration
+> — valeur globale, surchargeable par pays, bornée 1 à 30 jours, **résolue au
+> moment du tirage** et jamais mise en cache : un réglage changé vaut dès
+> l'attribution suivante, sans redémarrage du service. Les baux existants
+> gardent l'échéance qu'ils portent (option 1 : un bail est une promesse
+> datée, on ne réécrit pas une promesse). L'application n'affiche pas « sept
+> jours » mais LA DATE d'échéance que le serveur rend — ce qu'elle fait déjà
+> (`expire_le` fait foi). La mécanique (§2, §3, §5) est inchangée : mêmes
+> routes, mêmes conduites, mêmes garanties prouvées. Détail en **§2.3**.
 >
 > **Révision 0.3.1 — réserve levée (QA Lead, 24/08).** La clé d'idempotence
 > est **persistée dès son émission et effacée à réception du `201`** : sans
@@ -248,6 +250,43 @@ balayage périodique reste possible pour la propreté des compteurs, il ne doit
 jamais être **nécessaire** : un pool qui dépend d'un minuteur se vide le jour
 où le minuteur s'arrête.
 
+### 2.3 La durée du bail — un réglage, plus une constante
+
+**Rien de ce paragraphe ne change une seule requête de l'application.** Il est
+ici parce qu'une durée qui bouge sans que le consommateur le sache serait un
+piège, et parce que la révision 0.4 §(b) l'a promise.
+
+**Sept jours est désormais un DÉFAUT, pas la loi.** La durée applicable est
+résolue **au moment du tirage** : la surcharge du pays demandé si elle existe,
+sinon la valeur globale. Elle est bornée de **1 à 30 jours**. Le réglage est
+relu à chaque attribution — le changer vaut dès la suivante, sans redéploiement
+ni redémarrage.
+
+**La seule conduite exigée de l'application est celle qu'elle tient déjà :
+lire `expire_le`, jamais calculer une échéance.** Une application qui
+afficherait « valable 7 jours » en dur mentirait le jour où le réglage passe à
+trois. Le serveur reste la seule autorité d'horloge (§3).
+
+**Un bail déjà tiré ne bouge pas.** Son `expire_le` est écrit au tirage et
+aucun réglage postérieur ne le relit — un bail est une promesse datée. Baisser
+la durée ne raccourcit aucun bail en cours ; l'appareil qui en détient un le
+garde jusqu'au terme promis.
+
+**Le réglage ne peut pas faire échouer une attribution.** Sa lecture est
+protégée : base injoignable, document illisible ou valeur hors bornes, le
+tirage aboutit avec le défaut de sept jours plutôt que de refuser un numéro.
+C'est la doctrine du champ `appareil` (§0.4a) appliquée à l'identique — un
+réglage de confort ne fait jamais tomber le cœur du mécanisme.
+
+**La face d'administration — hors de la surface de ce contrat.** Le réglage se
+lit et s'écrit par deux routes du Loader, réservées à ses opérateurs et jamais
+appelées par l'application :
+
+| Route | Ce qu'elle fait |
+|---|---|
+| `GET /admin/attributions/reglages` | la durée en vigueur, ses bornes, sa version, qui l'a modifiée et quand |
+| `PUT /admin/attributions/reglages` | règle la valeur globale et les surcharges par pays ; refuse avant écriture une valeur hors bornes ou un pays hors référentiel, et chiffre les baux qu'elle laisse intacts |
+
 ---
 
 ## 3. `GET /api/v1/attribution/attributions/{attribution_id}`
@@ -383,6 +422,12 @@ le point est porté à la Direction par le QA Lead.
   contrat, de désigner un numéro voulu (`INV-SIM-04`, `CR-08`).
 - **Aucune notion de session USSD.** Le callback est un contrat distinct,
   servi par ussd-service.
+- **Aucun geste d'administration.** Régler la durée du bail (§2.3) et révoquer
+  un bail depuis le Loader sont des gestes d'EXPLOITATION : ils vivent sous
+  `/admin`, sous les rôles du Loader, et l'application n'en connaît rien. Une
+  révocation ne lui est pas notifiée — aucun canal descendant n'existe
+  (`ENF-05`) : elle la découvre à sa prochaine vérification de bail (§3), et sa
+  conduite est celle de l'expiration. Un seul chemin, déjà prouvé.
 
 ---
 

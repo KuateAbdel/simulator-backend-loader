@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.core.database import (
     COLLECTION_ATTRIBUTION_BAUX,
+    COLLECTION_ATTRIBUTION_REGLAGES,
     COLLECTION_AUDIT_TRAIL,
     COLLECTION_AUTH_THROTTLE,
     COLLECTION_FAKER_CONSUMPTION_LEDGER,
@@ -178,6 +179,10 @@ COLLECTIONS_PROTEGEES: dict[str, str] = {
     #: matche plus aucun tirage, le TTL le ramasse) ; couper une demonstration
     #: ne se rattrape pas.
     COLLECTION_ATTRIBUTION_BAUX: "les baux d'attribution USSD — un tiers en depend",
+    #: Le reglage de duree du bail (contrat 0.4 §b) : un choix d'exploitation,
+    #: au meme titre que le referentiel. Vider la carte ne remet pas la duree
+    #: a sept jours — ce serait effacer une decision d'operateur au passage.
+    COLLECTION_ATTRIBUTION_REGLAGES: "le réglage de durée du bail d'attribution",
 }
 
 

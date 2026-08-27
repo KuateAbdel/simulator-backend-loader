@@ -21,6 +21,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
+from app.repositories.attribution_baux import LIBELLE_ORIGINE, ORIGINE_APPAREIL
 from app.repositories.audit_trail import AuditTrailRepository
 from app.routes.dependances import SessionAdmin, exige_super_admin
 
@@ -40,12 +41,24 @@ def _vue(entree: Any, resultat: dict[str, Any] | None) -> dict[str, Any]:
     payload = apres.get("payload") or {}
     acteur = next((payload[c] for c in _CLES_ACTEUR if payload.get(c)), None)
     details = {k: v for k, v in payload.items() if k not in _CLES_ACTEUR}
+    #: L'ORIGINE du geste, telle qu'elle a ete INSCRITE (27/08). Elle vit dans
+    #: le payload pour les gestes d'administration, a la racine d'`after` pour
+    #: les traces de la route publique.
+    origine = payload.get("origine") or apres.get("origine")
     if entree.entity_type == "AttributionBail":
         # Traces de la route PUBLIQUE d'attribution (élucidation 25/08) :
         # l'acteur est l'application — il n'y a pas d'opérateur derrière —
         # et la cible est le msisdn du bail. Les entrées d'avant ce jour
         # portent le msisdn à la racine de `after`, pas dans un payload.
-        acteur = acteur or "simulateur USSD (route publique)"
+        #
+        # 27/08 — L'ACTEUR SUIT L'ORIGINE ECRITE. Tant qu'un seul chemin
+        # existait, « pas d'auteur dans la trace » valait « c'est l'app » ;
+        # depuis que l'administration peut revoquer, cette deduction serait un
+        # pari. Le repli ne sert donc plus qu'aux traces ANTERIEURES, pour
+        # lesquelles il reste vrai : l'administration ne pouvait pas agir.
+        acteur = acteur or LIBELLE_ORIGINE.get(
+            origine or ORIGINE_APPAREIL, LIBELLE_ORIGINE[ORIGINE_APPAREIL]
+        )
         details = details or {
             k: v for k, v in apres.items() if k not in {"operation", "cible"}
         }
@@ -62,6 +75,9 @@ def _vue(entree: Any, resultat: dict[str, Any] | None) -> dict[str, Any]:
         "entite": entree.entity_type,
         "cible": apres.get("cible") or apres.get("msisdn") or "",
         "acteur": acteur,
+        #: `appareil` | `administration` | None (geste sans origine — tout ce
+        #: qui n'est pas un bail, et les traces d'avant le 27/08).
+        "origine": origine,
         "issue": issue,
         "motif": motif,
         "details": details,
