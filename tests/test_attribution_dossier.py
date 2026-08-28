@@ -496,6 +496,71 @@ class TestPopulationEtJournal:
         assert ligne["cible"] == "CM/MALE/CORPORATE"
         assert ligne["origine"] == "appareil"
 
+    async def test_l_adresse_et_son_pays_entrent_a_la_trace(
+        self,
+        client: httpx.AsyncClient,
+        _plateforme_double: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Demande Direction 28/08 : le journal dit D'OU venait le geste.
+        L'adresse est relevee du chemin reseau (X-Forwarded-For, premier
+        maillon) et le pays est resolu A L'ECRITURE, en local."""
+        from app.core.config import settings as reglages
+
+        # La discipline I-AUTH-11 : X-Forwarded-For n'est cru QUE derriere un
+        # proxy declare de confiance — c'est le cas de la production (nginx).
+        monkeypatch.setattr(reglages, "faire_confiance_proxy", True)
+        await _semer_arbre("237600000012")
+        entetes = await _entetes(client)
+        reponse = await client.post(
+            ROUTE_PUBLIQUE,
+            json=PROFIL_CM,
+            headers={
+                "Idempotency-Key": str(uuid4()),
+                # Une adresse camerounaise reelle, avec un second maillon de
+                # proxy : seul le PREMIER compte.
+                "X-Forwarded-For": "154.72.153.10, 10.0.0.7",
+            },
+        )
+        assert reponse.status_code == 201, reponse.text
+
+        journal = await client.get("/admin/attributions/journal", headers=entetes)
+        creation = next(
+            e
+            for e in journal.json()["entrees"]
+            if e["operation"] == "CREATE" and e["cible"] == reponse.json()["msisdn"]
+        )
+        assert creation["ip"] == "154.72.153.10"
+        assert creation["ip_pays"] == "CM"
+
+    async def test_une_adresse_privee_n_a_pas_de_pays(
+        self,
+        client: httpx.AsyncClient,
+        _plateforme_double: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Le banc local n'a pas de pays : None assume, jamais un faux code —
+        et le geste ABOUTIT, la geolocalisation est un confort de journal."""
+        from app.core.config import settings as reglages
+
+        monkeypatch.setattr(reglages, "faire_confiance_proxy", True)
+        await _semer_arbre("237600000013")
+        entetes = await _entetes(client)
+        reponse = await client.post(
+            ROUTE_PUBLIQUE,
+            json=PROFIL_CM,
+            headers={"Idempotency-Key": str(uuid4()), "X-Forwarded-For": "192.168.1.44"},
+        )
+        assert reponse.status_code == 201, reponse.text
+        journal = await client.get("/admin/attributions/journal", headers=entetes)
+        creation = next(
+            e
+            for e in journal.json()["entrees"]
+            if e["operation"] == "CREATE" and e["cible"] == reponse.json()["msisdn"]
+        )
+        assert creation["ip"] == "192.168.1.44"
+        assert creation["ip_pays"] is None
+
     async def test_la_revocation_en_lot_rend_une_issue_par_numero(
         self, client: httpx.AsyncClient, _plateforme_double: dict[str, Any]
     ) -> None:

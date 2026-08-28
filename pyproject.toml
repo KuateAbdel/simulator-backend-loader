@@ -14,6 +14,10 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "pyjwt>=2.9",
+    # IP -> pays au journal d'attribution (demande Direction 28/08).
+    # Lecture LOCALE (db-ip lite, CC-BY) — jamais un service externe a qui
+    # on enverrait les adresses des partenaires.
+    "maxminddb>=2.6",
     # EF-01 : lecture du referentiel Loader_Base_FinZuu_v1_1.xlsx.
     # Pur Python, donc compatible ARM64 sans roue native.
     "openpyxl>=3.1",
