@@ -264,7 +264,12 @@ async def attribuer(
     # produit jamais un double — au pire un detour vers le suivant.
     for msisdn in ordre:
         bail = await baux.acquerir(
-            msisdn, cle_idempotence=cle, profil=profil, appareil=appareil, jours=jours
+            msisdn,
+            cle_idempotence=cle,
+            profil=profil,
+            appareil=appareil,
+            jours=jours,
+            os=_os_du_client(requete),
         )
         if bail is not None:
             await _journaliser("CREATE", bail, _ip_du_client(requete))
@@ -334,6 +339,29 @@ async def liberer(attribution_id: str, requete: Request) -> Response:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+
+
+def _os_du_client(requete: Request) -> str | None:
+    """Le TYPE d'OS de l'appareil — demande Direction du 28/08 — DEDUIT du
+    `User-Agent`, que la pile reseau du telephone pose TOUTE SEULE :
+
+      okhttp/...              -> la pile Android (React Native y passe)
+      CFNetwork/... Darwin/...-> la pile Apple (iOS)
+
+    RIEN n'est demande a l'application — aucun changement d'APK, aucun champ
+    nouveau au contrat : les telephones deja equipes sont couverts des leur
+    prochain geste. La limite assumee : le TYPE, pas la version (« Android
+    13 » exigerait que l'app l'envoie). Signature inconnue -> None, jamais
+    une invention.
+    """
+    agent = (requete.headers.get("user-agent") or "").lower()
+    if not agent:
+        return None
+    if "okhttp" in agent or "android" in agent:
+        return "android"
+    if "cfnetwork" in agent or "darwin" in agent or "ios" in agent:
+        return "ios"
+    return None
 
 
 def _ip_du_client(requete: Request) -> str | None:
