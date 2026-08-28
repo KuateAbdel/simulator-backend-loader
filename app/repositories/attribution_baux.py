@@ -194,6 +194,7 @@ class AttributionBauxRepository:
         profil: dict[str, str],
         appareil: str | None = None,
         jours: int | None = None,
+        os: str | None = None,
     ) -> dict[str, Any] | None:
         """Tente de prendre CE msisdn. Rend le bail, ou None s'il est occupe.
 
@@ -214,6 +215,10 @@ class AttributionBauxRepository:
             # optionnelle, JAMAIS un identifiant : deux telephones identiques
             # portent la meme valeur.
             "appareil": appareil,
+            # Le TYPE d'OS (28/08, Direction) — DEDUIT du User-Agent par le
+            # serveur, jamais demande a l'application : android / ios / None.
+            # Une metadonnee de connexion, pas un identifiant (contrat 0.4a).
+            "os": os,
             "attribue_le": maintenant,
             # Contrat 0.4 §(b) — la duree est RESOLUE AU TIRAGE et FIGEE ici.
             # Ce que ce champ porte est une promesse datee : aucun reglage

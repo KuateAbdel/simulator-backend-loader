@@ -561,6 +561,42 @@ class TestPopulationEtJournal:
         assert creation["ip"] == "192.168.1.44"
         assert creation["ip_pays"] is None
 
+    async def test_le_type_d_os_est_deduit_du_user_agent(
+        self, client: httpx.AsyncClient, _plateforme_double: dict[str, Any]
+    ) -> None:
+        """Demande Direction 28/08 : android / ios / inconnu — DEDUIT de la
+        signature que la pile reseau pose toute seule. Rien n'est demande a
+        l'application : aucun APK a relivrer, aucun champ au contrat."""
+        await _semer_arbre("237600000014")
+        await _semer_arbre("237600000015")
+        await _semer_arbre("237600000016")
+        entetes = await _entetes(client)
+
+        cas = [
+            ("okhttp/4.12.0", "android"),
+            ("SimulateurUssd/1 CFNetwork/1494 Darwin/23.4.0", "ios"),
+            ("curl/8.5.0", None),
+        ]
+        constates: dict[str, str | None] = {}
+        for agent, _attendu in cas:
+            reponse = await client.post(
+                ROUTE_PUBLIQUE,
+                json=PROFIL_CM,
+                headers={"Idempotency-Key": str(uuid4()), "User-Agent": agent},
+            )
+            assert reponse.status_code == 201, reponse.text
+            #: La reponse PUBLIQUE reste les quatre champs du contrat — l'os
+            #: n'y figure pas : il est pour l'administration.
+            assert set(reponse.json()) == {
+                "attribution_id", "msisdn", "attribue_le", "expire_le",
+            }
+            constates[agent] = reponse.json()["msisdn"]
+
+        liste = await client.get("/admin/attributions", headers=entetes)
+        par_msisdn = {b["msisdn"]: b["os"] for b in liste.json()["baux"]}
+        for agent, attendu in cas:
+            assert par_msisdn[constates[agent]] == attendu, agent
+
     async def test_la_revocation_en_lot_rend_une_issue_par_numero(
         self, client: httpx.AsyncClient, _plateforme_double: dict[str, Any]
     ) -> None:
