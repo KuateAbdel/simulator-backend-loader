@@ -78,6 +78,10 @@ def _vue(entree: Any, resultat: dict[str, Any] | None) -> dict[str, Any]:
         #: `appareil` | `administration` | None (geste sans origine — tout ce
         #: qui n'est pas un bail, et les traces d'avant le 27/08).
         "origine": origine,
+        #: L'adresse d'ou venait le geste, et son pays — ecrits a la trace
+        #: (28/08). None sur les traces anterieures : on n'invente jamais.
+        "ip": payload.get("ip") or apres.get("ip"),
+        "ip_pays": payload.get("ip_pays") or apres.get("ip_pays"),
         "issue": issue,
         "motif": motif,
         "details": details,

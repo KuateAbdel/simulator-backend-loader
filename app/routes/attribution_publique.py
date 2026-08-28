@@ -29,10 +29,11 @@ import logging
 from hashlib import sha256
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Header, Response
+from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from app.core.geoip import pays_de_l_ip
 from app.models.enums import NiveauOrganisation
 from app.repositories.attribution_baux import (
     ORIGINE_APPAREIL,
@@ -186,6 +187,7 @@ class DemandeAttribution(BaseModel):
 @router.post("/attributions", status_code=201)
 async def attribuer(
     demande: DemandeAttribution,
+    requete: Request,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Any:
     """Le tirage atomique — `EF-04`, `INV-SIM-01`, `CR-05`, `CR-06`."""
@@ -234,7 +236,7 @@ async def attribuer(
     else:
         libres = []
     if not libres:
-        await _journaliser_refus(profil, "STOCK_EPUISE")
+        await _journaliser_refus(profil, "STOCK_EPUISE", _ip_du_client(requete))
         return _erreur(
             409,
             "STOCK_EPUISE",
@@ -265,12 +267,12 @@ async def attribuer(
             msisdn, cle_idempotence=cle, profil=profil, appareil=appareil, jours=jours
         )
         if bail is not None:
-            await _journaliser("CREATE", bail)
+            await _journaliser("CREATE", bail, _ip_du_client(requete))
             return JSONResponse(status_code=201, content=normaliser_bail(bail))
 
     # 8. Tous les candidats pris pendant la boucle (concurrence extreme sur un
     # pool presque vide) : au moment du dernier essai, rien n'etait libre.
-    await _journaliser_refus(profil, "STOCK_EPUISE")
+    await _journaliser_refus(profil, "STOCK_EPUISE", _ip_du_client(requete))
     return _erreur(
         409,
         "STOCK_EPUISE",
@@ -316,7 +318,7 @@ async def verifier(attribution_id: str) -> Any:
 
 
 @router.delete("/attributions/{attribution_id}", status_code=204)
-async def liberer(attribution_id: str) -> Response:
+async def liberer(attribution_id: str, requete: Request) -> Response:
     """La rupture de liaison — rend le client au pool COTE SERVEUR. Sans
     cela, chaque test de la recette fuirait un numero pour sept jours et
     `INV-SIM-01` s'eroderait (contrat §4).
@@ -327,14 +329,38 @@ async def liberer(attribution_id: str) -> Response:
     document = await baux.liberer(attribution_id)
     if document is None:
         return _erreur(404, "BAIL_INCONNU", "bail inconnu ou deja echu")
-    await _journaliser("DELETE", document)
+    await _journaliser("DELETE", document, _ip_du_client(requete))
     return Response(status_code=204)
 
 
 # ──────────────────────────────────────────────────────────────────────────
 
 
-async def _journaliser_refus(profil: dict[str, str], code: str) -> None:
+def _ip_du_client(requete: Request) -> str | None:
+    """L'adresse d'ou vient CE geste — demande Direction du 28/08.
+
+    MEME DISCIPLINE que `_ip_client` de l'auth (I-AUTH-11) : l'en-tete
+    `X-Forwarded-For` n'est cru QUE si `faire_confiance_proxy` est pose —
+    sans cette confiance explicite, n'importe quel appelant le forgerait et
+    s'inventerait un pays. C'est une INDICATION D'EXPLOITATION, pas une
+    preuve d'identite, et jamais un identifiant d'appareil (contrat 0.4a :
+    l'IP decrit une connexion, pas UN terminal). Elle n'est ecrite QUE dans
+    le journal, reserve aux roles du Loader — aucune route publique ne la
+    rend."""
+    from app.core.config import settings
+
+    if settings.faire_confiance_proxy:
+        transmis = requete.headers.get("x-forwarded-for", "")
+        premier = transmis.split(",")[0].strip()
+        if premier:
+            return premier
+    client = requete.client
+    return client.host if client else None
+
+
+async def _journaliser_refus(
+    profil: dict[str, str], code: str, ip: str | None = None
+) -> None:
     """La trace d'un REFUS (409) — spec §12.5 et conception §8.1 : « si le
     pool se vide, on saura par qui et quand ». Un refus repete sur un profil
     signale une tension AVANT que la combinaison ne tombe a zero — sans
@@ -358,13 +384,17 @@ async def _journaliser_refus(profil: dict[str, str], code: str) -> None:
                 "code": code,
                 "profil": dict(profil),
                 "origine": ORIGINE_APPAREIL,
+                "ip": ip,
+                "ip_pays": pays_de_l_ip(ip),
             },
         )
     except Exception:  # pragma: no cover — defense d'exploitation
         logger.exception("trace de refus non ecrite (%s)", code)
 
 
-async def _journaliser(action: str, bail: dict[str, Any]) -> None:
+async def _journaliser(
+    action: str, bail: dict[str, Any], ip: str | None = None
+) -> None:
     """Chaque attribution et chaque liberation laisse une trace (`§8.1` de la
     conception) : si le pool se vide, on saura par qui et quand. La trace ne
     doit jamais faire echouer le geste qu'elle documente."""
@@ -384,6 +414,11 @@ async def _journaliser(action: str, bail: dict[str, Any]) -> None:
                 # `EF-17` et une revocation d'administration effacent le meme
                 # bail ; seule cette ligne dit LEQUEL des deux s'est produit.
                 "origine": ORIGINE_APPAREIL,
+                # L'ADRESSE et son pays (28/08) — resolus A L'ECRITURE : la
+                # trace garde le pays du moment du geste, elle ne se
+                # reinterprete pas.
+                "ip": ip,
+                "ip_pays": pays_de_l_ip(ip),
             },
         )
     except Exception:  # pragma: no cover — defense d'exploitation

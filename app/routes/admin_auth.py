@@ -46,6 +46,7 @@ from pydantic import BaseModel, EmailStr, Field
 from app.clients import mailjet
 from app.core import politique_mot_de_passe as politique
 from app.core.config import settings
+from app.core.geoip import pays_de_l_ip
 from app.core.politique_mot_de_passe import LONGUEUR_MDP_MIN
 from app.core.security import emettre_jeton_admin
 from app.repositories.audit_trail import AuditTrailRepository
@@ -186,7 +187,15 @@ async def login(demande: DemandeConnexion, request: Request) -> ReponseSession:
             entity_id=uuid5(NAMESPACE_OID, f"loader-login:{compte.email}"),
             operation="LOGIN",
             cible="loader /admin/auth/login",
-            payload={"par": compte.email, "role": compte.role},
+            payload={
+                "par": compte.email,
+                "role": compte.role,
+                # 28/08 (Direction) : D'OU la personne se connecte. L'adresse
+                # sert deja l'anti-brute-force ; le pays est resolu en LOCAL
+                # a l'ecriture (app/core/geoip.py) — jamais un service tiers.
+                "ip": ip,
+                "ip_pays": pays_de_l_ip(ip),
+            },
         ) as suivi:
             suivi.reussi({"email": compte.email})
     except Exception as erreur:  # la trace ne bloque JAMAIS le login

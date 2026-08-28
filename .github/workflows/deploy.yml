@@ -72,6 +72,11 @@ jobs:
           maj_env MAILJET_API_KEY '${{ secrets.MAILJET_API_KEY }}'
           maj_env MAILJET_SECRET_KEY '${{ secrets.MAILJET_SECRET_KEY }}'
           maj_env MAILJET_EXPEDITEUR '${{ secrets.MAILJET_EXPEDITEUR }}'
+          # Pas un secret — une VERITE DE TOPOLOGIE : ce backend est derriere
+          # nginx, X-Forwarded-For y est pose par NOTRE proxy. Sans ce flag,
+          # l'anti-brute-force par source et l'IP du journal (28/08) verraient
+          # l'adresse de nginx, pas celle de la personne.
+          maj_env FAIRE_CONFIANCE_PROXY 'true'
           echo "empreinte api-key en place : $(printf '%s' '${{ secrets.MAILJET_API_KEY }}' | sha256sum | cut -c1-12)"
           # compose hache la config (.env inclus) : le conteneur est recree
           # si les valeurs ont change, laisse en place sinon.
