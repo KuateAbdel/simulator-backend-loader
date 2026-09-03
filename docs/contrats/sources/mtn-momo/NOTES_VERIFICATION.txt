@@ -1,0 +1,10 @@
+--- verifications personnelles 2026-09-03 ---
+Les 5 fichiers JSON ont ete recuperes PAR MOI-MEME sur l'API de contenu du portail
+(momodeveloper.mtn.com/developer/*), qui est l'API de lecture du site lui-meme -- exactement
+les requetes qu'un navigateur emet en affichant la page. L'API TRANSACTIONNELLE MoMo
+(sandbox.momodeveloper.mtn.com) n'a JAMAIS ete appelee. Aucun compte cree.
+
+Comptage verifie : collection=23 operations, disbursement=16, remittance=14. Total 53.
+Enumeration ErrorReason verifiee : 17 valeurs.
+Les pages /api-documentation/* sont des coquilles SPA d'environ 6,5 Ko ; le texte vit dans
+/content/html_widgets/<id>.html. Les deux widgets portants sont archives ici.

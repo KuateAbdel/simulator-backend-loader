@@ -1,0 +1,110 @@
+<html>
+<head>
+    <link href="//db.onlinewebfonts.com/c/4baee4a2550da10078fd0d6dd9440bc1?family=MTN+Brighter+Sans" rel="stylesheet" type="text/css"/>
+    <style>
+        @import url(//db.onlinewebfonts.com/c/4baee4a2550da10078fd0d6dd9440bc1?family=MTN+Brighter+Sans);
+        url("//db.onlinewebfonts.com/t/4baee4a2550da10078fd0d6dd9440bc1.ttf") format("truetype");
+        body {
+          font-family:"MTN Brighter Sans";
+        }
+        body {
+          font-family:"MTN Brighter Sans";
+          font-size: 14px;
+          font-weight: 300;
+        }
+.paragraph{
+color: #004f71;
+margin-top: 3rem;
+font-weight: bold;
+font-size: 14px;
+}
+p{
+    font-weight: 300;
+}
+
+h1{
+font-size:40px;
+margin-bottom:1.5rem;
+}
+
+table, th, td {
+  border: 1px solid #E8E8E8;
+  border-collapse: collapse;
+  padding: 5px;
+}
+
+li{
+    margin: 10px;
+}
+
+th{
+background: #f4f4f4;
+color: #004f71;
+}
+
+table{
+width: 100%;
+border-top-radius: 10px;
+}
+    </style>
+</head>
+<body>
+    <h1> <b>Welcome to MoMo APIs</b> </h1> 
+<p> Here you will find guides, resources and references to build with MoMo. </p>
+<p class="paragraph"> Steps on creating your first API Request </p>
+
+<ol>
+    <li> Fork Collection</li>
+    <li> Create Subscription Keys</li>
+    <li> Create API User and API Key</li>
+    <li> Get Access Token</li>
+    <li> Make your first MoMo API Call</li>
+</ol>
+
+<p class="paragraph"><b>Step 1: Fork the collection using Run In Postman</b></p>
+
+<p class="paragraph"><b>Step 2: Create Subscription Keys</b></p>
+<p>1. Sign up <b>https://momodeveloper.mtn.com</b></p>
+<p>2. Navigate to the products page <b>Product-descriptions.</b></p>
+<p>3. Select drop down on product that suits the business case and subscribe.</p>
+<p>4. After completion, you can locate the Subscription Keys in your profile. Access additional information through the link below on creating subscription keys <br> <a href="https://momodevelopercommunity.mtn.com/how-to-59/how-to-create-subscription-keys-on-momodeveloper-148">How to create subscription keys on MoMoDeveloper | MoMo Dev Community (mtn.com)</a></p>
+<p>5. Navigate to the Variables and update as mapped below</p>
+<table>
+    <thead>
+        <tr>
+            <th>Subscription Name</th>
+            <th>Key Type</th>
+            <th>Variable</th>
+        </tr>
+    </thead>
+        <tr>
+            <td>Disbursements</td>
+            <td>Primary</td>
+            <td>Disbursement_Subscription-Key</td>
+        </tr>
+        <tr>
+            <td>Collections</td>
+            <td>Primary</td>
+            <td>Collection_Subscription-Key</td>
+        </tr>
+</table>
+<p><b>NOTE: </b>Use the primary key</p>
+
+<p class="paragraph">Step 3: Generate API user and API Key</p>
+<p>1. Fork the SandBox Provisioning Collection using run in Postman</p>
+<p>2. Run the SandBox Provisioning Collection, copy the api user and api key displayed via the console and test results.</p>
+<p>3. Navigate to the Variables of the MoMo Open APIs Collection and modify api_user and api_key respectively</p>
+
+<p class="paragraph">Step 4: Generate API user and API Key</p>
+<p>An access token is automatically generated using a default api_user and api_key. MoMo recommends using your own api_user and api_key from Step 3 by entering the values under the Variables tab. A pre-request script will generate and manage expiry of the access_token automatically.</p>
+
+<p class="paragraph">Step 5: Make Your first MoMo API Call</p>
+<p>1. In your workspace, navigate to your fork of the MoMo Open APIs collection.</p>
+<p>2. Select Get Paid > Request Payment</p>
+<p>3. Select the Send button to request a payment. On a successful call, the API returns a 202 Accepted response code</p>
+<p>4. Customer will receive a PIN to approve the debit from their MoMo Wallet.</p>
+<p>5. Check configured Callback URl for status of the Request.</p>
+<p>6. Request Status can be generated under select Get Paid > Payment Status</p>
+<p>7. Select the Send button to request a payment. On a successful call, the API returns a 200 OK Accepted response code, with Status of the request in the response body</p>
+</body>
+</html>
