@@ -1,0 +1,10 @@
+--- verifications personnelles 2026-09-03 ---
+1. DNS moov-africa.com = WILDCARD. zzz-random-test-9x.moov-africa.com -> 216.40.34.41,
+   identique a developer.moov-africa.com. L'existence du sous-domaine 'developer' n'est
+   donc AUCUN indice de projet de portail.
+2. apimarchand.moov-africa.bj resout sur 41.138.88.97. NON INTERROGE (interdiction d'appel API).
+3. api.moov-africa.ci -> NXDOMAIN.
+4. Texte visible des pages d'accueil .bj / .bf / .ci / .tg : ZERO occurrence, au mot pres, de
+   API / APIs / developpeur / developer / sandbox / webservice / WSDL / SOAP. Mesure faite
+   apres suppression des balises : les correspondances brutes du HTML etaient des faux
+   positifs d'attributs.
