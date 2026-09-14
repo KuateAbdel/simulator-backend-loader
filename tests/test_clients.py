@@ -122,10 +122,75 @@ class TestSessionPartagee:
 
     @pytest.mark.asyncio
     async def test_une_reponse_sans_access_token_leve(self) -> None:
+        """Aucune des deux formes connues : on LEVE. Le Loader n'invente
+        jamais un jeton, il dit que le contrat a encore change."""
         from app.clients.base import SessionAuth
 
-        with pytest.raises(ValueError, match="access_token absent"):
+        with pytest.raises(ValueError, match="jeton d'acces absent"):
             SessionAuth().enregistrer({"refresh_token": "seul"})
+
+    @pytest.mark.asyncio
+    async def test_la_forme_imbriquee_du_04_09_est_acceptee(self) -> None:
+        """`FRA-238` — LE defaut du 04/09/2026.
+
+        user-service a deplace le jeton de `data.access_token` vers
+        `data.token.access` sans changer de version. Le Loader levait
+        « access_token absent de la reponse » et ne pouvait plus parler a
+        AUCUN des neuf services : le jeton ROOT est la porte de tous.
+        """
+        from app.clients.base import SessionAuth
+
+        s = SessionAuth()
+        rendu = s.enregistrer({"token": {"access": "abc", "refresh": "def"}})
+
+        assert rendu == "abc"
+        assert s.access == "abc"
+        assert s.refresh == "def"
+        assert s.access_utilisable()
+        assert s.refresh_utilisable()
+
+    @pytest.mark.asyncio
+    async def test_la_forme_plate_reste_prioritaire(self) -> None:
+        """Si les deux formes coexistaient un jour, la forme historique —
+        mesuree en continu du 08/08 au 02/09 — gagne."""
+        from app.clients.base import SessionAuth
+
+        s = SessionAuth()
+        s.enregistrer(
+            {
+                "access_token": "plat",
+                "refresh_token": "plat_r",
+                "token": {"access": "imbrique", "refresh": "imbrique_r"},
+            }
+        )
+        assert s.access == "plat"
+        assert s.refresh == "plat_r"
+
+    @pytest.mark.asyncio
+    async def test_un_access_imbrique_sans_refresh_ne_perd_pas_le_refresh(self) -> None:
+        """Le refresh deja en main survit a une reponse qui n'en porte pas —
+        sinon on se reloguerait, et `INV-USR-19` compte les logins."""
+        from app.clients.base import SessionAuth
+
+        s = SessionAuth()
+        s.enregistrer({"token": {"access": "a1", "refresh": "r1"}})
+        s.enregistrer({"token": {"access": "a2"}})
+        assert s.access == "a2"
+        assert s.refresh == "r1"
+
+    @pytest.mark.asyncio
+    async def test_un_token_vide_ou_non_mappable_ne_passe_pas(self) -> None:
+        """`is_first_login=true` rend la cle PRESENTE et la valeur VIDE
+        (mesure du 08/08) : une chaine vide n'est pas un jeton. Et un `token`
+        qui n'est pas un objet ne doit pas faire tomber le parsing."""
+        from app.clients.base import SessionAuth
+
+        with pytest.raises(ValueError, match="jeton d'acces absent"):
+            SessionAuth().enregistrer({"access_token": "", "token": {"access": ""}})
+        with pytest.raises(ValueError, match="jeton d'acces absent"):
+            SessionAuth().enregistrer({"token": "pas-un-objet"})
+        with pytest.raises(ValueError, match="jeton d'acces absent"):
+            SessionAuth().enregistrer({})
 
     @pytest.mark.asyncio
     async def test_le_verrou_empeche_vingt_logins_simultanes(self) -> None:
