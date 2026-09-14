@@ -72,6 +72,22 @@ jobs:
           maj_env MAILJET_API_KEY '${{ secrets.MAILJET_API_KEY }}'
           maj_env MAILJET_SECRET_KEY '${{ secrets.MAILJET_SECRET_KEY }}'
           maj_env MAILJET_EXPEDITEUR '${{ secrets.MAILJET_EXPEDITEUR }}'
+          # --- Identifiants ROOT de la plateforme FinZuu ---
+          # AJOUTES LE 14/09/2026, apres un incident mesure le jour meme.
+          # Le Loader deploye repondait `500` sur toutes ses routes FinZuu
+          # (/admin/inventaire/groupes, /companies, /produits) alors que la
+          # meme version en local joignait les 9 services : son `.env` portait
+          # un mot de passe ROOT perime.
+          # Ce n'est pas qu'une panne, c'est une panne CONTAGIEUSE : `INV-USR-19`
+          # verrouille le compte ROOT — PARTAGE par tous les consommateurs — au
+          # TROISIEME refus. Un serveur reste en arriere verrouille donc la
+          # plateforme pour TOUT LE MONDE, tout seul.
+          # Le mot de passe ROOT cesse ici d'etre pose a la main sur le serveur :
+          # une valeur posee a la main derive, et sa derive verrouille FinZuu.
+          # UNE source — le secret — ENFORCEE a chaque deploiement.
+          maj_env ROOT_USERNAME '${{ secrets.ROOT_USERNAME }}'
+          maj_env ROOT_PASSWORD '${{ secrets.ROOT_PASSWORD }}'
+          echo "empreinte mdp ROOT en place : $(printf '%s' '${{ secrets.ROOT_PASSWORD }}' | sha256sum | cut -c1-12)"
           # Pas un secret — une VERITE DE TOPOLOGIE : ce backend est derriere
           # nginx, X-Forwarded-For y est pose par NOTRE proxy. Sans ce flag,
           # l'anti-brute-force par source et l'IP du journal (28/08) verraient
