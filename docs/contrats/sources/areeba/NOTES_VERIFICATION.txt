@@ -1,0 +1,15 @@
+--- verifications personnelles 2026-09-03 ---
+1. DEUX ENTITES HOMONYMES. Verifie moi-meme :
+   - areeba.gn/momo/ : HTTP 200, 63 753 o. 19 codes USSD extraits (*440#, *440*2#, *440*4#,
+     *440*4*1#, *440*4*2#, *440*4*6*2#, *440*4*6*3#, *440*4*6*4#, *440*8*3#, *100*1..3#,
+     *100*7#, *100*8#, *111#, *223*4#, *223*5#, *223*18#, *223*20#) et des montants en GNF
+     (1 000 / 2 000 / 15 000 000 GNF). C'est un OPERATEUR TELECOM avec du mobile money.
+   - www.areeba.com : HTTP 403 (Cloudflare). Non archivable en direct.
+
+2. PREUVE DNS que la passerelle areeba EST du Mastercard MPGS en marque blanche :
+   epayment.areeba.com  -> 103.55.149.32, nom canonique ap.gateway.mastercard.com
+   ap.gateway.mastercard.com -> 103.55.149.32
+   Meme IP, et le canonique est celui de Mastercard.
+
+3. La page Downloads de la reference d'API est VIDE de tout fichier. Contenu textuel integral :
+   « Downloads / Resources / Downloads / Glossary / FAQs / Copyright (c) 2026 Mastercard ».

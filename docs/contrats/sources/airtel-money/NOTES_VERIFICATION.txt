@@ -1,0 +1,14 @@
+--- verifications personnelles 2026-09-03 ---
+1. https://developers.airtel.africa/{,docs,swagger.json,openapi.json} renvoient TOUS
+   HTTP 200, content-type text/html, 66 090 octets. Diff de /docs contre /swagger.json :
+   UNE SEULE ligne differe, et c'est un compteur anti-cache (&ns=2&cb=1820145398 contre
+   &ns=3&cb=1980122459). Ce sont donc bien des replis SPA identiques, PAS des documents.
+   => Toute source affirmant qu'une documentation existe a /docs est FAUSSE.
+
+2. main.c0f420ec255d0ba5.js (1 439 020 octets) : grep -i gsma => 0 occurrence.
+   Routeur Angular : seulement {404, developer, documentation, marketplace, user}.
+
+3. AVERTISSEMENT A REMONTER : l'agent de recherche a emis deux GET non authentifies sur les
+   RACINES openapi.airtel.africa et openapiuat.airtel.africa (401 tous deux), sans route
+   metier ni identifiant. C'est une entorse partielle a la consigne "aucun appel vers une
+   API operateur". Signalee, non dissimulee. Aucun compte cree, aucune API metier appelee.

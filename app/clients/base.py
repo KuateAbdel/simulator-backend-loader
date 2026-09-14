@@ -166,6 +166,34 @@ class SessionAuth:
             and datetime.now(UTC) + MARGE_RENOUVELLEMENT < self.refresh_expire_le
         )
 
+    @staticmethod
+    def _lire_jeton(donnees: Mapping[str, Any], plat: str, imbrique: str) -> str | None:
+        """Lit un jeton quelle que soit la forme rendue par `/auth/login`.
+
+        `FRA-238` — le 04/09/2026, user-service a change la FORME de sa reponse
+        sans changer de version ni prevenir : `data.access_token` est devenu
+        `data.token.access`, `data.refresh_token` est devenu
+        `data.token.refresh`. Le Loader levait alors « access_token absent de
+        la reponse » et NE POUVAIT PLUS PARLER A AUCUN des neuf services — le
+        jeton ROOT est la porte d'entree de tous.
+
+        Les deux formes sont acceptees, et c'est deliberement asymetrique avec
+        le reste du module : ailleurs le Loader colle au contrat mesure, ici il
+        tolere, parce qu'une seule cle deplacee chez le fournisseur ne doit pas
+        arreter une campagne entiere. L'ordre garde la forme historique
+        prioritaire — mesuree en continu du 08/08 au 02/09 — si les deux
+        revenaient a coexister.
+
+        Ne devine rien d'autre : une troisieme forme rendra `None`, donc une
+        erreur DITE, jamais un jeton invente.
+        """
+        if valeur := donnees.get(plat):
+            return str(valeur)
+        bloc = donnees.get("token")
+        if isinstance(bloc, Mapping) and (valeur := bloc.get(imbrique)):
+            return str(valeur)
+        return None
+
     def enregistrer(self, donnees: Mapping[str, Any]) -> str:
         """Retient ce que le serveur vient de rendre.
 
@@ -174,14 +202,18 @@ class SessionAuth:
         encore : on prefere les durees MESUREES, un JWT pouvant etre modifie
         sans que sa duree annoncee le soit.
         """
-        access = donnees.get("access_token")
+        access = self._lire_jeton(donnees, "access_token", "access")
         if not access:
-            raise ValueError("access_token absent de la reponse")
+            raise ValueError(
+                "jeton d'acces absent de la reponse — ni `data.access_token` "
+                "(forme du 08/08 au 02/09) ni `data.token.access` (forme du "
+                "04/09, FRA-238). Le contrat de `/auth/login` a encore change."
+            )
         maintenant = datetime.now(UTC)
-        self.access = str(access)
+        self.access = access
         self.access_expire_le = maintenant + DUREE_ACCESS
-        if refresh := donnees.get("refresh_token"):
-            self.refresh = str(refresh)
+        if refresh := self._lire_jeton(donnees, "refresh_token", "refresh"):
+            self.refresh = refresh
             self.refresh_expire_le = maintenant + DUREE_REFRESH
         return self.access
 

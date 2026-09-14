@@ -1,0 +1,401 @@
+<html>
+<head>
+    <link href="//db.onlinewebfonts.com/c/4baee4a2550da10078fd0d6dd9440bc1?family=MTN+Brighter+Sans" rel="stylesheet" type="text/css"/>
+  <style>
+    body {
+      font-family: "MTN Brighter Sans";
+      margin: 0;
+      padding: 0;
+      display: flex;
+      min-height: 100vh;
+      background: #fff;
+    }
+
+    .table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+    table{
+      overflow-x: auto;
+      width: 100%;
+    }
+
+    /* Sidebar */
+    .side-nav {
+      width: 25%;
+      min-width: 240px;
+      box-shadow: 2px 4px 20px rgba(138, 168, 185, 0.2);
+      border-radius: 20px;
+      background: linear-gradient(101.19deg, #fff, #f9f9f9);
+      padding: 20px;
+      box-sizing: border-box;
+      margin: 10px;
+      height: fit-content;
+    }
+
+    .side-nav h2 {
+      margin: 0 0 20px;
+      font-size: 22px;
+      color: #000;
+      border-bottom: 1px solid #888;
+      padding-bottom: 12px;
+    }
+
+    .nav-link {
+      display: block;
+      margin: 10px 0;
+      color: #004f71;
+      text-decoration: none;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .nav-link.active {
+      border-left: 4px solid #FFCB05;
+      font-weight: bold;
+      padding-left: 10px;
+    }
+
+    /* Main content */
+    .content {
+      flex: 1;
+      padding: 25px;
+      box-sizing: border-box;
+      overflow-x: hidden;
+    }
+
+    h1 {
+      font-size: 32px;
+      margin-top: 0;
+      color: #000;
+    }
+
+    .question {
+      font-size: 18px;
+      font-weight: bold;
+      color: #004f71;
+      margin-top: 25px;
+    }
+
+    p {
+      font-size: 14px;
+      color: #444;
+      line-height: 1.6;
+    }
+
+    .response {
+      background: #f4f4f4;
+      border-radius: 5px;
+      padding: 8px;
+      margin: 10px 0;
+      font-family: "MTN Brighter Sans";
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+
+    img {
+      width: 100%;
+      height: auto;
+      max-width: 600px;
+      display: block;
+      margin: 15px auto;
+    }
+
+    .prev a, .next a {
+      color: #004f71;
+      text-decoration: none;
+      font-weight: bold;
+    }
+
+    .prev a:hover, .next a:hover {
+      color: #FFCB05;
+    }
+
+    .prev, .next {
+      display: inline-block;
+      margin-top: 20px;
+    }
+
+    .next {
+      float: right;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    #languageSwitcher {
+  appearance: none;        /* Removes default OS styling */
+  -webkit-appearance: none;
+  -moz-appearance: none;
+
+  padding: 8px 36px 8px 12px;
+  font-size: 14px;
+  font-family: "MTN Brighter Sans";
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background-color: #fff;
+  cursor: pointer;
+
+  /* Custom arrow */
+  background-image: url("data:image/svg+xml;utf8,<svg fill='%23333' height='20' viewBox='0 0 20 20' width='20' xmlns='http://www.w3.org/2000/svg'><path d='M5 7l5 5 5-5z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 16px;
+}
+
+    /*  Responsive tweaks */
+    @media (max-width: 1024px) {
+      body {
+        flex-direction: column;
+      }
+
+      .side-nav {
+        width: auto;
+        margin: 10px 10px 0 10px;
+      }
+
+      .content {
+        padding: 15px;
+      }
+
+      h1 {
+        font-size: 26px;
+      }
+
+      .side-nav h2 {
+        font-size: 20px;
+      }
+    }
+
+    @media (max-width: 600px) {
+      h1 {
+        font-size: 22px;
+      }
+      .question {
+        font-size: 16px;
+      }
+      .table-wrapper {
+      overflow-x: auto;
+      display: block;
+    }
+      .nav-link {
+        font-size: 13px;
+      }
+      p {
+        font-size: 13px;
+      }
+    }
+        table, td, th {
+            border: 1px solid #f4f4f4;
+            font-size: 14px;
+        }
+        table {
+            border-collapse: collapse;
+            overflow-x: auto;
+            width:100%;
+        }
+        td {
+          padding: 2.5px;
+        }
+        th{
+          background: #f4f4f4;
+        }
+    </style>
+</head>
+<body>
+    <div class="side-nav">
+          <h2>MoMo API</h2>
+          <a target="_top" href="/api-documentation" class="nav-link">Introduction</a>
+          <a target="_top" href="/api-documentation/getting-started" class="nav-link">Getting Started</a>
+          <a target="_top" href="/api-documentation/api-description" class="nav-link">API User & API Key Management</a>
+          <a target="_top" href="/api-documentation/use-cases" class="nav-link">Use Cases</a>
+          <a target="_top" href="/api-documentation/testing" class="nav-link">Sandbox Use Cases</a>
+          <a target="_top" href="/api-documentation/common-error" class="nav-link active">Common Error Codes</a>
+          <a target="_top" href="/api-documentation/callback" class="nav-link">Callback</a>
+          <a target="_top" href="/api-documentation/brand-guidelines" class="nav-link">Brand Guidelines</a>
+    </div>
+      <div class="content">
+        <div class="header">
+          <h1>Common Error Codes</h1>
+          <select id="languageSwitcher">
+              <option value="en">English</option>
+              <option value="fr">French</option>
+            </select>
+        </div>
+
+          <p class="en">The complete definitions of error codes are found in the swagger documentation. Below is the list of error codes available.</p>
+          <p class="fr hidden">Les definitions completes des codes d'erreur sont disponibles dans la documentation Swagger. Ci-dessous se trouve la liste des codes d'erreur disponibles.</p>
+
+          <p class="question">Common Error Codes</p>
+          <div class="table-wrapper">
+          <table>
+            <thead>
+                <tr>
+                    <th>HTTP Code</th>
+                    <th>Error Response Code</th>
+                    <th>Description</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>409</td>
+                    <td>RESOURCE_ALREADY_EXIST</td>
+                    <td class="en">Duplicated Reference ID. Every request must have a unique reference ID; using an ID of the previous request will result in this error response.</td>
+                    <td class="fr hidden">ID de reference duplique. Chaque requete doit avoir un ID unique ; l'utilisation d'un ID deja utilise entrainera cette erreur.</td>
+                    <td class="en">Check X-Reference ID used is unique and is in UUID V4 format</td>
+                    <td class="fr hidden">Verifiez que le X-Reference ID utilise est unique et au format UUID V4.</td>
+                </tr>
+                <tr>
+                    <td>401</td>
+                    <td>ACCESS DENIED DUE TO INVALID SUBSCRIPTION KEY</td>
+                    <td class="en">Authentication failed.Credentials invalid.Header Ocp-APIM-Subscription-Key value is incorrect.</td>
+                    <td class="fr hidden">Echec de l'authentification. Identifiants invalides. La valeur du header Ocp-APIM-Subscription-Key est incorrecte.</td>
+                    <td class="en">Check the User Profile Section to verify the related product subscription key is used. Collection, Disbursement and Remittance have different subscription keys. If the primary key doesn't work, try the secondary key. Contact MTN support if both provided keys aren't working. Sandbox subscription keys are located in <a target="_blank" href="https://momodeveloper.mtn.com/profile">https://momodeveloper.mtn.com/profile</a> Production subscription keys are located in <a target="_blank" href="https://momoapi.mtn.com/profile">https://momoapi.mtn.com/profile</a></td>
+                    <td class="fr hidden">Verifiez dans la section User Profile que la subscription key correspondant au produit est utilisee. Collection, Disbursement et Remittance ont des cles differentes. Si la primary key ne fonctionne pas, essayez la secondary key. Contactez le support MTN si aucune des cles ne fonctionne. Sandbox <a target="_blank" href="https://momodeveloper.mtn.com/profile">https://momodeveloper.mtn.com/profile</a> Production <a target="_blank" href="https://momoapi.mtn.com/profile">https://momoapi.mtn.com/profile</a>
+                </tr>
+                <tr>
+                    <td>404	</td>
+                    <td>RESOURCE NOT FOUND</td>
+                    <td class="en">Reference ID not found. Requested resource does not exist. Predominantly occurs with Get Status API and implies that the requested reference ID does not exist. This results in the Request to Debit or Transfer transaction being unsuccessful.</td>
+                    <td class="fr hidden">ID de reference introuvable. La ressource demandee n'existe pas. Cela se produit principalement avec l'API Get Status et signifie que l'ID n'existe pas. Cela entraine l'echec de la transaction Request to Debit ou Transfer.</td>
+                    <td class="en">Check if the original request to pay or the transfer (disbursement) operation was successful with response code 202. </td>
+                    <td class="fr hidden">Verifiez si la requete initiale (request to pay ou transfer) a ete acceptee avec le code 202.</td>
+                </tr>
+                <tr>
+                    <td>400</td>
+                    <td>REQUEST REJECTED/ BAD REQUEST	</td>
+                    <td class="en">Bad request. Request does not follow the specification.</td>
+                    <td class="fr hidden">Mauvaise requete. La requete ne respecte pas les specifications.</td>
+                    <td class="en">This relates to any of the below scenarios:<br>- Incorrect/wrong values in the headers, and/or the X-ref ID does not meet UUID Version 4.<br>- Inputting a Body in an API that is not supported e.g. /Token API<br>- Having unsupported special characters in the Body request for example an apostrophe (').<br>- Invalid currency - needs to match the target environment currency.<br>- More than 160 characters in the note and message; explore utilizing the notification API for increased number of characters.<br>- The URL posted to needs to reviewed e.g.  incorrect number of forward slashes (///).</td>
+                    <td class="fr hidden">Cela peut etre du aux cas suivants :<br>- Valeurs incorrectes dans les headers ou X-ref ID non conforme au format UUID V4<br>- Presence d'un Body dans une API qui ne le supporte pas (ex : /Token API)<br>- Presence de caracteres speciaux non supportes dans le Body (ex : apostrophe ')<br>- Devise invalide ne correspondant pas a l'environnement cible<br>- Plus de 160 caracteres dans note ou message (utiliser Notification API si necessaire)<br>- URL incorrecte (ex : nombre incorrect de "/")</td>
+                </tr>
+                 <tr>
+                    <td>403</td>
+                    <td>FORBIDDEN IP</td>
+                    <td class="en">Authorization failed. IP not authorized to utilize Disbursement API.</td>
+                    <td class="fr hidden">Echec d'autorisation. IP non autorisee a utiliser l'API Disbursement.</td>
+                    <td class="en">Share your originating Public IP from which the APIs are called with your MTN Account Manager.</td>
+                    <td class="fr hidden">Partagez votre IP publique avec votre Account Manager MTN.</td>
+                </tr>
+                <tr>
+                    <td>500</td>
+                    <td>NOT_ALLOWED</td>
+                    <td class="en">Authorization failed. User does not have permission.The account authenticated with the Request via Token is restricted.</td>
+                    <td class="fr hidden">Echec d'autorisation. L'utilisateur n'a pas les permissions necessaires. Le compte authentifie est restreint.</td>
+                    <td class="en">Contact your MTN Account Manager.</td>
+                    <td class="fr hidden">Contactez votre Account Manager MTN.</td>
+                </tr>
+                <tr>
+                    <td>500</td>
+                    <td>NOT_ALLOWED_TARGET_ENVIRONMENT</td>
+                    <td class="en">Value passed in header X-Target-Environment is incorrect</td>
+                    <td class="fr hidden">Valeur du header X-Target-Environment incorrecte.</td>
+                    <td class="en">Use the correct X-targetenvironment corresponding to below country:<br>- MTN Uganda= mtnuganda <br>- MTN Ghana= mtnghana <br>- MTN Ivory Coast= mtnivorycoast <br>- MTN Zambia= mtnzambia <br>- MTN Cameroon= mtncameroon <br>- MTN Benin= mtnbenin <br>- MTN Congo= mtncongo <br>- MTN Swaziland= mtnswaziland <br>- MTN GuineaConakry= mtnguineaconakry <br>- MTN SouthAfrica= mtnsouthafrica <br>- MTN Liberia= mtnliberia <br>- MTN SouthSudan= mtnsouthsudan<br> - MTN Nigeria= mtnnigeria<br>- MTN Rwanda= mtnrwanda<br> For Test Environment = sandbox</td>
+                    <td class="fr hidden">Utilisez la valeur correcte selon le pays :<br>- MTN Uganda= mtnuganda <br>- MTN Ghana= mtnghana <br>- MTN Ivory Coast= mtnivorycoast <br>- MTN Zambia= mtnzambia <br>- MTN Cameroon= mtncameroon <br>- MTN Benin= mtnbenin <br>- MTN Congo= mtncongo <br>- MTN Swaziland= mtnswaziland <br>- MTN GuineaConakry= mtnguineaconakry <br>- MTN SouthAfrica= mtnsouthafrica <br>- MTN Liberia= mtnliberia <br>- MTN SouthSudan= mtnsouthsudan<br> - MTN Nigeria= mtnnigeria<br>- MTN Rwanda= mtnrwanda<br> Pour l'environnement de test : sandbox</td>
+                </tr>
+                <tr>
+                    <td>500</td>
+                    <td>INVALID_CALLBACK_URL_HOST</td>
+                    <td class="en">Callback URL with different host name to configured for API User.<br> Check the Host of the Call Back URL in the request header; this needs to match what was configured on the partner portal when creating the API user and Key.</td>
+                    <td class="fr hidden">URL de callback avec un host different de celui configure pour l'API User.</td>
+                    <td class="en">Host needs to be configured using Hostname and not IP address.</td>
+                    <td class="fr hidden">Verifiez que le host de l'URL correspond a celui configure sur le portail partenaire.<br>Le host doit etre un nom de domaine et non une adresse IP.</td>
+                </tr>
+                <tr>
+                    <td>500</td>
+                    <td>INVALID_CURRENCY</td>
+                    <td class="en">Currency not supported on the requested account</td>
+                    <td class="fr hidden">Devise non supportee pour le compte cible.</td>
+                    <td class="en">Use Currency Code specific to the Country.</td>
+                    <td class="fr hidden">Utilisez le code devise specifique au pays.</td>
+                </tr>
+                <tr>
+                    <td>503</td>
+                    <td>SERVICE_UNAVAILABLE</td>
+                    <td class="en">Service temporary unavailable, try again later</td>
+                    <td class="fr hidden">Service temporairement indisponible.</td>
+                    <td class="en">Enquire with MTN Support.</td>
+                    <td class="fr hidden">Reessayez plus tard ou contactez le support MTN.</td>
+                </tr>
+            </tbody>
+        </table>
+        </div>
+
+        <p class="question">Common Error Responses with Action</p>
+        <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Description</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>INTERNAL_PROCESSING_ERROR</td>
+                    <td class="en">Default or Generic error code used when there is no specific error mapping. This predominantly occurs due to insufficient customer funds to complete the transaction.<br> Also related to service denied or Wallet Platform is not reachable. </td>
+                    <td class="fr hidden">Code d'erreur generique utilise lorsqu'aucune correspondance specifique n'existe.<br>Cela se produit principalement en cas de fonds insuffisants ou si la plateforme Wallet est indisponible.</td>
+                    <td class="en">Advice customer to ensure they have sufficient funds to complete the transaction. Also request the customer to retry the transaction. If the problem still occurs with sufficient customer funds, please contact your MTN Account Manager for further investigation.</td>
+                    <td class="fr hidden">Demandez au client de verifier ses fonds et de reessayer. Si le probleme persiste, contactez le Account Manager MTN.</td>
+                </tr>
+                <tr>
+                    <td>PAYEE_NOT_FOUND</td>
+                    <td class="en">The MSISDN being paid to is invalid.</td>
+                    <td class="fr hidden">Le MSISDN du beneficiaire est invalide.</td>
+                    <td class="en">MSISDN format must include country code. MSISDN is not registered for Mobile Money Service.</td>
+                    <td class="fr hidden">Le MSISDN doit inclure le code pays et etre enregistre pour le service Mobile Money.</td>
+                </tr>
+                <tr>
+                    <td>PAYER_NOT_FOUND</td>
+                    <td class="en">MSISDN of the number from whom the money was requested in invalid.</td>
+                    <td class="fr hidden">Le MSISDN du payeur est invalide.</td>
+                    <td class="en">MSISDN format must include country code.MSISDN is not registered for Mobile Money Service.</td>
+                    <td class="fr hidden">Le MSISDN doit inclure le code pays et etre enregistre pour le service Mobile Money.</td>
+                </tr>
+                <tr>
+                    <td>COULD_NOT_PERFORM_TRANSACTION</td>
+                    <td class="en">This can be attributed to transaction timeout. This predominantly occurs with a delay to approve a transaction within the given time frame (5 minutes).</td>
+                    <td class="fr hidden">Echec de transaction, generalement du a un timeout (delai de validation depasse, 5 minutes).</td>
+                    <td class="en">Advise customer to try again and approve transaction within 5 minutes.</td>
+                    <td class="fr hidden">Demandez au client de reessayer et de valider la transaction dans les 5 minutes.</td>
+                </tr>
+            </tbody>
+        </table>
+        </div>
+
+        <hr>
+        <span class="prev">
+          &larr;
+          <a target="_top" href="/api-documentation/testing" class="router" >
+            Sandbox Use Case
+          </a>
+        </span> 
+        <span style="float:right" class="next">
+          <a target="_top" href="/api-documentation/callback"  class="nexthyp" >
+            Callback
+          </a>
+        	&rarr;
+        </span>
+      </div> 
+
+<script>
+const switcher = document.getElementById("languageSwitcher");
+
+switcher.addEventListener("change", function () {
+  const selectedLang = this.value;
+
+  document.querySelectorAll(".en, .fr").forEach(el => {
+    el.classList.add("hidden");
+  });
+
+  document.querySelectorAll("." + selectedLang).forEach(el => {
+    el.classList.remove("hidden");
+  });
+});
+</script>    
+</body>
+</html>

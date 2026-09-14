@@ -1,0 +1,1268 @@
+<?xml version='1.0'?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<!-- Resource Properties: comment=Updated US English for the 26.7.0 release. Updated API integration guide and version.; locale=en_US; version=26.7.0.0;  -->
+<head>
+  <meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8"/>
+  <title>Downloads</title>
+  <link rel="stylesheet" type="text/css" href="/api/apiDoc/apiReference.css"/>
+  <link rel="stylesheet" type="text/css" href="/api/apiDoc/api.css"/>
+  <link rel="stylesheet" type="text/css" href="/api/style/page.css"/>
+  <link rel="stylesheet" type="text/css" href="/api/style/prettify.css"/>
+  <link rel="stylesheet" type="text/css" href="/api/style/thickbox.css"/>
+  <link rel="stylesheet" type="text/css" href="/api/style/font-awesome/css/font-awesome.min.css"/>
+  <link rel="icon" type="image/x-icon" href="resource/favicon.ico"/>
+  <script type="text/javascript" src="/api/scripts/prettify.js" integrity="sha512-x5PVnj0Iy8gErwbgzjqTuUCaEuiAWdEnGW//fZE57TWCzVHGUgcK7vAYS2CiFBStMOqadivjmgs1aK2neqyhqg==" crossorigin="anonymous"/>
+    <script type="text/javascript" src="/api/scripts/jquery-3.4.1.min.js" integrity="sha512-wSJHkesPV90zSc/+h3vzdfUN1uNyrY5G1uFhiksZ8sC/OsWPxGpiAqEglCCXujv4eQfLjsSANbc2Zi+TsmEIlw==" crossorigin="anonymous"/>
+    <script type="text/javascript" src="/api/scripts/thickbox.js" integrity="sha512-bkPgl3o4P/5kamx5xR27629jcZGJlBXHyp7aK1vkJFooiMQR0NRDRdctgfFDYPr0X1uz3KFj8UcRtHYkGaT34w==" crossorigin="anonymous"/>
+    <script type="text/javascript" src="/api/scripts/assets.js" integrity="sha512-wPAB1kLmA2PJYP2XRnatzbSTO3wTk16c6l+2HIxY2LcchaEikxL05vVK++Yv5Vq8vdY94/5jsDbzLamatruVag==" crossorigin="anonymous"/>
+  <link href="/api/documentation/resource/brand.css" rel="stylesheet" type="text/css"/>
+</head>
+<body id="igLanding" onload="prettyPrint()">
+    <div id="ContainerOuterBorder" class="">
+        <div id="ContainerMain">
+            <div id="ContainerHeader">
+    <div id="Header1">
+    </div>
+    <div id="Header2">
+    </div>
+    <div id="Header3">
+    </div>
+    <ul id="nav-horiz-header" class="">
+        <li><a class="spanwrap" href="/api/documentation/integrationGuidelines/index.html?locale=en_US" id="tab1"><span>Documentation</span></a></li>
+        <li><a class="spanwrap" href="/api/documentation/apiDocumentation/rest-json/version/latest/apiReference.html?locale=en_US" id="tab2"><span title="" class="apiTabDefault">API Reference</span></a></li>
+        <li><div id="localeSelectorInHeader">
+        <form id="formLocaleSelector" method="get" action="">
+            <select id="localeSelect" name="locale" role="menu" autocomplete="language" onchange="this.form.submit()">
+            <option role="menuitem" value="el_GR">Ελληνικά (Ελλάδα)</option>
+            <option role="menuitem" value="en_US" selected="selected">English (United States)</option>
+            <option role="menuitem" value="es_MX">español (México)</option>
+            <option role="menuitem" value="fr_FR">français (France)</option>
+            <option role="menuitem" value="ro_RO">română (România)</option>
+            <option role="menuitem" value="zh_CN">中文 (中国)</option>
+            </select>
+            <noscript><input type="submit" id="buttonLocaleSelector" value=""/>"
+            </noscript>
+        </form>
+    </div>
+</li>
+    </ul>
+
+    <script>
+        let position = document.location.toString().search(/\/mso\//);
+        if (position != -1) {
+            let localeDiv = document.getElementById('localeSelectorInHeader');
+            localeDiv.style.display = 'none';
+        }
+
+        /* Both the anchor links have brand color, so the link which is currently not selected is converted to black color */
+        if(document.baseURI.toString().includes('apiDocumentation')){      //When 'API Reference' is selected
+            deActivateTab('tab1');
+        }
+        else{      //When 'Documentation' or any link in Resources like Glossary/FAQ/Downloads is selected
+            deActivateTab('tab2');
+        }
+
+        function deActivateTab(tabId){
+            let element = document.getElementById(tabId);
+            element.style.borderBottom = 'none';
+            element.style.color = '#111111';
+            element.style.fontWeight = '500';
+        }
+
+    </script>
+</div>
+<div id="navcontainer">
+  <nav id="navigation">
+        <script type="text/javascript" src="/api/scripts/navigation.js" integrity="" crossorigin="anonymous"/>
+<form id="searchbar" class="menu">
+    <input id="searchbar_input" autocomplete="off" type="text" placeholder="" onkeypress="return event.keyCode != 13;" role="searchbox" aria-label="search"/>
+    <button id="searchbar_reset" type="reset">✕
+    </button>
+    <p id="searchbar_resultsheading" style="display: none;">
+        Search results</p>
+    <p id="searchbar_resultsnotfound" style="display: none;">
+        No pages found</p>
+    <ul id="searchbar_results"/>
+</form>
+<a href="/api/documentation/integrationGuidelines/index.html?locale=en_US" id="anchor-back">
+    <span>Back</span>
+</a>
+<ul id="navroot" class="menu">
+    <li>
+        <a class="no_h2_header" href="/api/documentation/integrationGuidelines/index.html?locale=en_US">
+            Overview</a>
+    </li>
+    <li>
+        <a href="/api/documentation/integrationGuidelines/gettingStarted/gettingStarted.html?locale=en_US">
+            Getting Started</a>
+        <ul class="subMenu">
+            <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/gettingStarted/orderAndTransactionConcepts.html?locale=en_US">
+                        Order and Transaction Concepts</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/gettingStarted/paymentActorsAndFlow.html?locale=en_US">
+                            Payment Actors and Flow</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/gettingStarted/orders.html?locale=en_US">
+                            Orders</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/gettingStarted/transactions.html?locale=en_US">
+                            Transactions</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/gettingStarted/authorize.html?locale=en_US">
+                            Transaction Types</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/gettingStarted/identifiers.html?locale=en_US">
+                            Identifiers</a>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/gettingStarted/choosingIntegrationMethod.html?locale=en_US">
+                    Choosing an Integration Method</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/apiReference/apiReference.html?locale=en_US">
+                    API Reference</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/gettingStarted/obtainTestAccount.html?locale=en_US">
+                    Accessing the API</a>
+            </li>
+        </ul>
+    </li>
+    <li class="sidebar-label">
+        Integration Types</li>
+    <li class=" filter_hostedCheckout">
+        <a href="/api/documentation/integrationGuidelines/hostedCheckout/integrationModelHostedCheckout.html?locale=en_US">
+            Hosted Checkout</a>
+        <ul class="subMenu">
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedCheckout/integrationSteps.html?locale=en_US">
+                    Integration Steps</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedCheckout/establishingAsession.html?locale=en_US">
+                    Establishing a Session</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedCheckout/implementingTheHostedPaymentPage.html?locale=en_US">
+                    Implementing the Hosted Payment Page</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedCheckout/subsequentOperations.html?locale=en_US">
+                    Subsequent Operations</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedCheckout/interpretingTheResponse.html?locale=en_US">
+                    Interpreting the Response</a>
+            </li>
+            <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/hostedCheckout/customizingCheckout.html?locale=en_US">
+                        Customizing the Checkout</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedCheckout/customizingPaymentExperience.html?locale=en_US">
+                            Customizing the Payment Experience</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedCheckout/customizeUIAccessibility.html?locale=en_US">
+                            Improving Accessibility</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedCheckout/customizeRedirectAndRetryBehavior.html?locale=en_US">
+                            Customize Redirect and Retry Behavior</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedCheckout/integrateApplePayHostedCheckout.html?locale=en_US">
+                            Integrate Apple Pay in Hosted Checkout</a>
+                    </li>
+                    <li>
+                            <a href="/api/documentation/integrationGuidelines/hostedCheckout/integrateGooglePayHostedCheckout.html?locale=en_US">
+                            How to enable Google Pay in Hosted Checkout</a>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/hostedCheckout/features.html?locale=en_US">
+                        Features</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedCheckout/paymentEnhancements.html?locale=en_US">
+                            Payment Enhancements</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentLinks.html?locale=en_US">
+                            Payment Links</a>
+                    </li>
+                    <li class=" filter_paymentPlans">
+                        <a href="/api/documentation/integrationGuidelines/hostedCheckout/paymentPlans.html?locale=en_US">
+                            Payment Plans</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedCheckout/nonEcommerceIntegrations.html?locale=en_US">
+                            Non-eCommerce Integrations</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedCheckout/credentialonfileHCO.html?locale=en_US">
+                            Credential on File for Hosted Checkout</a>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedCheckout/supportedBrowsers.html?locale=en_US">
+                    Supported Browsers and Platforms</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedCheckout/testingSteps.html?locale=en_US">
+                    Testing Steps</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedCheckout/goLiveChecklist.html?locale=en_US">
+                    Go-Live Checklist</a>
+            </li>
+        </ul>
+    </li>
+    <li class=" filter_hostedSession">
+        <a href="/api/documentation/integrationGuidelines/hostedSession/integrationModelHostedSession.html?locale=en_US">
+            Hosted Session</a>
+        <ul class="subMenu">
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedSession/integrationSteps.html?locale=en_US">
+                    Integration Steps</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedSession/paymentSessions.html?locale=en_US">
+                    Payment Sessions</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedSession/makingAPayment.html?locale=en_US">
+                    Making a Payment</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedSession/interpretTheTransactionResponse.html?locale=en_US">
+                    Interpret the Transaction Response</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedSession/customizeHostedFields.html?locale=en_US">
+                    Customizing the Hosted Fields</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedSession/subsequentOperations.html?locale=en_US">
+                    Subsequent Operations</a>
+            </li>
+            <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/hostedSession/features.html?locale=en_US">
+                        Features</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedSession/paymentEnhancements.html?locale=en_US">
+                            Payment Enhancements</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedSession/acceptingMultipleCards.html?locale=en_US">
+                            Accepting Multiple Cards</a>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedSession/testingSteps.html?locale=en_US">
+                    Testing Steps</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/hostedSession/goLiveChecklist.html?locale=en_US">
+                    Go-Live Checklist</a>
+            </li>
+        </ul>
+    </li>
+    <li class=" filter_directPayment">
+        <a href="/api/documentation/integrationGuidelines/directPayment/integrationModelDirectPayment.html?locale=en_US">
+            Direct Payment</a>
+        <ul class="subMenu">
+            <li>
+                <a href="/api/documentation/integrationGuidelines/directPayment/integrationStepsDirectPayment.html?locale=en_US">
+                    Direct Payment Integration Steps</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/directPayment/definingPaymentAndPayerData.html?locale=en_US">
+                    Payment and Payer Data</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/directPayment/sendTransactionRequest.html?locale=en_US">
+                    Send a Request</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/directPayment/receiveTransactionResponse.html?locale=en_US">
+                    Interpret the Transaction Response</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickTransactionCommands.html?locale=en_US">
+                    Transaction Operations</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/directPayment/subsequentOperations.html?locale=en_US">
+                    Subsequent Operations</a>
+            </li>
+            <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/directPayment/directPaymentFeatures.html?locale=en_US">
+                        Direct Payment features</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/directPayment/paymentEnhancements.html?locale=en_US">
+                            Payment Enhancements</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/directPayment/directpaymentOptionsInquiry.html?locale=en_US">
+                            Payment Options Inquiry</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/multipleSources.html?locale=en_US">
+                            Using Multiple Sources of Payment Details</a>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/directPayment/testingSteps.html?locale=en_US">
+                    Testing Steps</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/directPayment/goLiveChecklist.html?locale=en_US">
+                    Go-Live Checklist</a>
+            </li>
+        </ul>
+    </li>
+    <li class=" filter_batchOverview">
+        <a href="/api/documentation/integrationGuidelines/hostedBatch/batch.html?locale=en_US">
+            Hosted Batch</a>
+        <ul class="subMenu">
+            <li class=" filter_batch">
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/hostedBatch/integrationModelHostedBatch.html?locale=en_US">
+                        Implementing a Batch Integration</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedBatch/accessPaymentGateway.html?locale=en_US">
+                            Access the Mastercard Gateway</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedBatch/knowingYourInputFields.html?locale=en_US">
+                            Knowing Your Input Fields</a>
+                    </li>
+                    <li>
+                        <div class="toggle-panel">
+                            <a href="/api/documentation/integrationGuidelines/hostedBatch/createBatchRequest.html?locale=en_US">
+                                Create Batch Request</a>
+                            <span class="collapsedView"/>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/hostedBatch/ensureCharacterEncoding.html?locale=en_US">
+                                    Ensure Correct Character Encoding</a>
+                            </li>
+                        </ul>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedBatch/sendBatchRequest.html?locale=en_US">
+                            Send Batch Request</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedBatch/retrieveBatchStatus.html?locale=en_US">
+                            Retrieve the Batch Status</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/hostedBatch/processBatchResponse.html?locale=en_US">
+                            Process Batch Response</a>
+                    </li>
+                </ul>
+            </li>
+        </ul>
+    </li>
+    <li class=" filter_mobileSDK">
+        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/mobileintegration.html?locale=en_US">
+            Mobile Integration</a>
+        <ul class="subMenu">
+            <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/index.html?locale=en_US">
+                        Integration Steps</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li>
+                        <div class="toggle-panel">
+                            <a href="/api/documentation/integrationGuidelines/mobileSDK/gatewayAndroidSDK.html?locale=en_US">
+                                Mastercard Gateway Android SDK</a>
+                            <span class="collapsedView"/>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/mobileSDK/reactNativeAndroid.html?locale=en_US">
+                                    React Native Android Integration</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/mobileSDK/flutterAndroid.html?locale=en_US">
+                                    Flutter Android Integration</a>
+                            </li>
+                        </ul>
+                    </li>
+                    <li>
+                        <div class="toggle-panel">
+                            <a href="/api/documentation/integrationGuidelines/mobileSDK/gatewayiOSSDK.html?locale=en_US">
+                                Mastercard Gateway iOS SDK</a>
+                            <span class="collapsedView"/>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/mobileSDK/reactNativeiOS.html?locale=en_US">
+                                    React Native iOS Integration</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/mobileSDK/flutteriOS.html?locale=en_US">
+                                    Flutter iOS Integration</a>
+                            </li>
+                        </ul>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/applePayAndGooglePay.html?locale=en_US">
+                            Apple Pay and Google Pay</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/3DSmobileIntegration.html?locale=en_US">
+                            3D Secure Authentication</a>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/testingSteps.html?locale=en_US">
+                    Testing Steps</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/goLiveChecklist.html?locale=en_US">
+                    Go-Live Checklist</a>
+            </li>
+        </ul>
+    </li>
+    <li>
+        <a href="/api/documentation/integrationGuidelines/hostedSession/shoppingCartPlugins.html?locale=en_US">
+            Shopping Cart Plugin</a>
+    </li>
+    <li class="sidebar-label">
+        Other Features</li>
+    <li>
+        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/paymentsMethods.html?locale=en_US">
+            Payment Methods</a>
+        <ul class="subMenu">
+            <li>
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/cardPayments.html?locale=en_US">
+                    Card Payments</a>
+            </li>
+                        <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/domesticSchemes.html?locale=en_US">
+                        Domestic Schemes</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li class=" filter_rupay">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/rupayIntegration.html?locale=en_US">
+                            RuPay</a>
+                    </li>
+                    <li class=" filter_bancontact">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/Bancontact.html?locale=en_US">
+                            Bancontact</a>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/creditAndDebitCards.html?locale=en_US">
+                        Credit and Debit Cards</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li class=" filter_credit">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/creditCardFields.html?locale=en_US">
+                            Credit Card Payments</a>
+                    </li>
+                    <li class=" filter_debit">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/debitCardFields.html?locale=en_US">
+                            Debit Card Payments</a>
+                    </li>
+                </ul>
+            </li>
+            <li class=" filter_clickToPay">
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/ClickToPay.html?locale=en_US">
+                        Click to Pay</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li class=" filter_hostedSession">
+                        <a href="/api/documentation/integrationGuidelines/hostedSession/integrationModelHostedSession_clickToPay.html?locale=en_US">
+                            Click to Pay Hosted Session Integration</a>
+                    </li>
+                    <li class=" filter_hostedCheckout">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/clickToPayFlowsForHCO.html?locale=en_US">
+                            Click to Pay Flows for Hosted Checkout</a>
+                    </li>
+                    <li>
+                        <div class="toggle-panel">
+                            <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/secureRemoteCommerce/index.html?locale=en_US">
+                                Secure Remote Commerce</a>
+                            <span class="collapsedView"/>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/secureRemoteCommerce/uiGuidelines.html?locale=en_US">
+                                    SRC User Interface Guidelines</a>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </li>
+            <li class=" filter_giftCards">
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/giftCards.html?locale=en_US">
+                    Gift Cards</a>
+            </li>
+            <li class=" filter_dcc">
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/dynamicCurrencyConversion.html?locale=en_US">
+                    Dynamic Currency Conversion</a>
+            </li>
+            <li class=" filter_surcharging">
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/surcharging.html?locale=en_US">
+                    Surcharging</a>
+            </li>
+            <li class=" filter_paymentPlans">
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentPlans/index.html?locale=en_US">
+                        Payment Plans</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li class=" filter_banortePaymentPlans">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentPlans/banorte.html?locale=en_US">
+                            Banorte</a>
+                    </li>
+                    <li class=" filter_cieloPaymentPlan">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentPlans/cielo.html?locale=en_US">
+                            Cielo</a>
+                    </li>
+                    <li class=" filter_customPaymentPlans">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentPlans/customPaymentPlans.html?locale=en_US">
+                            Custom Payment Plans</a>
+                    </li>
+                    <li class=" filter_nbgPaymentPlan">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentPlans/nbg.html?locale=en_US">
+                            National Bank of Greece (NBG)</a>
+                    </li>
+                    <li class=" filter_payLaterInstallmentPlan">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentPlans/paylaterInstallments.html?locale=en_US">
+                            Paylater Installments</a>
+                    </li>
+                    <li class=" filter_amexPaymentPlans">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentPlans/planAmex.html?locale=en_US">
+                            Plan Amex</a>
+                    </li>
+                    <li class=" filter_amexPaymentPlans">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentPlans/planN.html?locale=en_US">
+                            Plan N</a>
+                    </li>
+                    <li class=" filter_redecardPaymentPlan">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentPlans/redecard.html?locale=en_US">
+                            Redecard</a>
+                    </li>
+                    <li class=" filter_unicreditPaymentPlan">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentPlans/unicredit.html?locale=en_US">
+                            UniCredit</a>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/digitalWallets.html?locale=en_US">
+                        Digital Wallets</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li class=" filter_applePay">
+                    <div class="toggle-panel">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/ApplePay.html?locale=en_US">
+                            Apple Pay</a>
+                        <span class="collapsedView"/>
+                    </div>
+                    <ul>
+                        <li class=" filter_QPay_ApplePay">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/QPayApplePay.html?locale=en_US">
+                            Integrate Apple Pay through QPay</a>
+                        </li>
+                    </ul>
+                    </li>
+                    <li class=" filter_googlePay">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/GooglePay.html?locale=en_US">
+                            Google Pay</a>
+                    </li>
+                    <li class=" filter_samsungPay">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/SamsungPay.html?locale=en_US">
+                            Samsung Pay</a>
+                    </li>
+                    <li class=" filter_chasePay">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/devicePayments/ChasePay.html?locale=en_US">
+                            Chase Pay</a>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/alternativePaymentMethods.html?locale=en_US">
+                        Alternative Payment Methods</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li class=" filter_aani">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/aani.html?locale=en_US">
+                            Aani</a>
+                    </li>
+                    <li class=" filter_affirm">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/affirm.html?locale=en_US">
+                            Affirm</a>
+                    </li>
+                    <li class=" filter_ach">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/achPayments.html?locale=en_US">
+                            Automated Clearing House</a>
+                    </li>
+                    <li class=" filter_alipay">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/Alipay.html?locale=en_US">
+                            Alipay</a>
+                    </li>
+                    
+                    <li class=" filter_benefit">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/BENEFITGateway.html?locale=en_US">
+                            BENEFIT Gateway</a>
+                    </li>
+                    
+                    <li class=" filter_boletoBancario">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/BoletoBancario.html?locale=en_US">
+                            Boleto Bancário</a>
+                    </li>
+                    
+                    
+                    
+                    
+                    
+                    <li class=" filter_iDEAL">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/iDEAL.html?locale=en_US">
+                            iDEAL</a>
+                    </li>
+                        <li class=" filter_irisPay">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/irisPay.html?locale=en_US">
+                            Iris Payments</a>
+                    </li>    
+                    
+                    <li class=" filter_klarnaFinancing">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/KlarnaFinancing.html?locale=en_US">
+                            Klarna Financing</a>
+                    </li>
+                    <li class=" filter_klarnaPayLater">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/KlarnaPayLater.html?locale=en_US">
+                            Klarna Pay Later</a>
+                    </li>
+                    <li class=" filter_klarnaPayNow">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/KlarnaPayNow.html?locale=en_US">
+                            Klarna Pay Now</a>
+                    </li>
+                    <li class=" filter_knet">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/KNETGateway.html?locale=en_US">
+                            KNET Gateway</a>
+                    </li>
+                    
+                    <li class=" filter_multibanco">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/Multibanco.html?locale=en_US">
+                            Multibanco</a>
+                    </li>
+                    <li class=" filter_omannet">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/OMANNETGateway.html?locale=en_US">
+                            OMANNET Gateway</a>
+                    </li>
+                    
+                    
+                    
+                    
+                    <li class=" filter_pbba">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/PbBA.html?locale=en_US">
+                            Pay by Bank App</a>
+                    </li>
+                    
+                    <li class=" filter_payPal">
+                        <div class="toggle-panel">
+                            <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/PayPal.html?locale=en_US">
+                                PayPal</a>
+                            <span class="collapsedView"/>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/PayPal/integrationDirectJS.html?locale=en_US">
+                                    Direct Integration to PayPal JS SDK</a>
+                            </li>
+                        </ul>
+                    </li>
+                    
+                    
+                    
+                    <li class=" filter_pixqr">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/pixqr.html?locale=en_US">
+                            Pix</a>
+                    </li>
+                    <li class=" filter_poli">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/POLi.html?locale=en_US">
+                            POLi</a>
+                    </li>
+                    
+                    <li class=" filter_qpay">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/QPAYGateway.html?locale=en_US">
+                            QPAY Gateway</a>
+                    </li>
+                    <li class=" filter_sepa">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/SEPA.html?locale=en_US">
+                            SEPA</a>
+                    </li>
+                    
+                    <li class=" filter_splitit">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/splitit.html?locale=en_US">
+                            Splitit</a>
+                    </li>
+                    
+                    <li class=" filter_unionPaySecurePay">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/UnionPaySecurePay.html?locale=en_US">
+                            UnionPay SecurePay</a>
+                    </li>
+                    <li class=" filter_vippsMobilePay">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/vippsMobilePay.html?locale=en_US">
+                            Vipps MobilePay</a>
+                    </li>
+                    <li class=" filter_wechatpay">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/WeChatPay.html?locale=en_US">
+                            WeChat Pay</a>
+                    </li>
+                    <li class=" filter_browserPayments">
+                        <div class="toggle-panel">
+                            <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/index.html?locale=en_US">
+                                Implementing a Browser Payment Integration</a>
+                            <span class="collapsedView"/>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/browserPayments/testDetails.html?locale=en_US">
+                                    Testing a Browser Payment Integration</a>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </li>
+        </ul>
+    </li>
+    <li>
+        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/securityAndFraudPrevention.html?locale=en_US">
+            Security and Fraud Prevention</a>
+        <ul class="subMenu">
+            <li>
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickSecurityModel/secureYourIntegration.html?locale=en_US">
+                    Secure Your Integration with Passwords or Certificates</a>
+            </li>
+            <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/authentication/authentication.html?locale=en_US">
+                        Authentication</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li>
+                        <div class="toggle-panel">
+                            <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/authentication/3DS/3DSecureAuthentication.html?locale=en_US">
+                                3D Secure Authentication</a>
+                            <span class="collapsedView"/>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/authentication/3DS/3DSHostedCheckout.html?locale=en_US">
+                                    3DS with Hosted Checkout</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/authentication/3DS/integrationModelAPI.html?locale=en_US">
+                                    3DS with Direct Payment</a>
+                            </li>
+                            <li>
+                                 <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/authentication/3DS/integrationModelJS.html?locale=en_US">
+                                    3DS with Hosted Session</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/authentication/3DS/test_your_integration.html?locale=en_US">
+                                    Test Your Integration</a>
+                            </li>
+                        </ul>
+                    </li>
+                    <li>
+                        <div class="toggle-panel">
+                            <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/authentication/TAS/tokenAuthenticationService.html?locale=en_US">
+                                Token Authentication Service</a>
+                            <span class="collapsedView"/>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/authentication/TAS/TASFlows.html?locale=en_US">
+                                    Token Authentication Service Flow</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/authentication/TAS/TAFPassthrough.html?locale=en_US">
+                                    Token Authentication Framework Passthrough Processing</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/authentication/TAS/tokenAuthenticationServiceForC2P.html?locale=en_US">
+                                    Token Authentication Service for Click to Pay</a>
+                            </li>
+                        </ul>
+                    </li>
+                    <li>
+                        <div class="toggle-panel">
+                            <a href="/api/documentation/integrationGuidelines/supportedFeatures/psd2ScaCompliance.html?locale=en_US">
+                                PSD2 SCA Compliance and Exemptions</a>
+                            <span class="collapsedView"/>
+                        </div>
+                        <ul>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/psd2ScaComplianceHostedCheckout.html?locale=en_US">
+                                    Hosted Checkout Integration for PSD2 SCA</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/psd2ScaComplianceAuthenticationAPI.html?locale=en_US">
+                                    Gateway Integration for PSD2 SCA Compliance and Exemptions</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/psd2ScaCompliance3dsJS.html?locale=en_US">
+                                    3DS JavaScript API Integration for PSD2 SCA</a>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </li>
+            <li class=" filter_tokenization">
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/tokenization/tokenizationOverview.html?locale=en_US">
+                        Tokenization</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/tokenization/tokenization.html?locale=en_US">
+                            Gateway Tokenization</a>
+                    </li>
+                    <li class=" filter_networkTokenization">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/tokenization/networkTokenization.html?locale=en_US">
+                            Network Tokenization</a>
+                    </li>
+                </ul>
+            </li>
+            <li class=" filter_risk">
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/risk/index.html?locale=en_US">
+                        Risk Management</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/transactionFiltering.html?locale=en_US">
+                            Transaction Filtering</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/addressVerificationService.html?locale=en_US">
+                            Address Verification Service</a>
+                    </li>
+                </ul>
+            </li>
+            <li class=" filter_storedCredentials">
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/storedCredentials.html?locale=en_US">
+                    Credential on File Transactions</a>
+            </li>
+        </ul>
+    </li>
+    <li>
+        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/index.html?locale=en_US">
+            Features</a>
+        <ul class="subMenu">
+        <li class=" filter_reportingAPI">
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/reporting/reportingAPI.html?locale=en_US">
+                    Reporting</a>
+            </li>
+                        <li class=" filter_paymentAlerts">
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/paymentAlerts.html?locale=en_US">
+                    Payment Alerts</a>
+            </li>
+            <li class=" filter_webhookNotifications">
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/webhookNotifications.html?locale=en_US">
+                    Webhook Notifications</a>
+            </li>
+            <li class=" filter_funding">
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/fundingAndFeeInformation.html?locale=en_US">
+                    Funding and Fee Information</a>
+            </li>
+            <li class=" filter_cardPresent">
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/cardPresentData.html?locale=en_US">
+                        Cardholder Present</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/automatedFuelDispensing.html?locale=en_US">
+                         Automated Fuel Dispensing</a>
+                    </li>
+                    <li>
+                        <div class="toggle-panel">
+                            <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/transit.html?locale=en_US">
+                                Transit</a>
+                            <span class="collapsedView"/>
+                        </div>
+                        <ul>
+                            <li><div class="toggle-panel"><a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/EFTPOSTransitRules.html?locale=en_US">
+                                        EFTPOS Transit Rules</a>
+                                <span class="collapsedView"/>
+                            </div>
+                                <ul>
+                                    <li><a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/EFTPOSAggregatedRules.html?locale=en_US">
+                                        EFTPOS Aggregated Rules</a>
+                            </li>
+                            <li><a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/EFTPOSKnownFareTransit.html?locale=en_US">
+                                        EFTPOS Known Fare Transit</a>
+                            </li>
+                                </ul>
+                            </li>
+                            <li><a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/knownFare.html?locale=en_US">
+                                    Known Fare</a>
+                            <li><a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/aggregatedTransit.html?locale=en_US">
+                                        Aggregated Transit Rules</a>
+                            </li>
+                            <li><div class="toggle-panel">
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/aggregatedTransitInNam.html?locale=en_US">
+                                        Aggregated Transit Rules in the North American Region</a>
+                                <span class="collapsedView"/>
+                                </div>
+                                <ul>
+                                    <li><a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/examplesAggNamMastercardVisa.html?locale=en_US">
+                                        WS API examples of Mastercard and Visa</a>
+                                    </li>
+                                    <li><a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/examplesAggNamAmex.html?locale=en_US">
+                                        WS API examples of American Express</a>
+                                    </li>
+                                    <li><a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/examplesAggNamDiscDiners.html?locale=en_US">
+                                        WS API examples of Discover and Diners</a>
+                                    </li>
+                                </ul>
+                            </li>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/firstRideRisk.html?locale=en_US">
+                                    First Ride Risk</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/referenceOrderId.html?locale=en_US">
+                                    Reference Order Id</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/updateAppTranCounter.html?locale=en_US">
+                                    Update Application Transaction Counter</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/paymentInstrumentReferenceID.html?locale=en_US">
+                                    Payment Instrument Reference ID</a>
+                            </li>
+                        </ul>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/contactlessPaymentUsingMobileDevices.html?locale=en_US">
+                            Contactless Payment Using Mobile Devices</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/paymentAccountReference.html?locale=en_US">
+                            Payment Account Reference</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/p2pEncryption.html?locale=en_US">
+                            Point-to-Point Encryption</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/testingYourIntegration.html?locale=en_US">
+                            Testing Your Integration</a>
+                    </li>
+                    <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickPaymentMethod/examplesOfRequests.html?locale=en_US">
+                            Examples of requests</a>
+                    </li>
+                </ul>
+            </li>
+            <li class=" filter_aggregatorSupport">
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/aggregatorSupport.html?locale=en_US">
+                    Aggregator</a>
+            </li>
+            <li class=" filter_marketplaceSupport">
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/marketplaceSupport.html?locale=en_US">
+                    Visa Marketplace Mandate</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/additionalAcceptorAndServiceLocationData.html?locale=en_US">
+                    Additional Acceptor and Service Location Data</a>
+            </li>
+            
+            <li>
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/supplementaryData.html?locale=en_US">
+                        Supplementary Data</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li class=" filter_accountFundingTransactions">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/accountFundingTransactions.html?locale=en_US">
+                            Account Funding Transactions</a>
+                    </li>
+                    <li class=" filter_acqCustomData">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/acquirerCustomData.html?locale=en_US">
+                            Acquirer Custom Data</a>
+                    </li>
+                    <li class=" filter_airlineData">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/airlineData.html?locale=en_US">
+                            Airline Data</a>
+                    </li>
+                                        <li>
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/cardHolderMerchantinitiatedPayment.html?locale=en_US">
+                            Cardholder and Merchant Initiated Payments</a>
+                    </li>
+                    <li class=" filter_cruiseData">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/cruiseData.html?locale=en_US">
+                            Cruise Data</a>
+                    </li>
+                    <li class=" filter_custInternetData">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/custInternetData.html?locale=en_US">
+                            Customer Internet Data</a>
+                    </li>
+                    <li class=" filter_debtRepaymentData">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/debtRepaymentData.html?locale=en_US">
+                            Debt Repayment Data</a>
+                    </li>
+                    <li class=" filter_healthcareData">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/healthCareData.html?locale=en_US">
+                            Healthcare Data</a>
+                    </li>
+                    <li class=" filter_highRiskCryptoData">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/highRiskSecuritiesAndCryptocurrencyIndicatorData.html?locale=en_US">
+                            High-Risk Securities and Cryptocurrency Indicator Data</a>
+                    </li>
+                    <li class=" filter_mastercardQRTransactions">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/mastercardQRTransactions.html?locale=en_US">
+                            Mastercard QR Transaction Solutions</a>
+                    </li>
+                    <li class=" filter_merchantCustomData">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/merchantCustomData.html?locale=en_US">
+                            Merchant Custom Data</a>
+                    </li>
+                    <li class=" filter_riskCustomData">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/riskCustomData.html?locale=en_US">
+                            Risk Custom Data</a>
+                    </li>
+                    <li class=" filter_statementDescData">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/statementDescriptorData.html?locale=en_US">
+                            Statement Descriptor Data</a>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/tokenDataMigration.html?locale=en_US">
+                    Import Merchant Data</a>
+            </li>
+            <li class=" filter_orderLineItemData">
+                <div class="toggle-panel">
+                    <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/orderLineItemData.html?locale=en_US">
+                        Order and Line Item Data</a>
+                    <span class="collapsedView"/>
+                </div>
+                <ul>
+                    <li class=" filter_levelIIAndIII">
+                        <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/levelIIAndIIIData/index.html?locale=en_US">
+                            Level 2 and 3 Data</a>
+                        <ul>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/levelIIAndIIIData/firstData.html?locale=en_US">
+                                    Level II/III Data for the First Data Acquirer</a>
+                            </li>
+                            <li>
+                                <a href="/api/documentation/integrationGuidelines/supportedFeatures/pickAdditionalFunctionality/levelIIAndIIIData/americanExpress.html?locale=en_US">
+                                    Level 2 and 3 Data for American Express Acquirers</a>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/supportedFeatures/cloudCommerce.html?locale=en_US">
+                    Mastercard Cloud Commerce</a>
+            </li>
+        </ul>
+    </li>
+    <li class="sidebar-label">
+        API Implementation</li>
+    <li>
+        <a href="/api/documentation/integrationGuidelines/apiReference/apiRefMakingAServerReq.html?locale=en_US">
+            Making a Server API Request</a>
+        <ul class="subMenu">
+            <li>
+                <a href="/api/documentation/integrationGuidelines/apiReference/apiRefAuthOptions.html?locale=en_US">
+                    Authentication Options</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/apiReference/apiRefSettingupAPICredentials.html?locale=en_US">
+                    Setting up API Credentials</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/apiReference/apiRefSessionAuthenticationFields.html?locale=en_US">
+                    Session Authentication Fields</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/apiReference/apiRefAPIErrorHandling.html?locale=en_US">
+                    API Error Handling</a>
+            </li>
+            <li>
+                <a href="/api/documentation/integrationGuidelines/apiReference/apiRefTransactionErrors.html?locale=en_US">
+                    Transaction Errors</a>
+            </li>
+        </ul>
+    </li>
+    <li>
+        <a href="/api/documentation/integrationGuidelines/apiReference/apRefUsingMultiplePayment.html?locale=en_US">
+            Using Multiple Payment Sources</a>
+    </li>
+    <li>
+        <a href="/api/documentation/integrationGuidelines/apiReference/apiRefJavaScriptLibraries.html?locale=en_US">
+            JavaScript Libraries</a>
+    </li>
+    <li class="sidebar-label">
+        Resources</li>
+    <li class=" filter_excludeForCiti">
+        <a href="/api/documentation/integrationGuidelines/supportedFeatures/announcements.html?locale=en_US">
+            Announcements</a>
+    </li>
+    <li>
+        <a href="/api/documentation/glossary/index.html?locale=en_US">
+            Glossary</a>
+    </li>
+
+
+    <li class=" filter_migrationGuides">
+    <a href="/api/documentation/migration/upgradeYourApiVersion.html?locale=en_US">
+            Migration Guides</a>
+        <ul class="subMenu">
+            <li>
+                <a href="/api/documentation/migration/hostedBatchv100.html?locale=en_US">
+                    Migrate to Hosted Batch version 100</a>
+            </li>
+            <li>
+                <a href="/api/documentation/migration/migrateHCOv100.html?locale=en_US">
+                    Migrate Hosted Checkout to version 100</a>
+            </li>
+            <li>
+                <a href="/api/documentation/migration/migrateHostedSessionv100.html?locale=en_US">
+                    Migrate to Hosted Session version 100</a>
+            </li>
+            <li>
+                <a href="/api/documentation/migration/directPaymentv100.html?locale=en_US">
+                    Migrate to Direct Payment API version 100</a>
+            </li>
+            <li>
+                <a href="/api/documentation/migration/testYourAPIVersionMigration.html?locale=en_US">
+                    Testing your integration for breaking changes</a>
+            </li>
+        </ul>
+    </li>
+    <li>
+        <a href="/api/documentation/troubleshootingFaqs/index.html?locale=en_US">
+            Troubleshooting &amp; FAQs</a>
+    </li>
+    <li>
+        <a href="/api/documentation/integrationGuidelines/supportedFeatures/testAndGoLive.html?locale=en_US">
+            Test Cards</a>
+    </li>
+    <li>
+        <a href="/api/documentation/downloads/index.html?locale=en_US">
+            Downloads</a>
+    </li>
+    
+</ul>
+</nav>
+    <div id="ContainerContent">
+    <div class="container">
+      <div id="containerBody" role="main">
+        <div id="breadcrumbs"/>
+        <input id="copyToClipboard" type="hidden" value="Copied to Clipboard"/>
+        <h1>Downloads</h1>
+    <h2 id="x_references">References</h2>
+    <div class="chip_section">
+      <a href="/api/documentation/apiDocumentation/reference/wadl20090202.pdf?locale=en_US">WADL PDF Reference</a>
+      <a href="/api/documentation/apiDocumentation/reference/wadl20090202.xsd?locale=en_US">WADL XML Schema</a>
+    </div>
+    <hr/>
+    <h2>Postman Collection</h2>
+      <div class="chip_section">
+        <a download="GatewayAPIPostmanCollection" href="/api/documentation/apiDocumentation/reference/Gateway API Operations.postman_collection.json?locale=en_US">Gateway API Postman Collection</a>
+        <a download="GatewayEnvironment" href="/api/documentation/apiDocumentation/reference/Gateway Environment.json?locale=en_US">Gateway Environment</a>
+      </div>
+      <br/>
+    </div>
+      <div id="pageNavigation">
+        <h4 id="pageNavigationLabel">On This Page</h4>
+      </div>
+    </div>
+    <script type="text/javascript" src="/api/scripts/contentFooter.js" integrity="sha512-kR13T3BmMBZ96YLLjtFF8YwC/LLQ2xdeEGa/eiryU/iDgLB7aFWxmf2fJYNk6tbN0zUJgAg522EvYgOIyFFjuA==">//</script>
+
+<div id="ContainerFooter">
+   <hr id="FooterLineSeparator"/>
+   <div id="Footer1">
+   </div>
+   <div id="Footer2">
+      <div id="resources" class="width-30-pct">
+         <p>Resources</p>
+         <a href="/api/documentation/downloads/index.html?locale=en_US" id="tab5">Downloads</a>
+            
+         <a href="/api/documentation/glossary/index.html?locale=en_US" id="tab4">Glossary</a>
+         <a href="/api/documentation/troubleshootingFaqs/index.html?locale=en_US" id="tab3">FAQs</a>
+      </div>
+      <div id="about" class="width-30-pct"/>
+      <div id="copyright" class="width-30-pct">
+         <p>Copyright © 2026 Mastercard</p>
+      </div>
+   </div>
+   <div id="Footer3"/>
+</div>
+</div>
+</div>
+</div> <!-- End ContainerMain -->
+    </div> <!-- End OuterBorder -->
+</body>
+</html>

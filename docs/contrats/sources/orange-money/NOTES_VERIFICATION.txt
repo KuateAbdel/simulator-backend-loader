@@ -1,0 +1,4 @@
+--- notes de vérification personnelle 2026-09-03 ---
+developer.orange.com repond HTTP 403 a curl (protection anti-bot) : pages verifiees via rendu navigateur, non archivables en brut.
+developer.orange-sonatel.com/documentation -> HTTP 404 (verifie moi-meme).
+DNS moov-africa.com est un WILDCARD : zzz-random-test-9x.moov-africa.com resout sur 216.40.34.41, identique a developer.moov-africa.com (verifie moi-meme).
