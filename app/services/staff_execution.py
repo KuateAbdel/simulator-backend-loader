@@ -14,13 +14,31 @@ assemble.
 LA SEQUENCE EST IMPOSEE, PAS CHOISIE
 -------------------------------------
 `CreateUserSchema.identity` est **requis** : une Identity doit exister AVANT le
-User. Verifie en ecriture reelle le 09/08. Et le flow utilisateur est en
-**trois requetes indissociables** — s'arreter apres `register` laisserait un
-compte a `is_first_login=true`, incapable de se connecter. C'est l'etat de 16
-des 20 Users de l'environnement.
+User. Verifie en ecriture reelle le 09/08.
 
-    Identity  ──►  register  ──►  password/f/change  ──►  login
-                                  (auth_token, jamais ROOT)
+    Identity  ──►  register  ──►  password/f/change
+                   (ENGAGEMENT)   (FINITION, auth_token, jamais ROOT)
+
+**Le flow n'est plus indissociable — revision du 15/09/2026.** `register` cree
+le User : c'est L'ENGAGEMENT, et il est irreversible (aucun `DELETE` sur
+user-service). Le `password/f/change` qui suit est une FINITION : il sort le
+compte de `is_first_login=true` pour que son porteur puisse se connecter.
+
+Le run REAL `56f28cf0` (14/09) a montre le cout de les avoir liees : les 81
+finitions ont echoue (`FRA-247` — `register` genere son propre mot de passe et
+l'envoie par courriel, donc `mot_de_passe_initial` n'est jamais le « current
+password »), le module a rendu « Staff cree : 0 » et `FAILED`… alors que **les
+81 Users existaient** chez FinZuu, sans noeud chez nous ni rattachement
+Agent -> Kiosque. `FAILED` a de surcroit arrete la chaine : ni Clients, ni
+recette. Le Loader perdait l'Agent pour preserver son mot de passe.
+
+Desormais : finition ratee = **anomalie consignee** (`RapportStaff.finitions`),
+statut `PARTIAL`, rattachement `UC-09` ecrit quand meme, run poursuivi.
+
+Le `login` de verification qui terminait le flow est **supprime** : aucun
+appelant ne lisait son jeton, l'identifiant du User est deja dans la reponse de
+`register` (`data.user.id`), et il coutait un login par staff sur un service qui
+verrouille a la troisieme tentative (`INV-USR-19`).
 
 LE CONFLIT ARITHMETIQUE QUE PERSONNE N'AVAIT VU
 ------------------------------------------------
@@ -160,6 +178,12 @@ class RapportStaff:
     #: Agent refuse n'etait PAS rattache — 51 Kiosques sans Agent alors que
     #: leurs agents existaient. Reconnaitre n'est pas echouer.
     reconnus: list[str] = field(default_factory=list)
+    #: `FRA-247` — le User est CREE mais sa finition a rate : il reste a
+    #: `is_first_login=true`, donc inutilisable par son porteur. Ce n'est PAS un
+    #: echec : l'Agent existe et il est rattache a son Kiosque, ce que `UC-09`
+    #: verifie. Le run `56f28cf0` (14/09) avait compte ces cas en echec et
+    #: rendu « Staff cree : 0 » alors que 81 Users existaient chez FinZuu.
+    finitions: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def total_prevu(self) -> int:
@@ -167,10 +191,16 @@ class RapportStaff:
 
     @property
     def statut(self) -> RunStatus:
-        """`PARTIAL` est un etat terminal LEGITIME (`UC-07`, cas alternatif)."""
-        if not self.echoues and not self.refuses_avant_reseau:
+        """`PARTIAL` est un etat terminal LEGITIME (`UC-07`, cas alternatif).
+
+        Une finition ratee rend `PARTIAL`, **jamais** `FAILED` : le module a
+        fait ce que le CDC lui demande — les Agents existent et tiennent leurs
+        Kiosques. `FAILED` arreterait la chaine (`Orchestrateur.bloquant`) et
+        priverait le run des Clients et de la recette pour un mot de passe.
+        """
+        if not self.echoues and not self.refuses_avant_reseau and not self.finitions:
             return RunStatus.COMPLETED
-        if not self.crees:
+        if not self.crees and not self.reconnus:
             return RunStatus.FAILED
         return RunStatus.PARTIAL
 
@@ -182,6 +212,8 @@ class RapportStaff:
             f"Staff reconnu : {len(self.reconnus)} (deja sur user-service — reutilise, rattache)",
             f"Refuses avant reseau : {len(self.refuses_avant_reseau)}",
             f"Echecs serveur       : {len(self.echoues)}",
+            f"Finitions ratees     : {len(self.finitions)} "
+            "(compte CREE et rattache, mais reste a is_first_login — FRA-247)",
             f"STATUT : {self.statut.value}",
         ]
         for plan in self.plans:
@@ -196,6 +228,8 @@ class RapportStaff:
             lignes.append(f"  REFUSE {nom} : {motif}")
         for nom, motif in self.echoues:
             lignes.append(f"  ECHEC {nom} : {motif}")
+        for nom, motif in self.finitions:
+            lignes.append(f"  FINITION {nom} : {motif}")
         return "\n".join(lignes)
 
 
@@ -325,9 +359,7 @@ class ExecuteurStaff:
             # et le tour recommence si le budget en autorise davantage.
             libres = list(kiosques.get(plan.pays) or [])
             for rang, role in enumerate(postes):
-                affectation = (
-                    libres[rang % len(libres)] if role == ROLE_AGENT and libres else None
-                )
+                affectation = libres[rang % len(libres)] if role == ROLE_AGENT and libres else None
                 await self._creer_un_staff(plan, role, rang, rapport, affectation)
 
         return rapport
@@ -421,8 +453,7 @@ class ExecuteurStaff:
                     kiosque_id=kiosque.id,
                     company_id=kiosque.company_id,
                     name=(
-                        f"{payload['identity']['first_name']} "
-                        f"{payload['identity']['last_name']}"
+                        f"{payload['identity']['first_name']} {payload['identity']['last_name']}"
                     ),
                     country_code=plan.pays,
                     user_id=self._identifiant_user(existant, ""),
@@ -456,6 +487,13 @@ class ExecuteurStaff:
                 type_user=UserType.STAFF,
                 groupes=[role],
             )
+
+            # `FRA-247` — le User EXISTE (etape 1 a rendu 201). Si la finition
+            # a rate, on le DIT et on continue : le rattachement `UC-09`
+            # ci-dessous est ce que la recette verifie, pas le mot de passe.
+            finition = utilisateur.get("finition")
+            if isinstance(finition, dict) and not finition.get("aboutie", True):
+                rapport.finitions.append((etiquette, str(finition.get("motif", ""))[:600]))
 
             # `UC-09` postcondition — LE RATTACHEMENT AGENT -> KIOSQUE.
             #

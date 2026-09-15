@@ -141,6 +141,10 @@ class RapportOrganisation:
     licences_creees: list[str] = field(default_factory=list)
     admins_crees: list[str] = field(default_factory=list)
     admins_echoues: list[tuple[str, str]] = field(default_factory=list)
+    #: `FRA-247` — Admin CREE, mais reste a `is_first_login=true` : il ne peut
+    #: pas se connecter. Ce n'est pas un echec de creation, c'est une finition
+    #: ratee — elle se DIT, elle ne fait pas disparaitre l'Admin du rapport.
+    admins_finitions: list[tuple[str, str]] = field(default_factory=list)
     lenders_enregistres: list[str] = field(default_factory=list)
     comptes_crees: int = 0
     #: `EF-13` — comptes RETROUVES sur la plateforme et inscrits au registre
@@ -190,7 +194,8 @@ class RapportOrganisation:
             f"Companies  : {len(self.companies_creees)} creees, "
             f"{len(self.companies_echouees)} en echec",
             f"Licences   : {len(self.licences_creees)}",
-            f"Admin Users: {len(self.admins_crees)} crees, {len(self.admins_echoues)} en echec",
+            f"Admin Users: {len(self.admins_crees)} crees, {len(self.admins_echoues)} en echec, "
+            f"{len(self.admins_finitions)} a finir (is_first_login — FRA-247)",
             f"Lenders    : {len(self.lenders_enregistres)} enregistres",
             f"Comptes    : {self.comptes_crees} crees, {self.comptes_reconnus} reconnus, "
             f"{len(self.comptes_echoues)} en echec",
@@ -200,6 +205,8 @@ class RapportOrganisation:
         ]
         for nom, motif in self.companies_echouees + self.admins_echoues + self.comptes_echoues:
             lignes.append(f"  ECHEC {nom} : {motif}")
+        for nom, motif in self.admins_finitions:
+            lignes.append(f"  FINITION {nom} : {motif}")
         return "\n".join(lignes)
 
 
@@ -324,9 +331,7 @@ class ExecuteurOrganisation:
         if choix.date_of_birth is not None or choix.id_expire_on is not None:
             valider_piece_identite(naissance, expiration, reference)
         numero = (
-            valider_id_number(choix.id_number)
-            if choix.id_number is not None
-            else owner.id_number
+            valider_id_number(choix.id_number) if choix.id_number is not None else owner.id_number
         )
         genre = valider_genre(choix.gender) if choix.gender is not None else owner.gender
         return replace(
@@ -637,7 +642,7 @@ class ExecuteurOrganisation:
         initial = self._generateur.mot_de_passe_initial()
         durable = self._generateur.mot_de_passe_initial()
         try:
-            await self._users.creer_utilisateur_applicatif(
+            utilisateur = await self._users.creer_utilisateur_applicatif(
                 user_name=short_name,
                 email=email,
                 mot_de_passe_initial=initial,
@@ -650,6 +655,11 @@ class ExecuteurOrganisation:
         except ErreurService as exc:
             rapport.admins_echoues.append((short_name, f"HTTP {exc.status} : {exc.detail[:600]}"))
             return
+        # `FRA-247` — l'Admin EXISTE. Une finition ratee le laisse a
+        # `is_first_login=true` : il est cree, il est dit, il n'est pas perdu.
+        finition = utilisateur.get("finition")
+        if isinstance(finition, dict) and not finition.get("aboutie", True):
+            rapport.admins_finitions.append((email, str(finition.get("motif", ""))[:600]))
         rapport.admins_crees.append(email)
 
     async def _doter_capital(
@@ -803,9 +813,7 @@ class ExecuteurOrganisation:
         #
         # L'ordre est impose : on ne peut crediter qu'un compte qui existe.
         capital_id = comptes.get("capital")
-        capital_reconnu = "capital" in comptes and str(
-            payloads["capital"]["type"]
-        ) in deja
+        capital_reconnu = "capital" in comptes and str(payloads["capital"]["type"]) in deja
         if capital_id is not None and not capital_reconnu:
             await self._doter_capital(capital_id, dotation, nom, rapport)
 
