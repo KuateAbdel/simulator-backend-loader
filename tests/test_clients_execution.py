@@ -13,8 +13,6 @@ Aucun test ne touche le reseau ni MongoDB : Faker, le registre et client-service
 sont des faux en memoire. Le referentiel et le generateur sont les vrais.
 """
 
-
-
 from __future__ import annotations
 
 import random
@@ -119,9 +117,7 @@ class FauxFaker:
             # La famille A est deterministe par graine et porte onze champs
             # `quick_win`, dont neuf binaires. Les bits de la graine les etalent.
             pays,
-            quick_win={
-                cle: (seed >> i) & 1 for i, cle in enumerate(CLES_QUICK_WIN_BINAIRES)
-            },
+            quick_win={cle: (seed >> i) & 1 for i, cle in enumerate(CLES_QUICK_WIN_BINAIRES)},
             genre="WOMAN" if seed % 3 else "MAN",
             business=categorie == CategorieClient.BUSINESS,
             seed=seed,
@@ -155,9 +151,7 @@ class FauxLedger:
 
     async def etat(self, client_id: str) -> Any:
         if client_id in self._anterieurs:
-            return SimpleNamespace(
-                state=EtatConsommationFaker.CONSOMME, run_id=self.RUN_ANTERIEUR
-            )
+            return SimpleNamespace(state=EtatConsommationFaker.CONSOMME, run_id=self.RUN_ANTERIEUR)
         if client_id in self.confirmes:
             return SimpleNamespace(state=EtatConsommationFaker.CONSOMME, run_id=RUN)
         if client_id in self.reserves:
@@ -197,17 +191,21 @@ class FauxArbre:
     async def par_niveau(self, run_id: UUID, niveau: Any) -> list[Any]:
         return list(self.noeuds)
 
-    async def ajouter_souscription(
-        self, run_id: UUID, client_id: UUID, product_id: UUID
-    ) -> bool:
+    async def ajouter_souscription(self, run_id: UUID, client_id: UUID, product_id: UUID) -> bool:
         if client_id not in self.rattachements:
             return False
         self.souscriptions.append((client_id, product_id))
         return True
 
     async def ajouter_client(
-        self, *, run_id: UUID, kiosque_id: UUID, company_id: UUID,
-        country_code: str, msisdn: str, client_id: UUID,
+        self,
+        *,
+        run_id: UUID,
+        kiosque_id: UUID,
+        company_id: UUID,
+        country_code: str,
+        msisdn: str,
+        client_id: UUID,
         produit_entree: UUID | None,
         # `P-04` — le profil decide sous quota, range avec le noeud.
         gender: str | None = None,
@@ -219,8 +217,11 @@ class FauxArbre:
         # P-01 — la doublure retient le lien inverse comme le vrai repository.
         self.produits_entree[client_id] = produit_entree
         return SimpleNamespace(
-            id=uuid4(), client_id=client_id, parent_id=kiosque_id,
-            country_code=country_code, name=f"DEMO_Client {msisdn}",
+            id=uuid4(),
+            client_id=client_id,
+            parent_id=kiosque_id,
+            country_code=country_code,
+            name=f"DEMO_Client {msisdn}",
         )
 
 
@@ -267,13 +268,15 @@ class FauxClientService:
         repeterait un produit passerait ici sans que rien ne le signale.
         """
         if self._refuser_souscriptions:
-            raise ErreurService(
-                "client-service", "PUT", "/subscribe", 500, "panne simulee", "-"
-            )
+            raise ErreurService("client-service", "PUT", "/subscribe", 500, "panne simulee", "-")
         if (msisdn, product_id) in self.souscriptions:
             raise ErreurService(
-                "client-service", "PUT", "/subscribe", 400,
-                "A customer cannot subscribe to the same products twice", "-",
+                "client-service",
+                "PUT",
+                "/subscribe",
+                400,
+                "A customer cannot subscribe to the same products twice",
+                "-",
             )
         self.souscriptions.append((msisdn, product_id))
         return {"msisdn": msisdn}
@@ -286,8 +289,12 @@ class FauxClientService:
         self.recherches.append(msisdn)
         if msisdn not in self._existants:
             return None
-        return {"_id": str(uuid4()), "msisdn": msisdn, "identity": {"_id": str(uuid4())},
-                "account_id": str(uuid4())}
+        return {
+            "_id": str(uuid4()),
+            "msisdn": msisdn,
+            "identity": {"_id": str(uuid4())},
+            "account_id": str(uuid4()),
+        }
 
     async def onboarder(self, **kwargs: Any) -> dict[str, Any]:
         self._n += 1
@@ -297,8 +304,11 @@ class FauxClientService:
         # La VRAIE cascade rend les trois : Client, Identity et le compte
         # CHECKING (`D-CLI-1`). Un double qui omet `account_id` ferait croire a
         # un defaut de dotation alors que c'est le double qui est infidele.
-        fiche: dict[str, Any] = {"_id": str(uuid4()), "msisdn": kwargs["msisdn"],
-                                 "identity": {"_id": str(uuid4())}}
+        fiche: dict[str, Any] = {
+            "_id": str(uuid4()),
+            "msisdn": kwargs["msisdn"],
+            "identity": {"_id": str(uuid4())},
+        }
         if not self._sans_account:
             fiche["account_id"] = str(uuid4())
         self.fiches.append(fiche)
@@ -473,9 +483,9 @@ class TestSoldeInitial:
         """`CR-03` par construction : la fonction ne recoit ni `run_id` ni
         graine de run — elle NE PEUT PAS en dependre. Deux clients distincts,
         eux, different."""
-        assert solde_initial(
-            "CM-IND-1", "Traditional healer", STATIQUE
-        ) != solde_initial("CM-IND-2", "Traditional healer", STATIQUE)
+        assert solde_initial("CM-IND-1", "Traditional healer", STATIQUE) != solde_initial(
+            "CM-IND-2", "Traditional healer", STATIQUE
+        )
 
     def test_les_bornes_de_l_annexe_E_TIENNENT_meme_en_queue_lognormale(self) -> None:
         """sigma 0,70 (`agri_seasonal`) produit des queues en millions ; le CDC
@@ -500,10 +510,7 @@ class TestSoldeInitial:
     def test_chaque_client_a_SON_solde(self) -> None:
         """Le defaut historique de l'heuristique — dix paliers partages — ne
         doit pas revenir : 500 clients du MEME metier, 500 soldes distincts."""
-        soldes = {
-            solde_initial(f"CM-IND-{r}", "Traditional healer", STATIQUE)
-            for r in range(500)
-        }
+        soldes = {solde_initial(f"CM-IND-{r}", "Traditional healer", STATIQUE) for r in range(500)}
         assert len(soldes) == 500
 
     def test_la_MEDIANE_du_modele_est_respectee(self) -> None:
@@ -511,8 +518,7 @@ class TestSoldeInitial:
         `bank_stable`. Si la mesure s'en ecarte, le modele n'est pas celui que
         le fichier documente. Tolerance : 5 % sur 1000 clients figes."""
         soldes = sorted(
-            solde_initial(f"CM-IND-{r}", "Public hospital doctor", STATIQUE)
-            for r in range(1000)
+            solde_initial(f"CM-IND-{r}", "Public hospital doctor", STATIQUE) for r in range(1000)
         )
         mediane = (soldes[499] + soldes[500]) / 2
         assert abs(mediane - 189_094) / 189_094 < 0.05, f"mediane {mediane:.0f}"
@@ -522,12 +528,10 @@ class TestSoldeInitial:
         mediane, jamais client par client : une distribution qui ne chevauche
         pas ne serait pas lognormale."""
         docteurs = sorted(
-            solde_initial(f"a-{r}", "Public hospital doctor", STATIQUE)
-            for r in range(500)
+            solde_initial(f"a-{r}", "Public hospital doctor", STATIQUE) for r in range(500)
         )
         guerisseurs = sorted(
-            solde_initial(f"a-{r}", "Traditional healer", STATIQUE)
-            for r in range(500)
+            solde_initial(f"a-{r}", "Traditional healer", STATIQUE) for r in range(500)
         )
         assert docteurs[250] > guerisseurs[250]
 
@@ -536,13 +540,8 @@ class TestSoldeInitial:
         modele qui mettrait tout le monde du meme cote rendrait la regle morte.
         Sens attendu : majorite d'un salaire stable AU-DESSUS, majorite d'un
         revenu agricole saisonnier EN DESSOUS."""
-        stables = [
-            solde_initial(f"b-{r}", "Public hospital doctor", STATIQUE)
-            for r in range(500)
-        ]
-        agricoles = [
-            solde_initial(f"b-{r}", "Cocoa farmer", STATIQUE) for r in range(500)
-        ]
+        stables = [solde_initial(f"b-{r}", "Public hospital doctor", STATIQUE) for r in range(500)]
+        agricoles = [solde_initial(f"b-{r}", "Cocoa farmer", STATIQUE) for r in range(500)]
         part_stables = sum(s >= SEUIL_MOBILE_MONEY_FCFA for s in stables) / 500
         part_agricoles = sum(s >= SEUIL_MOBILE_MONEY_FCFA for s in agricoles) / 500
         assert part_stables > 0.5, f"salaries au-dessus du seuil : {part_stables:.0%}"
@@ -720,8 +719,6 @@ class TestDryRun:
             "la provenance est un fait declare, pas une alerte"
         )
 
-
-
     async def test_aucune_ecriture_serveur_n_est_partie(self) -> None:
         """Le client-service est un stub qui leve si on l'appelle : le simple
         fait que le test passe est la preuve."""
@@ -864,8 +861,11 @@ class TestSceller:
         entite, kiosque = uuid4(), _kiosques("CM")[0]
         await ledger.reserver("TEST-CM-IND-1")
         await ex._sceller(
-            "TEST-CM-IND-1", {"_id": str(entite)}, kiosque,
-            _compose_pour(kiosque), RapportClients(mode=RunMode.REAL),
+            "TEST-CM-IND-1",
+            {"_id": str(entite)},
+            kiosque,
+            _compose_pour(kiosque),
+            RapportClients(mode=RunMode.REAL),
             produit_entree=None,
         )
         assert ledger.confirmes["TEST-CM-IND-1"] == entite
@@ -878,8 +878,11 @@ class TestSceller:
         ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=ledger, arbre=FauxArbre())
         await ledger.reserver("TEST-CM-IND-2")
         await ex._sceller(
-            "TEST-CM-IND-2", {"_id": "68c0ffee00b1ec7"}, kiosque,
-            _compose_pour(kiosque), RapportClients(mode=RunMode.REAL),
+            "TEST-CM-IND-2",
+            {"_id": "68c0ffee00b1ec7"},
+            kiosque,
+            _compose_pour(kiosque),
+            RapportClients(mode=RunMode.REAL),
             produit_entree=None,
         )
         attendu = uuid5(NAMESPACE_OID, "finzuu-client:68c0ffee00b1ec7")
@@ -892,8 +895,11 @@ class TestSceller:
         ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=FauxLedger(), arbre=FauxArbre())
         with pytest.raises(ConsommationIncoherente):
             await ex._sceller(
-                "TEST-JAMAIS-RESERVE", {"_id": str(uuid4())}, kiosque,
-                _compose_pour(kiosque), RapportClients(mode=RunMode.REAL),
+                "TEST-JAMAIS-RESERVE",
+                {"_id": str(uuid4())},
+                kiosque,
+                _compose_pour(kiosque),
+                RapportClients(mode=RunMode.REAL),
                 produit_entree=None,
             )
 
@@ -908,8 +914,12 @@ class TestSceller:
         rapport = RapportClients(mode=RunMode.REAL)
         await ledger.reserver("TEST-CM-IND-3")
         await ex._sceller(
-            "TEST-CM-IND-3", {"_id": str(entite)}, kiosque, _compose_pour(kiosque),
-            rapport, produit_entree=None,
+            "TEST-CM-IND-3",
+            {"_id": str(entite)},
+            kiosque,
+            _compose_pour(kiosque),
+            rapport,
+            produit_entree=None,
         )
         assert arbre.rattachements == {entite: kiosque.id}
         assert rapport.rattaches == 1, "un compteur non incremente est un rapport qui ment"
@@ -943,8 +953,12 @@ class TestSceller:
         kiosque_sn = _kiosques("SN")[0]
         await ledger.reserver("TEST-CM-IND-5")
         await ex._sceller(
-            "TEST-CM-IND-5", {"_id": str(uuid4())}, kiosque_sn, compose_cm,
-            RapportClients(mode=RunMode.REAL), produit_entree=None,
+            "TEST-CM-IND-5",
+            {"_id": str(uuid4())},
+            kiosque_sn,
+            compose_cm,
+            RapportClients(mode=RunMode.REAL),
+            produit_entree=None,
         )
         assert arbre.pays_ecrits == ["CM"], (
             "le pays ecrit doit etre celui du client (CM), pas celui du Kiosque "
@@ -959,8 +973,11 @@ class TestSceller:
         entree = _produits()[0]
         await ledger.reserver("TEST-CM-IND-8")
         await ex._sceller(
-            "TEST-CM-IND-8", {"_id": str(entite)}, kiosque,
-            _compose_pour(kiosque), RapportClients(mode=RunMode.REAL),
+            "TEST-CM-IND-8",
+            {"_id": str(entite)},
+            kiosque,
+            _compose_pour(kiosque),
+            RapportClients(mode=RunMode.REAL),
             produit_entree=entree,
         )
         assert arbre.produits_entree[entite] == entree.product_id
@@ -970,7 +987,10 @@ class TestSceller:
         inverse des que le serveur les confirme ; un noeud absent ALERTE."""
         ledger, arbre = FauxLedger(), FauxArbre()
         ex = _executeur(
-            mode=RunMode.REAL, nb_clients=40, ledger=ledger, arbre=arbre,
+            mode=RunMode.REAL,
+            nb_clients=40,
+            ledger=ledger,
+            arbre=arbre,
             clients=FauxClientService(),
         )
         entite, kiosque = uuid4(), _kiosques("CM")[0]
@@ -978,22 +998,26 @@ class TestSceller:
         rapport = RapportClients(mode=RunMode.REAL)
         await ledger.reserver("TEST-CM-IND-9")
         await ex._sceller(
-            "TEST-CM-IND-9", {"_id": str(entite)}, kiosque,
-            _compose_pour(kiosque), rapport, produit_entree=entree,
+            "TEST-CM-IND-9",
+            {"_id": str(entite)},
+            kiosque,
+            _compose_pour(kiosque),
+            rapport,
+            produit_entree=entree,
         )
-        await ex._souscrire_le_reste(
-            _compose_pour(kiosque), suivants, rapport, client_id=entite
+        await ex._souscrire_le_reste(_compose_pour(kiosque), suivants, rapport, client_id=entite)
+        assert [p for _, p in arbre.souscriptions] == [s.product_id for s in suivants], (
+            "chaque souscription confirmee porte son lien inverse"
         )
-        assert [p for _, p in arbre.souscriptions] == [
-            s.product_id for s in suivants
-        ], "chaque souscription confirmee porte son lien inverse"
 
         # Le noeud absent : le lien perdu est DIT, jamais tu. Un AUTRE client
         # (seed different -> autre msisdn) — la doublure refuse le doublon
         # (msisdn, produit), comme le vrai serveur.
         rapport_orphelin = RapportClients(mode=RunMode.REAL)
         await ex._souscrire_le_reste(
-            _compose_pour(kiosque, seed=2), suivants[:1], rapport_orphelin,
+            _compose_pour(kiosque, seed=2),
+            suivants[:1],
+            rapport_orphelin,
             client_id=uuid4(),
         )
         assert any("P-01" in a for a in rapport_orphelin.alertes)
@@ -1008,14 +1032,16 @@ class TestSceller:
                 raise ValueError("Kiosque introuvable — emboitement viole (EF-18)")
 
         ledger, kiosque = FauxLedger(), _kiosques("CM")[0]
-        ex = _executeur(
-            mode=RunMode.REAL, nb_clients=40, ledger=ledger, arbre=ArbreQuiRefuse()
-        )
+        ex = _executeur(mode=RunMode.REAL, nb_clients=40, ledger=ledger, arbre=ArbreQuiRefuse())
         rapport = RapportClients(mode=RunMode.REAL)
         await ledger.reserver("TEST-CM-IND-4")
         await ex._sceller(
-            "TEST-CM-IND-4", {"_id": str(uuid4())}, kiosque, _compose_pour(kiosque),
-            rapport, produit_entree=None,
+            "TEST-CM-IND-4",
+            {"_id": str(uuid4())},
+            kiosque,
+            _compose_pour(kiosque),
+            rapport,
+            produit_entree=None,
         )
         assert rapport.rattaches == 0
         assert any("NON RATTACHE" in a and "EF-26" in a for a in rapport.alertes)
@@ -1046,8 +1072,7 @@ class TestProduits:
         ]
         assert ex._produits_compatibles(individual_seul, ClientCategory.CORPORATE) == []
         assert (
-            ex._produits_compatibles(individual_seul, ClientCategory.INDIVIDUAL)
-            == individual_seul
+            ex._produits_compatibles(individual_seul, ClientCategory.INDIVIDUAL) == individual_seul
         )
 
     def test_un_catalogue_sans_collect_bloque_et_le_dit(self) -> None:
@@ -1144,9 +1169,7 @@ class TestLaDotationDuSoldeInitial:
     async def test_une_cascade_sans_account_id_est_signalee(self) -> None:
         """Si la cascade ne rend pas de compte, on le DIT — on n'invente pas un
         identifiant et on ne crée pas un second compte."""
-        rapport, comptes, _ = await self._reel(
-            clients=FauxClientService(sans_account_id=True)
-        )
+        rapport, comptes, _ = await self._reel(clients=FauxClientService(sans_account_id=True))
         assert comptes.credits == [], "aucun crédit émis à l'aveugle"
         assert any("account_id" in a for a in rapport.alertes)
         assert len(rapport.crees) == 40, "le client reste créé et utilisable"
@@ -1275,12 +1298,18 @@ class TestReprise:
         ledger = FauxLedger()
         ex_clients = FauxClientService()
         ex = _executeur(
-            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
-            ledger=ledger, clients=ex_clients, arbre=FauxArbre(_kiosques("CM")),
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
+            ledger=ledger,
+            clients=ex_clients,
+            arbre=FauxArbre(_kiosques("CM")),
         )
         premier = await ex.executer()
         rejoue = _executeur(
-            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
             ledger=FauxLedger(deja_consommes=set(ledger.confirmes)),
             # Scenario coherent (25/08) : la plateforme connait les msisdn du
             # premier run — le ledger est notre Mongo, il ne peut pas etre en
@@ -1322,9 +1351,13 @@ class TestReprise:
         """
         comptes = FauxComptes()
         ex = _executeur(
-            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=FauxClientService(),
-            comptes=comptes, arbre=FauxArbre(_kiosques("CM")),
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=FauxClientService(),
+            comptes=comptes,
+            arbre=FauxArbre(_kiosques("CM")),
         )
         premier = await ex.executer()
         deja = {o["msisdn"] for o in ex._clients.onboardes}  # type: ignore[attr-defined]
@@ -1333,11 +1366,15 @@ class TestReprise:
         comptes_2 = FauxComptes()
         clients_2 = FauxClientService(msisdns_existants=deja)
         rejoue = _executeur(
-            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
             # Registre VIDE : on isole `D-CLI-5`, comme si notre MongoDB avait
             # ete perdue et le serveur, lui, avait garde ses 40 clients.
-            ledger=FauxLedger(), clients=clients_2,
-            comptes=comptes_2, arbre=FauxArbre(_kiosques("CM")),
+            ledger=FauxLedger(),
+            clients=clients_2,
+            comptes=comptes_2,
+            arbre=FauxArbre(_kiosques("CM")),
             run_id=AUTRE_RUN,
         )
         second = await rejoue.executer()
@@ -1355,16 +1392,19 @@ class TestReprise:
         msisdns = []
         for run in (UUID(int=1), UUID(int=2)):
             ex = _executeur(
-                mode=RunMode.REAL, nb_clients=20, pays_actifs=("CM",),
-                ledger=FauxLedger(), clients=FauxClientService(),
-                arbre=FauxArbre(_kiosques("CM")), run_id=run,
+                mode=RunMode.REAL,
+                nb_clients=20,
+                pays_actifs=("CM",),
+                ledger=FauxLedger(),
+                clients=FauxClientService(),
+                arbre=FauxArbre(_kiosques("CM")),
+                run_id=run,
             )
             await ex.executer()
             msisdns.append({o["msisdn"] for o in ex._clients.onboardes})  # type: ignore[attr-defined]
         assert msisdns[0] == msisdns[1], (
             "deux runs du meme perimetre doivent produire les MEMES msisdn"
         )
-
 
     async def test_une_collision_DANS_le_run_rend_la_reservation_de_quota(self) -> None:
         """Defaut latent trouve par MUTATION le 12/08 : le chemin « deja
@@ -1570,9 +1610,15 @@ class TestP04ProfilRangeAvecLeNoeud:
 
         client = uuid4()
         await arbre.ajouter_client(
-            run_id=uuid4(), kiosque_id=uuid4(), company_id=uuid4(),
-            country_code="CM", msisdn="237670000001", client_id=client,
-            produit_entree=None, gender="FEMALE", occupation="Cocoa farmer",
+            run_id=uuid4(),
+            kiosque_id=uuid4(),
+            company_id=uuid4(),
+            country_code="CM",
+            msisdn="237670000001",
+            client_id=client,
+            produit_entree=None,
+            gender="FEMALE",
+            occupation="Cocoa farmer",
             categorie="INDIVIDUAL",
         )
         assert arbre.profils[client] == ("FEMALE", "Cocoa farmer", "INDIVIDUAL")
@@ -1586,8 +1632,12 @@ class TestUC13Ecriture:
         « 1 a 3 » etait toujours 1."""
         clients = FauxClientService()
         rapport = await _executeur(
-            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
+            arbre=FauxArbre(_kiosques("CM")),
         ).executer()
 
         assert len(clients.onboardes) == 40
@@ -1605,8 +1655,12 @@ class TestUC13Ecriture:
         irreversible pour un motif secondaire."""
         clients = FauxClientService(refuser_souscriptions=True)
         rapport = await _executeur(
-            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
+            arbre=FauxArbre(_kiosques("CM")),
         ).executer()
 
         assert len(rapport.crees) == 40, "les 40 clients existent malgre les refus"
@@ -1616,8 +1670,11 @@ class TestUC13Ecriture:
     async def test_a_blanc_rien_n_est_souscrit_mais_tout_est_ANNONCE(self) -> None:
         """`D-01` — le rapport a blanc est « la derniere occasion de dire non »."""
         rapport = await _executeur(
-            mode=RunMode.DRY_RUN, nb_clients=200, pays_actifs=("CM",),
-            ledger=FauxLedger(), arbre=FauxArbre(_kiosques("CM")),
+            mode=RunMode.DRY_RUN,
+            nb_clients=200,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            arbre=FauxArbre(_kiosques("CM")),
         ).executer()
 
         assert rapport.souscriptions == 0, "aucune ecriture a blanc"
@@ -1649,8 +1706,7 @@ class TestSegmentA02:
             "CM",
             seed=rang,
             quick_win={
-                cle: (1 if i < signaux else 0)
-                for i, cle in enumerate(CLES_QUICK_WIN_BINAIRES)
+                cle: (1 if i < signaux else 0) for i, cle in enumerate(CLES_QUICK_WIN_BINAIRES)
             },
         )
 
@@ -1670,8 +1726,7 @@ class TestSegmentA02:
 
     def test_les_cinq_strates_de_l_annexe_E_sont_toutes_atteignables(self) -> None:
         atteints = {
-            segment_client(self._faker(n, n + 1))
-            for n in range(len(CLES_QUICK_WIN_BINAIRES) + 1)
+            segment_client(self._faker(n, n + 1)) for n in range(len(CLES_QUICK_WIN_BINAIRES) + 1)
         }
         assert atteints == set(SEGMENTS_ANNEXE_E), (
             f"une strate inatteignable rendrait l'axe partiellement mort : {atteints}"
@@ -1688,10 +1743,7 @@ class TestSegmentA02:
         """La projection `presents * 5 // (total + 1)` doit tenir aux deux bouts —
         un `IndexError` au maximum ferait tomber le client entier."""
         assert segment_client(self._faker(0)) is ClientSegment.VERY_LOW
-        assert (
-            segment_client(self._faker(len(CLES_QUICK_WIN_BINAIRES)))
-            is ClientSegment.VERY_HIGH
-        )
+        assert segment_client(self._faker(len(CLES_QUICK_WIN_BINAIRES))) is ClientSegment.VERY_HIGH
 
     def test_le_meme_client_rend_TOUJOURS_le_meme_segment(self) -> None:
         """`ENF-15`, et `CR-03` : une reprise ne doit pas changer le segment."""
@@ -1719,8 +1771,12 @@ class TestSegmentA02:
         """La mesure qui justifie le changement : l'axe etait plat."""
         clients = FauxClientService()
         await _executeur(
-            mode=RunMode.REAL, nb_clients=200, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+            mode=RunMode.REAL,
+            nb_clients=200,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
+            arbre=FauxArbre(_kiosques("CM")),
         ).executer()
         segments = {o["segment"] for o in clients.onboardes}
         assert len(segments) > 1, f"axe toujours plat : {segments}"
@@ -1747,8 +1803,12 @@ class TestApresOnboardingRienNeLeve:
     async def _run(self, arbre: Any, comptes: Any = None) -> tuple[Any, Any]:
         clients = FauxClientService()
         rapport = await _executeur(
-            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients, comptes=comptes,
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
+            comptes=comptes,
             arbre=arbre,
         ).executer()
         return rapport, clients
@@ -1774,9 +1834,7 @@ class TestApresOnboardingRienNeLeve:
             async def crediter(self, *_: Any, **__: Any) -> Any:
                 raise RuntimeError("panne imprevue du service de comptes")
 
-        rapport, clients = await self._run(
-            FauxArbre(_kiosques("CM")), ComptesQuiExplosent()
-        )
+        rapport, clients = await self._run(FauxArbre(_kiosques("CM")), ComptesQuiExplosent())
 
         assert len(clients.onboardes) == 40
         assert len(rapport.crees) == 40
@@ -1792,8 +1850,12 @@ class TestApresOnboardingRienNeLeve:
 
         ledger, clients = FauxLedger(), FauxClientService()
         await _executeur(
-            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
-            ledger=ledger, clients=clients, arbre=ArbreQuiExplose(_kiosques("CM")),
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
+            ledger=ledger,
+            clients=clients,
+            arbre=ArbreQuiExplose(_kiosques("CM")),
         ).executer()
 
         assert len(ledger.confirmes) == 40, "chaque entite creee reste scellee"
@@ -1826,8 +1888,11 @@ class TestProfilComportementalEF67:
 
     async def _run(self, cible: int = 1000) -> Any:
         return await _executeur(
-            mode=RunMode.REAL, nb_clients=cible, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=FauxClientService(),
+            mode=RunMode.REAL,
+            nb_clients=cible,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=FauxClientService(),
             arbre=FauxArbre(_kiosques("CM")),
         ).executer()
 
@@ -1919,8 +1984,11 @@ class TestProfilComportementalEF67:
         """Un profil calcule mais non porte serait la dix-septieme occurrence du
         defaut recurrent : ecrit, teste, coche, cable a rien."""
         ex = _executeur(
-            mode=RunMode.REAL, nb_clients=40, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=FauxClientService(),
+            mode=RunMode.REAL,
+            nb_clients=40,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=FauxClientService(),
             arbre=FauxArbre(_kiosques("CM")),
         )
         vus: list[str | None] = []
@@ -1969,8 +2037,12 @@ class TestOccupationsCableesSD3:
     async def _onboardes(self, cible: int = 500) -> list[dict[str, Any]]:
         clients = FauxClientService()
         await _executeur(
-            mode=RunMode.REAL, nb_clients=cible, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+            mode=RunMode.REAL,
+            nb_clients=cible,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
+            arbre=FauxArbre(_kiosques("CM")),
         ).executer()
         return clients.onboardes
 
@@ -1989,9 +2061,7 @@ class TestOccupationsCableesSD3:
         sur 100 portaient un metier de salarie ou de journalier."""
         par = self._par_categorie(await self._onboardes())
         salaries = [
-            m
-            for m in par["CORPORATE"]
-            if STATIQUE.profil_de_la_profession(m).nom == "bank_stable"
+            m for m in par["CORPORATE"] if STATIQUE.profil_de_la_profession(m).nom == "bank_stable"
         ]
         assert salaries == [], (
             f"{len(salaries)} personnes morales salariees : {salaries[:4]} — "
@@ -2021,8 +2091,12 @@ class TestOccupationsCableesSD3:
         par le moteur de quotas, seule la profession concrete change."""
         clients = FauxClientService()
         rapport = await _executeur(
-            mode=RunMode.REAL, nb_clients=500, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+            mode=RunMode.REAL,
+            nb_clients=500,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
+            arbre=FauxArbre(_kiosques("CM")),
         ).executer()
         quota = rapport.quotas[0]
         assert quota.agricoles == quota.cible_agricoles
@@ -2040,12 +2114,14 @@ class TestOccupationsCableesSD3:
         peut pas porter un metier agricole par accident."""
         clients = FauxClientService()
         rapport = await _executeur(
-            mode=RunMode.REAL, nb_clients=500, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+            mode=RunMode.REAL,
+            nb_clients=500,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
+            arbre=FauxArbre(_kiosques("CM")),
         ).executer()
-        agricoles = set(
-            STATIQUE.professions_des_groupes(GROUPES_PAR_FAMILLE_CDC["AGRICULTURE"])
-        )
+        agricoles = set(STATIQUE.professions_des_groupes(GROUPES_PAR_FAMILLE_CDC["AGRICULTURE"]))
         par = self._par_categorie(clients.onboardes)
         portes = [m for m in par["CORPORATE"] if m in agricoles]
         assert len(portes) == rapport.quotas[0].cible_agricoles, (
@@ -2076,14 +2152,21 @@ class TestSoldeCableSD5:
         une occupation lue differemment, un arrondi different, un ancrage
         different."""
         rapport_blanc = await _executeur(
-            mode=RunMode.DRY_RUN, nb_clients=200, pays_actifs=("CM",),
-            ledger=FauxLedger(), arbre=FauxArbre(),
+            mode=RunMode.DRY_RUN,
+            nb_clients=200,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            arbre=FauxArbre(),
         ).executer()
 
         comptes = FauxComptes()
         await _executeur(
-            mode=RunMode.REAL, nb_clients=200, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=FauxClientService(), comptes=comptes,
+            mode=RunMode.REAL,
+            nb_clients=200,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=FauxClientService(),
+            comptes=comptes,
             arbre=FauxArbre(_kiosques("CM")),
         ).executer()
         demande_reel = sum(p["amount"] for p in comptes.credits)
@@ -2101,8 +2184,13 @@ class TestSoldeCableSD5:
         for run in (UUID(int=7001), UUID(int=7002)):
             comptes = FauxComptes()
             await _executeur(
-                mode=RunMode.REAL, run_id=run, nb_clients=150, pays_actifs=("CM",),
-                ledger=FauxLedger(), clients=FauxClientService(), comptes=comptes,
+                mode=RunMode.REAL,
+                run_id=run,
+                nb_clients=150,
+                pays_actifs=("CM",),
+                ledger=FauxLedger(),
+                clients=FauxClientService(),
+                comptes=comptes,
                 arbre=FauxArbre(_kiosques("CM")),
             ).executer()
             montants.append(sorted(p["amount"] for p in comptes.credits))
@@ -2121,8 +2209,12 @@ class TestSoldeCableSD5:
         clients = FauxClientService()
         comptes = FauxComptes()
         await _executeur(
-            mode=RunMode.REAL, nb_clients=500, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients, comptes=comptes,
+            mode=RunMode.REAL,
+            nb_clients=500,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
+            comptes=comptes,
             arbre=FauxArbre(_kiosques("CM")),
         ).executer()
 
@@ -2159,8 +2251,12 @@ class TestLieuDeNaissanceCableSD6:
     async def test_les_fiches_onboardees_portent_un_VRAI_lieu_de_naissance(self) -> None:
         clients = FauxClientService()
         await _executeur(
-            mode=RunMode.REAL, nb_clients=300, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+            mode=RunMode.REAL,
+            nb_clients=300,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
+            arbre=FauxArbre(_kiosques("CM")),
         ).executer()
         villes_cm = {
             v.name.title()
@@ -2180,7 +2276,8 @@ class TestLieuDeNaissanceCableSD6:
             assert etranger in set(STATIQUE.pays.values()), etranger
 
         residents_natifs = [
-            o for o in clients.onboardes
+            o
+            for o in clients.onboardes
             if o["identity"]["place_of_birth"] == o["identity"]["address"]["city"]
         ]
         assert len(residents_natifs) < len(clients.onboardes) / 2, (
@@ -2221,8 +2318,11 @@ class TestPanierDeSaCompanyCAT8:
         assert len(autorises) == 2
         clients = FauxClientService()
         await _executeur(
-            mode=RunMode.REAL, nb_clients=60, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients,
+            mode=RunMode.REAL,
+            nb_clients=60,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
             arbre=FauxArbre(self._kiosques_de(company)),
             produits_par_company={company: autorises},
             produits=produits,
@@ -2245,8 +2345,11 @@ class TestPanierDeSaCompanyCAT8:
         carte = {_uuid4(): {p.product_id for p in _produits()}}
         clients = FauxClientService()
         rapport = await _executeur(
-            mode=RunMode.REAL, nb_clients=30, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients,
+            mode=RunMode.REAL,
+            nb_clients=30,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
             arbre=FauxArbre(self._kiosques_de(_uuid4())),  # company INCONNUE de la carte
             produits_par_company=carte,
         ).executer()
@@ -2260,7 +2363,80 @@ class TestPanierDeSaCompanyCAT8:
     async def test_sans_carte_le_comportement_historique_demeure(self) -> None:
         clients = FauxClientService()
         await _executeur(
-            mode=RunMode.REAL, nb_clients=30, pays_actifs=("CM",),
-            ledger=FauxLedger(), clients=clients, arbre=FauxArbre(_kiosques("CM")),
+            mode=RunMode.REAL,
+            nb_clients=30,
+            pays_actifs=("CM",),
+            ledger=FauxLedger(),
+            clients=clients,
+            arbre=FauxArbre(_kiosques("CM")),
         ).executer()
         assert len(clients.onboardes) == 30
+
+
+class TestSegmentEmisALOnboarding:
+    """`client-service` compare le segment du client a celui de son produit, a
+    l'EGALITE STRICTE.
+
+    Mesure du 15/09/2026, produit temoin `Tontine Digitale` (`segment=ANY`),
+    meme payload, seul `segment` change :
+
+        ANY                                       -> client CREE
+        MEDIUM / VERY_LOW / LOW / HIGH / VERY_HIGH -> 400 « Product segment does
+                                                      not match the client segment »
+
+    Ce que ca a coute : run REAL `ff5fc530` du 15/09, phase CLIENTS `FAILED`,
+    800 refus, 0 client sur 2000. Le Loader emettait le segment DERIVE (`A-02`)
+    alors que les dix produits portaient tous `ANY`.
+    """
+
+    def test_le_segment_du_produit_gagne_sur_celui_du_client(self) -> None:
+        from app.clients.contracts import ClientSegment
+        from app.services.clients_execution import segment_du_produit
+
+        class Produit:
+            segment = "ANY"
+
+        assert segment_du_produit(Produit(), ClientSegment.MEDIUM) is ClientSegment.ANY
+
+    def test_chaque_valeur_de_l_enum_est_respectee(self) -> None:
+        """Le jour ou le catalogue portera six segments, les clients suivront
+        sans qu'on touche une ligne — c'est `A-02` DEPLACE, pas abandonne."""
+        from app.clients.contracts import ClientSegment
+        from app.services.clients_execution import segment_du_produit
+
+        for attendu in ClientSegment:
+
+            class Produit:
+                segment = attendu.value
+
+            assert segment_du_produit(Produit(), ClientSegment.ANY) is attendu
+
+    def test_un_produit_sans_segment_retombe_sur_le_segment_compose(self) -> None:
+        """Seul cas de repli : le serveur ne declare rien. On n'invente pas."""
+        from app.clients.contracts import ClientSegment
+        from app.services.clients_execution import segment_du_produit
+
+        class Produit:
+            segment = ""
+
+        assert segment_du_produit(Produit(), ClientSegment.HIGH) is ClientSegment.HIGH
+
+    def test_une_valeur_hors_enum_ne_leve_jamais(self) -> None:
+        """Un segment serveur inconnu ne doit pas faire tomber 2000 clients :
+        on retombe sur le compose, et on le DIT au journal."""
+        from app.clients.contracts import ClientSegment
+        from app.services.clients_execution import segment_du_produit
+
+        class Produit:
+            segment = "SEGMENT_INVENTE"
+
+        assert segment_du_produit(Produit(), ClientSegment.LOW) is ClientSegment.LOW
+
+    def test_le_catalogue_transporte_le_segment_jusqu_au_produit(self) -> None:
+        """La chaine complete : payload -> ProduitSouscriptible -> onboarding.
+        Sans ce maillon, le correctif retomberait silencieusement sur le
+        segment derive."""
+        from app.services.catalogue import payloads_collect
+
+        for payload in payloads_collect():
+            assert payload.get("segment"), f"{payload.get('name')} sans segment"

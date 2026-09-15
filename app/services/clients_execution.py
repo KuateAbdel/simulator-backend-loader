@@ -211,9 +211,7 @@ def _graine_faker(pays: str, rang: int) -> int:
     return 1 + empreinte % (GRAINE_FAKER_MAX - 1)
 
 
-def solde_initial(
-    client_id: str, occupation: str, statique: ReferentielStatique
-) -> float:
+def solde_initial(client_id: str, occupation: str, statique: ReferentielStatique) -> float:
     """Le solde initial du compte — **`A-09` est FERME par ce modele** (`SD-5`).
 
     `UC-13` pt 2 le fait lire dans `MOB_MONEY_ACCOUNT_AMOUNT`. Mesure du 11/08 :
@@ -425,6 +423,42 @@ def age_revolu(naissance: date, reference: date | None = None) -> int:
         - naissance.year
         - ((aujourd_hui.month, aujourd_hui.day) < (naissance.month, naissance.day))
     )
+
+
+def segment_du_produit(produit: Any, defaut: ClientSegment) -> ClientSegment:
+    """Le segment a EMETTRE a l'onboarding : celui du produit attribue.
+
+    `client-service` compare le `segment` du client a celui de son produit, a
+    l'**egalite stricte** — mesure du 15/09/2026, produit temoin
+    `Tontine Digitale` (`segment=ANY`), meme payload, seul `segment` change :
+
+        ANY                          -> client CREE
+        MEDIUM / VERY_LOW / LOW /
+        HIGH / VERY_HIGH             -> 400 « Product segment does not match
+                                        the client segment »
+
+    `ANY` cote produit ne signifie donc PAS « tous segments » : c'est une valeur
+    parmi six. C'est l'inverse de l'axe `categorie`, ou la chaine vide et `ANY`
+    valent « pas de contrainte » (`valider_produit_client`). Les deux axes se
+    ressemblent et ne se comportent pas pareil ; les confondre a coute le run
+    REAL `ff5fc530` — 800 refus, 0 client sur 2000.
+
+    Le repli sur `defaut` couvre le seul cas ou le serveur ne declare rien :
+    on emet alors ce que la strate Faker avait calcule, faute de mieux. Une
+    valeur hors enum est ignoree de la meme facon — on ne devine jamais.
+    """
+    brut = str(getattr(produit, "segment", "") or "").strip().upper()
+    if not brut:
+        return defaut
+    try:
+        return ClientSegment(brut)
+    except ValueError:
+        logger.warning(
+            "segment produit non reconnu (%r) — repli sur le segment compose %s",
+            brut,
+            defaut.value,
+        )
+        return defaut
 
 
 def segment_client(faker: ClientFaker) -> ClientSegment:
@@ -709,9 +743,7 @@ class QuotaPays:
             self.statique,
             personne_morale=business,
         )
-        profil = self._attribuer_profil(
-            tirage, femme=femme, jeune=jeune, occupation=occupation
-        )
+        profil = self._attribuer_profil(tirage, femme=femme, jeune=jeune, occupation=occupation)
         return Reservation(
             business=business,
             femme=femme,
@@ -857,21 +889,18 @@ class RapportClients:
     #: que ceux-la — c'est la forme observable de l'idempotence.
     deja_presents: list[str] = field(default_factory=list)
 
-    def mesurer_population(
-        self, occupation: str, solde: float, *, ne_a_l_etranger: bool
-    ) -> None:
+    def mesurer_population(self, occupation: str, solde: float, *, ne_a_l_etranger: bool) -> None:
         """`US-E3` — un client compte au moment ou il est COMPOSE, avant le
         fork DRY/REAL : l'essai a blanc mesure la meme population que le reel
         (`D-01`), et le dashboard sert ces comptes sans requeter FinZuu."""
         self.occupations[occupation] = self.occupations.get(occupation, 0) + 1
         for plafond, etiquette in TRANCHES_SOLDE:
             if solde < plafond:
-                self.soldes_tranches[etiquette] = (
-                    self.soldes_tranches.get(etiquette, 0) + 1
-                )
+                self.soldes_tranches[etiquette] = self.soldes_tranches.get(etiquette, 0) + 1
                 break
         if ne_a_l_etranger:
             self.nes_a_l_etranger += 1
+
     #: `EF-26` — les rattachements Client -> Kiosque effectivement ecrits dans
     #: `org_hierarchy`. Compte APRES l'insertion, jamais sur l'intention : le
     #: rapport ne doit pas affirmer un lien que la base ne porte pas.
@@ -1059,9 +1088,7 @@ class ExecuteurClients:
             # quotas, memes controles.
             source = source_pour(pays, self._faker, self._interne)
             avant = quota.faits
-            await self._peupler_un_pays(
-                pays, quota, kiosques[pays], collect, source, rapport
-            )
+            await self._peupler_un_pays(pays, quota, kiosques[pays], collect, source, rapport)
             # La provenance, comptee sur ce que la source a REELLEMENT produit.
             # Le compteur existait, etait rendu au rapport, et n'etait increments
             # nulle part — le meme defaut que ce projet a trouve dix fois, ici
@@ -1304,9 +1331,7 @@ class ExecuteurClients:
         # `PolicyType` tombe en fin de liste plutot que d'etre ecarte : il reste
         # souscriptible, simplement jamais en produit d'entree.
         rang = {p: i for i, p in enumerate(ORDRE_SOUSCRIPTION)}
-        ordonnes = sorted(
-            compatibles, key=lambda p: (rang.get(p.policy_type, len(rang)), p.nom)
-        )
+        ordonnes = sorted(compatibles, key=lambda p: (rang.get(p.policy_type, len(rang)), p.nom))
 
         de_ce_client = random.Random(f"panier:{compose.msisdn}")  # noqa: S311
         combien = _combien_de_produits(compose.segment, de_ce_client)
@@ -1503,7 +1528,11 @@ class ExecuteurClients:
             issues = await asyncio.gather(
                 *(
                     self._creer(
-                        faker, kiosque, reservation, collect, rapport,
+                        faker,
+                        kiosque,
+                        reservation,
+                        collect,
+                        rapport,
                         ledger_reserve=ledger_reserve,
                     )
                     for faker, kiosque, reservation, ledger_reserve in retenus
@@ -1513,9 +1542,7 @@ class ExecuteurClients:
 
             # L'enregistrement au quota, sequentiel, sur le resultat REEL.
             gagnes = 0
-            for (faker, _, reservation, ledger_reserve), issue in zip(
-                retenus, issues, strict=True
-            ):
+            for (faker, _, reservation, ledger_reserve), issue in zip(retenus, issues, strict=True):
                 if isinstance(issue, BaseException):
                     rapport.echoues.append((faker.client_id, str(issue)[:600]))
                     issue = None
@@ -1625,8 +1652,7 @@ class ExecuteurClients:
         rapport.mesurer_population(
             compose.identite.occupation,
             solde_initial(faker.client_id, reservation.occupation, self._statique),
-            ne_a_l_etranger=compose.identite.place_of_birth
-            not in self._villes_referentiel,
+            ne_a_l_etranger=compose.identite.place_of_birth not in self._villes_referentiel,
         )
 
         panier = self._panier(collect, compose, getattr(kiosque, "company_id", None))
@@ -1680,8 +1706,14 @@ class ExecuteurClients:
             # `uniq_client_par_run` rend l'operation sans effet quand elle
             # existe deja.
             await self._sceller(
-                faker.client_id, deja, kiosque, compose, rapport, produit_entree=None
-            , ledger_reserve=ledger_reserve)
+                faker.client_id,
+                deja,
+                kiosque,
+                compose,
+                rapport,
+                produit_entree=None,
+                ledger_reserve=ledger_reserve,
+            )
             rapport.deja_presents.append(faker.client_id)
             return compose
 
@@ -1692,7 +1724,28 @@ class ExecuteurClients:
                 product_id=produit.product_id,
                 currency=compose.devise,
                 category=compose.categorie,
-                segment=compose.segment,
+                # LE SEGMENT DU PRODUIT, PAS CELUI DU CLIENT — 15/09/2026.
+                #
+                # `client-service` compare les deux a l'EGALITE STRICTE. Mesure
+                # du 15/09 sur `Tontine Digitale` (`segment=ANY`), meme payload,
+                # seul `segment` change : `ANY` cree le client, les cinq autres
+                # valeurs rendent `400 Product segment does not match the client
+                # segment`. `ANY` cote produit ne veut donc PAS dire « tous
+                # segments » — c'est une valeur parmi six.
+                #
+                # Le Loader emettait le segment DERIVE des onze signaux
+                # `quick_win` (`A-02`, depuis le 12/08) alors que les dix
+                # produits du catalogue portent tous `ANY` : aucun client ne
+                # pouvait matcher. Run REAL `ff5fc530` du 15/09, phase CLIENTS
+                # `FAILED` — **800 refus, 0 client sur 2000**. Le defaut dormait
+                # depuis un mois : la phase n'avait jamais tourne en REAL.
+                #
+                # `A-02` n'est pas abandonne, il est DEPLACE : le relief de
+                # segment appartient au CATALOGUE. Le jour ou les produits
+                # porteront six segments, les clients les suivront ici sans
+                # changer une ligne — et `compose.segment` reste la trace de ce
+                # que la strate Faker avait calcule.
+                segment=segment_du_produit(produit, compose.segment),
                 channel=compose.canal,
                 language=compose.langue,
             )
@@ -1743,8 +1796,14 @@ class ExecuteurClients:
         #                         12/08 le Loader s'arretait a la premiere.
         try:
             entite = await self._sceller(
-                faker.client_id, fiche, kiosque, compose, rapport, produit_entree=produit
-            , ledger_reserve=ledger_reserve)
+                faker.client_id,
+                fiche,
+                kiosque,
+                compose,
+                rapport,
+                produit_entree=produit,
+                ledger_reserve=ledger_reserve,
+            )
             await self._doter(compose, faker, fiche, rapport)
             await self._souscrire_le_reste(compose, suivants, rapport, client_id=entite)
         except Exception as erreur:
@@ -1832,9 +1891,7 @@ class ExecuteurClients:
         # `SD-5` — l'occupation lue sur l'identite COMPOSEE, celle qui vient de
         # `reservation.occupation` : le montant depose est exactement celui que
         # le DRY_RUN a annonce, et c'est un test qui le garantit (`D-01`).
-        montant = solde_initial(
-            faker.client_id, compose.identite.occupation, self._statique
-        )
+        montant = solde_initial(faker.client_id, compose.identite.occupation, self._statique)
         nom = f"{compose.identite.first_name} {compose.identite.last_name}"
 
         if not self.ecriture_reelle:

@@ -109,6 +109,32 @@ class ProduitSouscriptible:
     #: seul champ temporel que collect-service expose. Sans cette valeur, un
     #: depot a terme serait un depot sans terme.
     duree_mois: int | None = None
+    #: AJOUT DU 15/09/2026 — le `segment` DU PRODUIT, tel que le serveur le
+    #: declare, parce que c'est lui qui gouverne l'onboarding d'un client.
+    #:
+    #: MESURE DU 15/09, produit temoin `Tontine Digitale` (`segment=ANY`), meme
+    #: payload, seul `segment` change :
+    #:
+    #:     segment=ANY        -> CLIENT CREE
+    #:     segment=MEDIUM     -> 400 « Product segment does not match the client segment »
+    #:     VERY_LOW/LOW/HIGH/VERY_HIGH -> 400, idem
+    #:
+    #: Autrement dit `ANY` cote produit ne signifie PAS « tous segments » : c'est
+    #: une valeur parmi six, et client-service exige l'EGALITE STRICTE. C'est
+    #: l'inverse de `categorie`, ou la chaine vide et `ANY` valent « pas de
+    #: contrainte » (`valider_produit_client`) — les deux axes ne se comportent
+    #: pas pareil, et les confondre coute un run entier.
+    #:
+    #: Ce que ca a coute : run REAL `ff5fc530` du 15/09, phase CLIENTS `FAILED`,
+    #: **800 refus, 0 client cree sur 2000**. Le Loader emettait un segment
+    #: DERIVE des onze signaux `quick_win` (arbitrage `A-02`, depuis le 12/08)
+    #: alors que les dix produits du catalogue portent tous `ANY`. Aucun client
+    #: ne pouvait matcher. Le defaut dormait depuis un mois : la phase CLIENTS
+    #: n'avait jamais ete atteinte en REAL.
+    #:
+    #: `""` quand le serveur ne le declare pas — l'appelant retombe alors sur le
+    #: segment compose, faute de mieux.
+    segment: str = ""
 
 
 @dataclass(slots=True)
