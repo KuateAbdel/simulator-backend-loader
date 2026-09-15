@@ -126,11 +126,7 @@ class RapportCatalogue:
         lignes = [
             f"Mode        : {self.mode.value}",
             f"Produits crees   : {len(self.crees)} / {self.attendus} attendus",
-            *(
-                [f"Constate (non utilise) : {c}" for c in self.constates]
-                if self.constates
-                else []
-            ),
+            *([f"Constate (non utilise) : {c}" for c in self.constates] if self.constates else []),
             f"Reutilises       : {len(self.reutilises)} ({', '.join(self.reutilises) or '-'})",
             *(
                 [
@@ -296,6 +292,10 @@ class ExecuteurCatalogue:
                         # `policy.type`, jamais `type` : mesure du 12/08.
                         str((existant.get("policy") or {}).get("type") or "").upper(),
                         duree_mois_du_produit(nom),
+                        # Le `segment` vient de la FICHE SERVEUR, comme la categorie :
+                        # c'est lui que client-service comparera au segment du client,
+                        # a l'EGALITE STRICTE (mesure du 15/09).
+                        str(existant.get("segment") or "").upper(),
                     )
                 )
             return
@@ -341,6 +341,10 @@ class ExecuteurCatalogue:
                     # renommage de produit l'aurait fait apparaitre en REEL.
                     str((payload.get("policy") or {}).get("type") or "").upper(),
                     duree_mois_du_produit(nom),
+                    # Le `segment` qu'on DEMANDE : c'est celui que le produit
+                    # portera, donc celui que ses clients devront emettre pour
+                    # etre acceptes a l'onboarding (mesure du 15/09).
+                    str(payload.get("segment") or "").upper(),
                 )
             )
             return
@@ -386,6 +390,10 @@ class ExecuteurCatalogue:
                 str(payload.get("category") or "").upper(),
                 str((payload.get("policy") or {}).get("type") or "").upper(),
                 duree_mois_du_produit(nom),
+                # Le `segment` qu'on DEMANDE : c'est celui que le produit
+                # portera, donc celui que ses clients devront emettre pour
+                # etre acceptes a l'onboarding (mesure du 15/09).
+                str(payload.get("segment") or "").upper(),
             )
         )
 
