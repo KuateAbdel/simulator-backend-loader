@@ -74,6 +74,24 @@ class UserDefaillant(UserDouble):
         raise RuntimeError("HTTP 400 refuse")
 
 
+class UserFinitionRatee(UserDouble):
+    """`FRA-247` — `register` rend 201, `password/f/change` refuse.
+
+    C'est EXACTEMENT ce qu'a vecu le run REAL `56f28cf0` du 14/09, 81 fois.
+    Le client ne leve plus : il rend le User avec sa finition en echec.
+    """
+
+    async def creer_utilisateur_applicatif(self, **champs: Any) -> dict[str, Any]:
+        self.creees.append(champs)
+        return {
+            "id": "11111111-2222-3333-4444-555555555555",
+            "finition": {
+                "aboutie": False,
+                "motif": "HTTP 401 sur /auth/password/f/change : Current password is incorrect",
+            },
+        }
+
+
 def _executeur(mode: RunMode, base: ReferentielGeo, config: ConfigurationExecution | None = None):  # type: ignore[no-untyped-def]
     identites, users = IdentityDouble(), UserDouble()
     executeur = ExecuteurStaff(
@@ -232,6 +250,48 @@ class TestResilience:
         assert rapport.echoues
         assert all(len(motif) <= 200 for _, motif in rapport.echoues)
 
+    async def test_une_finition_ratee_ne_perd_jamais_l_agent(self, base: ReferentielGeo) -> None:
+        """`FRA-247` — LE defaut qui a coute le run REAL `56f28cf0` (14/09).
+
+        `register` avait rendu 201 pour les 81 staff, puis `password/f/change`
+        avait refuse : le module rendait « Staff cree : 0 » et `FAILED`, alors
+        que **81 Users existaient** chez FinZuu, sans noeud chez nous ni
+        rattachement Agent -> Kiosque. Le Loader perdait l'Agent pour preserver
+        son mot de passe.
+        """
+        executeur = ExecuteurStaff(
+            run_id=RUN_ID,
+            mode=RunMode.REAL,
+            configuration=ConfigurationExecution.defaut_cdc(),
+            referentiel=base,
+            identity_client=IdentityDouble(),
+            user_client=UserFinitionRatee(),
+        )
+        rapport = await executeur.executer()
+
+        assert rapport.crees, "le User EXISTE des que register a rendu 201"
+        assert not rapport.echoues, "une finition ratee n'est pas un echec de creation"
+        assert len(rapport.finitions) == len(rapport.crees)
+        assert "Current password is incorrect" in rapport.finitions[0][1]
+
+    async def test_une_finition_ratee_rend_partial_jamais_failed(
+        self, base: ReferentielGeo
+    ) -> None:
+        """`FAILED` arrete la chaine (`Orchestrateur.bloquant`) : le run
+        perdrait Clients et recette pour un mot de passe."""
+        executeur = ExecuteurStaff(
+            run_id=RUN_ID,
+            mode=RunMode.REAL,
+            configuration=ConfigurationExecution.defaut_cdc(),
+            referentiel=base,
+            identity_client=IdentityDouble(),
+            user_client=UserFinitionRatee(),
+        )
+        rapport = await executeur.executer()
+
+        assert rapport.statut is RunStatus.PARTIAL
+        assert "Finitions ratees" in rapport.resume()
+
     async def test_le_rapport_distingue_refus_et_echec(self, base: ReferentielGeo) -> None:
         """Un refus avant reseau n'est pas un echec serveur : c'est la couche
         anti-corruption qui fonctionne."""
@@ -239,6 +299,7 @@ class TestResilience:
         rapport = await executeur.executer()
         assert "Refuses avant reseau" in rapport.resume()
         assert "Echecs serveur" in rapport.resume()
+
 
 class ArbreDouble:
     """Un arbre en memoire : les Kiosques que Depositaires aurait crees, et
@@ -283,9 +344,7 @@ class TestUC09UnAgentParKiosque:
     portait 4 Kiosques au Burkina.
     """
 
-    async def test_chaque_kiosque_REEL_recoit_au_moins_un_agent(
-        self, base: ReferentielGeo
-    ) -> None:
+    async def test_chaque_kiosque_REEL_recoit_au_moins_un_agent(self, base: ReferentielGeo) -> None:
         arbre = ArbreDouble({"CM": 4, "CI": 3})
         executeur = ExecuteurStaff(
             run_id=RUN_ID,
@@ -300,9 +359,7 @@ class TestUC09UnAgentParKiosque:
 
         servis = {champs["kiosque_id"] for champs in arbre.agents}
         attendus = {k.id for k in arbre.kiosques if k.country_code in {"CM", "CI"}}
-        assert attendus <= servis, (
-            f"{len(attendus - servis)} Kiosque(s) sans Agent — UC-09 viole"
-        )
+        assert attendus <= servis, f"{len(attendus - servis)} Kiosque(s) sans Agent — UC-09 viole"
 
     async def test_le_plan_se_recadre_sur_les_kiosques_qui_EXISTENT(
         self, base: ReferentielGeo
@@ -323,9 +380,7 @@ class TestUC09UnAgentParKiosque:
         assert plan_cm.nb_kiosques == 4
         assert plan_cm.nb_agents == 4
 
-    async def test_l_encadrement_n_est_affilie_a_AUCUN_kiosque(
-        self, base: ReferentielGeo
-    ) -> None:
+    async def test_l_encadrement_n_est_affilie_a_AUCUN_kiosque(self, base: ReferentielGeo) -> None:
         """Un Comptable ne tient pas un guichet. Seuls les Agents sont
         rattaches — sinon le compte par Kiosque devient un mensonge."""
         arbre = ArbreDouble({"CM": 2})
@@ -351,6 +406,7 @@ class TestUC09UnAgentParKiosque:
         executeur, _, _ = _executeur(RunMode.REAL, base)
         rapport = await executeur.executer()
         assert rapport.affectations == []
+
 
 class UserDejaConnu(UserDouble):
     """user-service qui CONNAIT deja tout le monde — l'etat reel de la
@@ -387,4 +443,3 @@ class TestReconnaissanceDuStaff:
         # LE point d'UC-09 : chaque kiosque a recu son agent malgre zero creation.
         servis = {champs["kiosque_id"] for champs in arbre.agents}
         assert {k.id for k in arbre.kiosques} <= servis, "Kiosque sans Agent — UC-09"
-

@@ -3,17 +3,37 @@ app/clients/user_service.py
 ===========================
 Client user-service — Users applicatifs et rôles RBAC.
 
-**Le flow en 3 requêtes est obligatoire, jamais raccourci** (D-CMP-2) :
+**Le flow, et ce qui y engage vraiment** (D-CMP-2), revise le 15/09/2026 :
 
-    POST /auth/register           -> 201, auth_token (type "auth", 10 min)
+    POST /auth/register           -> 201, data.user + auth_token ("auth", 10 min)
+                                     ENGAGEMENT — le User EXISTE, irreversible
     PUT  /auth/password/f/change  -> 200, avec le AUTH_TOKEN, pas le token ROOT
-    POST /auth/login              -> access_token (4 h) + refresh_token (7 j)
+                                     FINITION  — sort le compte de is_first_login
+
+Les deux etapes ne sont **plus liees**. Une finition ratee est une anomalie
+consignee, jamais un User perdu : il est cree, user-service n'a aucun `DELETE`,
+et le nier dans le rapport ne le fait pas disparaitre de la plateforme. Le run
+REAL `56f28cf0` (14/09) l'a paye — « Staff cree : 0 » pour 81 Users bien reels.
+
+Le `POST /auth/login` qui terminait le flow est **supprime** : aucun appelant ne
+lisait son jeton, l'identifiant du User est deja dans `data.user.id`, et il
+coutait un login par compte cree sur un service qui verrouille a la troisieme
+tentative (`INV-USR-19`).
+
+⚠️ **Ce flow ne peut plus aboutir — mesure du 15/09/2026.** `register` **ignore**
+le `password` qu'on lui envoie, en genere un autre, et ne le communique **que par
+courriel**. La reponse 201 ne le restitue pas (verifie : ni la valeur envoyee, ni
+aucune cle autre que le booleen `password_expired`). Et l'etape 2 **verifie
+l'ancien mot de passe** — `401 Current password is incorrect`.
+
+Consequence : nos adresses generees etant fictives, personne ne recoit ce
+courriel, et les comptes restent definitivement a `is_first_login=true`. C'est
+la vraie cause de l'etat de l'environnement, et **non** la subtilite du token
+ci-dessous. Bloquant remonte en **FRA-247**.
 
 ⚠️ **L'etape 2 refuse le token ROOT** : « Type de token invalide. Attendu: auth ».
-Elle n'accepte que l'`auth_token` rendu par `register`. Ce detail n'apparait dans
-aucune documentation, et c'est lui qui explique l'etat de l'environnement :
-**15 users sur 18 sont bloques a `is_first_login=true`** parce que le flow n'a
-jamais pu aboutir. Verifie de bout en bout le 08/08.
+Elle n'accepte que l'`auth_token` rendu par `register`. Vrai, mesure le 08/08,
+mais ce n'est pas ce qui bloque aujourd'hui.
 
 Autre detail mesure : tant que `is_first_login=true`, `access_token` est present
 dans la reponse mais **VIDE** — la cle existe, la valeur non.
@@ -90,11 +110,38 @@ class UserServiceClient:
         groupes: list[str] | None = None,
         company_id: UUID | str | None = None,
     ) -> dict[str, Any]:
-        """Execute le flow complet et renvoie les jetons du User cree.
+        """Cree le User et tente de le rendre utilisable. **Ne leve JAMAIS pour
+        une finition ratee.**
 
-        Les trois etapes sont indissociables : s'arreter apres la premiere
-        laisserait un compte a `is_first_login=true`, incapable de se connecter.
-        C'est exactement l'etat de 15 des 18 users de l'environnement.
+        ⚠️ **L'etape 2 echoue par conception depuis le 15/09/2026** : le mot de
+        passe reel est celui que le service a genere, pas `mot_de_passe_initial`,
+        et il n'est connu que du destinataire du courriel. Voir FRA-247. Le code
+        reste en place tel quel : il redeviendra correct des que `register`
+        honorera le mot de passe fourni, sans autre changement ici.
+
+        CE QUI A CHANGE LE 15/09/2026, ET POURQUOI
+        ------------------------------------------
+        Le flow valait TOUT OU RIEN : une etape 2 refusee levait, et l'appelant
+        comptait l'agent en echec **alors que le User venait d'etre cree**. Le
+        run REAL `56f28cf0` l'a paye au prix fort : rapport « Staff cree : 0 »,
+        phase `FAILED`, run arrete — et **81 Users bel et bien presents** sur
+        user-service, sans noeud chez nous ni rattachement Agent -> Kiosque
+        (`UC-09`). Le Loader perdait l'Agent pour preserver son mot de passe.
+
+        L'arbitrage est inverse, et c'est le meme que celui deja tranche pour
+        `_identifiant_user` : **l'etape 1 est l'engagement**. Le User existe des
+        qu'elle rend `201` ; tout ce qui suit est de la FINITION. Une finition
+        ratee est une ANOMALIE CONSIGNEE, jamais un agent perdu.
+
+        L'etape 3 (`POST /auth/login` sur le compte fraichement cree) est
+        **supprimee**. Verifie le 15/09 : aucun appelant ne lisait le jeton
+        qu'elle rendait, et l'identifiant du User dont le Loader a besoin est
+        deja dans la reponse de `register` (`data.user.id`). C'etait une
+        verification sans consommateur — et 81 logins inutiles sur un service
+        qui verrouille a la troisieme tentative (`INV-USR-19`).
+
+        Renvoie le User rendu par `register`, augmente de `finition` :
+        `{"aboutie": bool, "motif": str}`.
         """
         inscription: dict[str, Any] = {
             "user_name": user_name,
@@ -111,40 +158,56 @@ class UserServiceClient:
             "POST", "/api/v1/auth/register", json_body=inscription
         )
 
+        # ETAPE 1 ACQUISE — a partir d'ici, le User EXISTE chez FinZuu, et
+        # user-service n'a aucun DELETE. Plus rien en dessous n'a le droit de
+        # faire disparaitre ce fait du rapport.
+        rendu = enregistrement.data if isinstance(enregistrement.data, dict) else {}
+        interne = rendu.get("user")
+        # `register` range le User sous `data.user` ; d'autres endpoints le
+        # rendent a plat (`D1`). On accepte les deux, sans rien deviner de plus.
+        utilisateur: dict[str, Any] = dict(interne) if isinstance(interne, dict) else dict(rendu)
+
         # L'etape 2 refuse le token ROOT : « Type de token invalide. Attendu: auth ».
         # Elle n'accepte QUE l'auth_token rendu par register, valide 10 minutes.
         # Mesure du 08/08 — et c'est exactement ce qui a laisse 15 users sur 18
         # bloques a is_first_login=true dans l'environnement.
-        auth_token = (
-            enregistrement.data.get("auth_token") if isinstance(enregistrement.data, dict) else None
-        )
+        auth_token = rendu.get("auth_token")
         if not auth_token:
-            raise ErreurService(
-                "user-service",
-                "POST",
-                "/api/v1/auth/register",
-                200,
-                "auth_token absent de la reponse — l'etape 2 du flow est impossible",
-                "-",
+            utilisateur["finition"] = {
+                "aboutie": False,
+                "motif": (
+                    "auth_token absent de la reponse de register — l'etape 2 est "
+                    "impossible, le compte reste a is_first_login=true"
+                ),
+            }
+            return utilisateur
+
+        try:
+            await self._client.requete(
+                "PUT",
+                "/api/v1/auth/password/f/change",
+                json_body={
+                    "email": email,
+                    "password": mot_de_passe_initial,
+                    "new_password": nouveau_mot_de_passe,
+                },
+                token_alternatif=str(auth_token),
             )
+        except ErreurService as erreur:
+            # `FRA-247` — cas connu et attendu tant que `register` genere son
+            # propre mot de passe : « Current password is incorrect ». Le compte
+            # reste a `is_first_login=true`, donc inutilisable par son porteur —
+            # mais il EXISTE, il est rattachable, et le run continue.
+            utilisateur["finition"] = {
+                "aboutie": False,
+                "motif": (
+                    f"HTTP {erreur.status} sur /auth/password/f/change : {erreur.detail[:200]}"
+                ),
+            }
+            return utilisateur
 
-        await self._client.requete(
-            "PUT",
-            "/api/v1/auth/password/f/change",
-            json_body={
-                "email": email,
-                "password": mot_de_passe_initial,
-                "new_password": nouveau_mot_de_passe,
-            },
-            token_alternatif=str(auth_token),
-        )
-
-        connexion = await self._client.requete(
-            "POST",
-            "/api/v1/auth/login",
-            json_body={"username": user_name, "password": nouveau_mot_de_passe},
-        )
-        return connexion.data if isinstance(connexion.data, dict) else {}
+        utilisateur["finition"] = {"aboutie": True, "motif": ""}
+        return utilisateur
 
     # ----------------------------------------------------------------------
     # Roles RBAC — D-USR-10
