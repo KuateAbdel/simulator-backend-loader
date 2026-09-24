@@ -55,8 +55,12 @@ class VersionsServicesRepository:
         ligne la plus vieille l'est.
         """
         vieux: datetime | None = None
-        async for doc in self.collection.find({}, {"releve_le": 1}):
-            quand = doc.get("releve_le")
+        # LA DATE QUI PROUVE LA FRAICHEUR EST CELLE DE LA DERNIERE TENTATIVE
+        # (24/09) : un service muet garde son ancien `releve_le` (sa version
+        # connue ne s'efface pas), mais il A ete sonde — sinon, avec un seul
+        # service en panne, tout le tableau se dirait vieux de plusieurs jours.
+        async for doc in self.collection.find({}, {"releve_le": 1, "derniere_tentative": 1}):
+            quand = doc.get("derniere_tentative") or doc.get("releve_le")
             if not isinstance(quand, datetime):
                 return None
             if quand.tzinfo is None:
