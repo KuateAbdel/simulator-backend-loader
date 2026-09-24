@@ -221,3 +221,109 @@ class TestV01ReleveDeVersion:
     async def test_sans_jeton_401(self, client: httpx.AsyncClient) -> None:
         assert (await client.get("/admin/versions")).status_code == 401
         assert (await client.post("/admin/versions/relever")).status_code == 401
+
+
+def _doubler_sonde_complete(monkeypatch: pytest.MonkeyPatch, reponses: dict[str, Any]) -> None:
+    """Double `openapi.json` ET `/health` : routes nommees, empreinte des
+    schemas, sante — la sonde du 24/09, sans aucun appel reseau."""
+    from app.routes import admin_versions
+
+    async def faux_relever(_client: Any, nom: str, _base: str) -> dict[str, Any]:
+        document = reponses.get(nom)
+        if document is None:
+            return {"joignable": False, "titre": None, "version": None, "chemins": None,
+                    "operations": None, "routes": None, "schemas": None,
+                    "empreinte_schemas": None, "sante": {"code": 502, "latence_ms": 700}}
+        chemins = document.get("paths") or {}
+        routes = sorted(f"{m.upper()} {c}" for c, ms in chemins.items() for m in ms)
+        schemas = (document.get("components") or {}).get("schemas") or {}
+        import hashlib, json as _json
+        squelette = {n: {"requis": sorted(d.get("required") or []), "proprietes": sorted(d.get("properties") or {}), "enum": []} for n, d in schemas.items()}
+        empreinte = hashlib.sha1(_json.dumps(squelette, sort_keys=True).encode()).hexdigest()[:12]
+        info = document.get("info") or {}
+        return {"joignable": True, "titre": info.get("title"), "version": info.get("version"),
+                "chemins": len(chemins), "operations": len(routes), "routes": routes,
+                "schemas": len(squelette), "empreinte_schemas": empreinte,
+                "sante": {"code": 200, "latence_ms": 230}}
+
+    monkeypatch.setattr(admin_versions, "_relever_un", faux_relever)
+
+
+def _openapi_routes(titre: str, version: str, routes: list[str], schemas: dict[str, Any] | None = None) -> dict[str, Any]:
+    paths: dict[str, Any] = {}
+    for r in routes:
+        m, c = r.split(" ", 1)
+        paths.setdefault(c, {})[m.lower()] = {}
+    return {"info": {"title": titre, "version": version}, "paths": paths,
+            "components": {"schemas": schemas or {}}}
+
+
+class TestV01bisSondeAmelioree:
+    """Meme logique que V-01, plus de verite (24/09)."""
+
+    @pytest.mark.anyio
+    async def test_une_route_RENOMMEE_a_nombre_constant_est_NOMMEE(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await _vider()
+        entetes = await _session_complete(client)
+        _doubler_sonde_complete(monkeypatch, {"client-service": _openapi_routes("Client Service", "1.0.0", ["GET /api/v1/a", "POST /api/v1/b"])})
+        await client.post("/admin/versions/relever", headers=entetes)
+        _doubler_sonde_complete(monkeypatch, {"client-service": _openapi_routes("Client Service", "1.0.0", ["GET /api/v1/a", "POST /api/v1/c"])})
+        await client.post("/admin/versions/relever", headers=entetes)
+        reponse = await client.get("/admin/versions", headers=entetes)
+        ligne = next(s for s in reponse.json()["services"] if s["service"] == "client-service")
+        assert ligne["gravite"] == "changement"
+        assert "POST /api/v1/c" in ligne["commentaire"] and "POST /api/v1/b" in ligne["commentaire"]
+        assert "SANS montee de version" in ligne["commentaire"]
+        assert ligne["routes_ajoutees"] == ["POST /api/v1/c"] and ligne["routes_retirees"] == ["POST /api/v1/b"]
+
+    @pytest.mark.anyio
+    async def test_un_SCHEMA_qui_change_a_chemins_constants_est_un_changement(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await _vider()
+        entetes = await _session_complete(client)
+        routes = ["POST /api/v1/auth/register"]
+        _doubler_sonde_complete(monkeypatch, {"user-service": _openapi_routes("User Service", "1.0.1", routes, {"CreateUserSchema": {"required": ["user_name", "identity"], "properties": {"user_name": {}, "identity": {}}}})})
+        await client.post("/admin/versions/relever", headers=entetes)
+        _doubler_sonde_complete(monkeypatch, {"user-service": _openapi_routes("User Service", "1.0.1", routes, {"CreateUserSchema": {"required": ["user_name"], "properties": {"user_name": {}, "identity": {}}}})})
+        await client.post("/admin/versions/relever", headers=entetes)
+        reponse = await client.get("/admin/versions", headers=entetes)
+        ligne = next(s for s in reponse.json()["services"] if s["service"] == "user-service")
+        assert ligne["gravite"] == "changement" and "schemas modifies" in ligne["commentaire"]
+
+    @pytest.mark.anyio
+    async def test_la_lecture_PUBLIQUE_rend_la_meme_verite_sans_jeton(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await _vider()
+        _doubler_sonde_complete(monkeypatch, {"config-service": _openapi_routes("Config Service", "1.0.1", ["GET /api/v1/countries/"])})
+        reponse = await client.get("/public/versions")
+        assert reponse.status_code == 200
+        corps = reponse.json()
+        assert "services" in corps and "a_surveiller" in corps
+        ligne = next(s for s in corps["services"] if s["service"] == "config-service")
+        assert ligne["version"] == "1.0.1" and ligne["sante"]["code"] == 200 and ligne["sante"]["latence_ms"] == 230
+        assert ligne["sante"]["muet_depuis"] is None
+
+    @pytest.mark.anyio
+    async def test_un_service_MUET_dit_depuis_quand_puis_l_oublie_quand_il_repond(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await _vider()
+        entetes = await _session_complete(client)
+        doc = _openapi_routes("Account Service", "1.0.0", ["GET /api/v1/accounts/"])
+        _doubler_sonde_complete(monkeypatch, {"account-service": doc})
+        await client.post("/admin/versions/relever", headers=entetes)
+        _doubler_sonde_complete(monkeypatch, {})  # plus personne ne repond
+        await client.post("/admin/versions/relever", headers=entetes)
+        reponse = await client.get("/admin/versions", headers=entetes)
+        ligne = next(s for s in reponse.json()["services"] if s["service"] == "account-service")
+        assert ligne["version"] == "1.0.0", "un service muet garde sa version"
+        assert ligne["sante"]["muet_depuis"] is not None and ligne["sante"]["code"] == 502
+        _doubler_sonde_complete(monkeypatch, {"account-service": doc})
+        await client.post("/admin/versions/relever", headers=entetes)
+        reponse = await client.get("/admin/versions", headers=entetes)
+        ligne = next(s for s in reponse.json()["services"] if s["service"] == "account-service")
+        assert ligne["sante"]["muet_depuis"] is None and ligne["gravite"] == "stable"

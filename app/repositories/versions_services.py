@@ -103,9 +103,10 @@ class VersionsServicesRepository:
         existant = await self.collection.find_one({"_id": service}) or {}
         precedent = {
             cle: existant.get(cle)
-            for cle in ("version", "titre", "chemins", "operations")
+            for cle in ("version", "titre", "chemins", "operations", "routes", "schemas", "empreinte_schemas")
             if cle in existant
         }
+        sante = releve.get("sante")
 
         # UN SERVICE MUET N'EFFACE PAS SA VERSION.
         #
@@ -118,21 +119,33 @@ class VersionsServicesRepository:
         if not releve.get("joignable") and existant.get("version"):
             releve = {
                 cle: existant.get(cle)
-                for cle in ("titre", "version", "chemins", "operations")
+                for cle in ("titre", "version", "chemins", "operations", "routes", "schemas", "empreinte_schemas")
             }
             releve["joignable"] = True
             document = {
                 **existant,
                 **releve,
                 "derniere_tentative": maintenant,
+                # AMELIORATION 24/09 : on note DEPUIS QUAND il se tait, et la
+                # sante du passage (code, latence) — la webapp n'a pas de
+                # tableau de bord, elle montre cette colonne.
+                "sante": sante or existant.get("sante"),
+                "muet_depuis": existant.get("muet_depuis") or maintenant,
             }
             await self.collection.replace_one({"_id": service}, document, upsert=True)
             return precedent
 
         historique = list(existant.get("historique") or [])
-        change = bool(precedent) and any(
-            precedent.get(cle) != releve.get(cle)
-            for cle in ("version", "chemins", "operations")
+        change = bool(precedent) and (
+            any(
+                precedent.get(cle) != releve.get(cle)
+                for cle in ("version", "chemins", "operations", "empreinte_schemas")
+                if cle in precedent and cle in releve
+            )
+            or (
+                bool(precedent.get("routes")) and bool(releve.get("routes"))
+                and set(precedent["routes"]) != set(releve["routes"])
+            )
         )
         if change or not historique:
             # On n'empile QUE les relevés qui apportent une information : vingt
@@ -149,6 +162,8 @@ class VersionsServicesRepository:
                 existant.get("vu_stable_depuis", maintenant) if not change else maintenant
             ),
             "historique": historique,
+            # il repond : il n'est plus muet
+            "muet_depuis": None,
         }
         await self.collection.replace_one({"_id": service}, document, upsert=True)
         return precedent
