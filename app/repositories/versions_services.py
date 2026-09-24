@@ -142,6 +142,8 @@ class VersionsServicesRepository:
             return precedent
 
         historique = list(existant.get("historique") or [])
+        routes_avant: list[str] = list(precedent.get("routes") or [])
+        routes_apres: list[str] = list(releve.get("routes") or [])
         change = bool(precedent) and (
             any(
                 precedent.get(cle) != releve.get(cle)
@@ -149,8 +151,8 @@ class VersionsServicesRepository:
                 if cle in precedent and cle in releve
             )
             or (
-                bool(precedent.get("routes")) and bool(releve.get("routes"))
-                and set(precedent["routes"]) != set(releve["routes"])
+                bool(routes_avant) and bool(routes_apres)
+                and set(routes_avant) != set(routes_apres)
             )
         )
         if change or not historique:
