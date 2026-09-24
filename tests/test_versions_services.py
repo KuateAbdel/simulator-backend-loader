@@ -237,9 +237,17 @@ def _doubler_sonde_complete(monkeypatch: pytest.MonkeyPatch, reponses: dict[str,
         chemins = document.get("paths") or {}
         routes = sorted(f"{m.upper()} {c}" for c, ms in chemins.items() for m in ms)
         schemas = (document.get("components") or {}).get("schemas") or {}
-        import hashlib, json as _json
-        squelette = {n: {"requis": sorted(d.get("required") or []), "proprietes": sorted(d.get("properties") or {}), "enum": []} for n, d in schemas.items()}
-        empreinte = hashlib.sha1(_json.dumps(squelette, sort_keys=True).encode()).hexdigest()[:12]
+        import hashlib
+        import json as _json
+        squelette = {
+            n: {
+                "requis": sorted(d.get("required") or []),
+                "proprietes": sorted(d.get("properties") or {}),
+                "enum": [],
+            }
+            for n, d in schemas.items()
+        }
+        empreinte = hashlib.sha256(_json.dumps(squelette, sort_keys=True).encode()).hexdigest()[:12]
         info = document.get("info") or {}
         return {"joignable": True, "titre": info.get("title"), "version": info.get("version"),
                 "chemins": len(chemins), "operations": len(routes), "routes": routes,
@@ -249,7 +257,9 @@ def _doubler_sonde_complete(monkeypatch: pytest.MonkeyPatch, reponses: dict[str,
     monkeypatch.setattr(admin_versions, "_relever_un", faux_relever)
 
 
-def _openapi_routes(titre: str, version: str, routes: list[str], schemas: dict[str, Any] | None = None) -> dict[str, Any]:
+def _openapi_routes(
+    titre: str, version: str, routes: list[str], schemas: dict[str, Any] | None = None
+) -> dict[str, Any]:
     paths: dict[str, Any] = {}
     for r in routes:
         m, c = r.split(" ", 1)
@@ -267,16 +277,26 @@ class TestV01bisSondeAmelioree:
     ) -> None:
         await _vider()
         entetes = await _session_complete(client)
-        _doubler_sonde_complete(monkeypatch, {"client-service": _openapi_routes("Client Service", "1.0.0", ["GET /api/v1/a", "POST /api/v1/b"])})
+        _doubler_sonde_complete(monkeypatch, {
+            "client-service": _openapi_routes(
+                "Client Service", "1.0.0", ["GET /api/v1/a", "POST /api/v1/b"]
+            ),
+        })
         await client.post("/admin/versions/relever", headers=entetes)
-        _doubler_sonde_complete(monkeypatch, {"client-service": _openapi_routes("Client Service", "1.0.0", ["GET /api/v1/a", "POST /api/v1/c"])})
+        _doubler_sonde_complete(monkeypatch, {
+            "client-service": _openapi_routes(
+                "Client Service", "1.0.0", ["GET /api/v1/a", "POST /api/v1/c"]
+            ),
+        })
         await client.post("/admin/versions/relever", headers=entetes)
         reponse = await client.get("/admin/versions", headers=entetes)
         ligne = next(s for s in reponse.json()["services"] if s["service"] == "client-service")
         assert ligne["gravite"] == "changement"
-        assert "POST /api/v1/c" in ligne["commentaire"] and "POST /api/v1/b" in ligne["commentaire"]
+        assert "POST /api/v1/c" in ligne["commentaire"]
+        assert "POST /api/v1/b" in ligne["commentaire"]
         assert "SANS montee de version" in ligne["commentaire"]
-        assert ligne["routes_ajoutees"] == ["POST /api/v1/c"] and ligne["routes_retirees"] == ["POST /api/v1/b"]
+        assert ligne["routes_ajoutees"] == ["POST /api/v1/c"]
+        assert ligne["routes_retirees"] == ["POST /api/v1/b"]
 
     @pytest.mark.anyio
     async def test_un_SCHEMA_qui_change_a_chemins_constants_est_un_changement(
@@ -285,9 +305,25 @@ class TestV01bisSondeAmelioree:
         await _vider()
         entetes = await _session_complete(client)
         routes = ["POST /api/v1/auth/register"]
-        _doubler_sonde_complete(monkeypatch, {"user-service": _openapi_routes("User Service", "1.0.1", routes, {"CreateUserSchema": {"required": ["user_name", "identity"], "properties": {"user_name": {}, "identity": {}}}})})
+        schema_avant = {
+            "CreateUserSchema": {
+                "required": ["user_name", "identity"],
+                "properties": {"user_name": {}, "identity": {}},
+            }
+        }
+        _doubler_sonde_complete(monkeypatch, {
+            "user-service": _openapi_routes("User Service", "1.0.1", routes, schema_avant),
+        })
         await client.post("/admin/versions/relever", headers=entetes)
-        _doubler_sonde_complete(monkeypatch, {"user-service": _openapi_routes("User Service", "1.0.1", routes, {"CreateUserSchema": {"required": ["user_name"], "properties": {"user_name": {}, "identity": {}}}})})
+        schema_apres = {
+            "CreateUserSchema": {
+                "required": ["user_name"],
+                "properties": {"user_name": {}, "identity": {}},
+            }
+        }
+        _doubler_sonde_complete(monkeypatch, {
+            "user-service": _openapi_routes("User Service", "1.0.1", routes, schema_apres),
+        })
         await client.post("/admin/versions/relever", headers=entetes)
         reponse = await client.get("/admin/versions", headers=entetes)
         ligne = next(s for s in reponse.json()["services"] if s["service"] == "user-service")
@@ -298,13 +334,18 @@ class TestV01bisSondeAmelioree:
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         await _vider()
-        _doubler_sonde_complete(monkeypatch, {"config-service": _openapi_routes("Config Service", "1.0.1", ["GET /api/v1/countries/"])})
+        _doubler_sonde_complete(monkeypatch, {
+            "config-service": _openapi_routes(
+                "Config Service", "1.0.1", ["GET /api/v1/countries/"]
+            ),
+        })
         reponse = await client.get("/public/versions")
         assert reponse.status_code == 200
         corps = reponse.json()
         assert "services" in corps and "a_surveiller" in corps
         ligne = next(s for s in corps["services"] if s["service"] == "config-service")
-        assert ligne["version"] == "1.0.1" and ligne["sante"]["code"] == 200 and ligne["sante"]["latence_ms"] == 230
+        assert ligne["version"] == "1.0.1"
+        assert ligne["sante"]["code"] == 200 and ligne["sante"]["latence_ms"] == 230
         assert ligne["sante"]["muet_depuis"] is None
 
     @pytest.mark.anyio

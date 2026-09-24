@@ -190,8 +190,8 @@ async def _relever_un(client: httpx.AsyncClient, nom: str, base: str) -> dict[st
             "code": reponse_sante.status_code,
             "latence_ms": int((asyncio.get_running_loop().time() - debut) * 1000),
         }
-    except Exception:
-        pass
+    except Exception as exc:  # un /health muet est une donnee, pas une panne de l'ecran
+        logger.debug("sante de %s non relevee : %s", nom, exc)
     try:
         reponse = await client.get(f"{base}/openapi.json")
         reponse.raise_for_status()
@@ -218,7 +218,8 @@ async def _relever_un(client: httpx.AsyncClient, nom: str, base: str) -> dict[st
         for nom_schema, defn in schemas.items()
         if isinstance(defn, dict)
     }
-    empreinte = hashlib.sha1(
+    # une empreinte de comparaison, pas un secret : sha256 pour la regle S324
+    empreinte = hashlib.sha256(
         json.dumps(squelette, sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()[:12]
     info = document.get("info") or {}
@@ -251,15 +252,19 @@ def _verdict(nom: str, courant: dict[str, Any], precedent: dict[str, Any]) -> di
             ajoutees = sorted(set(apres_r) - set(avant_r))
             retirees = sorted(set(avant_r) - set(apres_r))
             bouts: list[str] = []
+            suite = " …"
             if ajoutees:
-                bouts.append(f"+{len(ajoutees)} : " + ", ".join(ajoutees[:3]) + (" …" if len(ajoutees) > 3 else ""))
+                reste = suite if len(ajoutees) > 3 else ""
+                bouts.append(f"+{len(ajoutees)} : " + ", ".join(ajoutees[:3]) + reste)
             if retirees:
-                bouts.append(f"-{len(retirees)} : " + ", ".join(retirees[:3]) + (" …" if len(retirees) > 3 else ""))
-            monte = precedent.get("version") and courant["version"] and precedent.get("version") != courant["version"]
+                reste = suite if len(retirees) > 3 else ""
+                bouts.append(f"-{len(retirees)} : " + ", ".join(retirees[:3]) + reste)
+            avant_v0, apres_v0 = precedent.get("version"), courant["version"]
+            monte = bool(avant_v0 and apres_v0 and avant_v0 != apres_v0)
             return {
                 "gravite": "changement",
                 "commentaire": (
-                    (f"version {precedent.get('version')} → {courant['version']} ; " if monte else "")
+                    (f"version {avant_v0} → {apres_v0} ; " if monte else "")
                     + "routes " + " ; ".join(bouts)
                     + ("" if monte else " — SANS montee de version, le service ne le dit pas")
                 ),
@@ -300,7 +305,8 @@ def _verdict(nom: str, courant: dict[str, Any], precedent: dict[str, Any]) -> di
             return {
                 "gravite": "changement",
                 "commentaire": (
-                    f"schemas modifies a chemins constants ({precedent.get('schemas')} → {courant.get('schemas')} schemas) "
+                    "schemas modifies a chemins constants "
+                    f"({precedent.get('schemas')} → {courant.get('schemas')} schemas) "
                     "— un champ requis ou une propriete a bouge, le contrat est a re-mesurer"
                 ),
             }
@@ -399,8 +405,12 @@ async def _servir(depot: VersionsServicesRepository) -> dict[str, Any]:
                 "chemins": doc.get("chemins"),
                 "operations": doc.get("operations"),
                 "schemas": doc.get("schemas"),
-                "routes_ajoutees": sorted(set(apres_r or []) - set(avant_r or [])) if avant_r and apres_r else [],
-                "routes_retirees": sorted(set(avant_r or []) - set(apres_r or [])) if avant_r and apres_r else [],
+                "routes_ajoutees": (
+                    sorted(set(apres_r) - set(avant_r)) if avant_r and apres_r else []
+                ),
+                "routes_retirees": (
+                    sorted(set(avant_r) - set(apres_r)) if avant_r and apres_r else []
+                ),
                 # la sante du DERNIER passage : code de /health, latence, et
                 # depuis quand le service ne repond plus s'il ne repond plus
                 "sante": {
