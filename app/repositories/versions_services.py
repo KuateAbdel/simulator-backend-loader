@@ -103,7 +103,10 @@ class VersionsServicesRepository:
         existant = await self.collection.find_one({"_id": service}) or {}
         precedent = {
             cle: existant.get(cle)
-            for cle in ("version", "titre", "chemins", "operations", "routes", "schemas", "empreinte_schemas")
+            for cle in (
+                "version", "titre", "chemins", "operations", "routes", "schemas",
+                "empreinte_schemas",
+            )
             if cle in existant
         }
         sante = releve.get("sante")
@@ -119,7 +122,10 @@ class VersionsServicesRepository:
         if not releve.get("joignable") and existant.get("version"):
             releve = {
                 cle: existant.get(cle)
-                for cle in ("titre", "version", "chemins", "operations", "routes", "schemas", "empreinte_schemas")
+                for cle in (
+                    "titre", "version", "chemins", "operations", "routes", "schemas",
+                    "empreinte_schemas",
+                )
             }
             releve["joignable"] = True
             document = {
