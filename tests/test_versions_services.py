@@ -271,7 +271,6 @@ def _openapi_routes(
 class TestV01bisSondeAmelioree:
     """Meme logique que V-01, plus de verite (24/09)."""
 
-    @pytest.mark.anyio
     async def test_une_route_RENOMMEE_a_nombre_constant_est_NOMMEE(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -298,7 +297,6 @@ class TestV01bisSondeAmelioree:
         assert ligne["routes_ajoutees"] == ["POST /api/v1/c"]
         assert ligne["routes_retirees"] == ["POST /api/v1/b"]
 
-    @pytest.mark.anyio
     async def test_un_SCHEMA_qui_change_a_chemins_constants_est_un_changement(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -329,7 +327,6 @@ class TestV01bisSondeAmelioree:
         ligne = next(s for s in reponse.json()["services"] if s["service"] == "user-service")
         assert ligne["gravite"] == "changement" and "schemas modifies" in ligne["commentaire"]
 
-    @pytest.mark.anyio
     async def test_la_lecture_PUBLIQUE_rend_la_meme_verite_sans_jeton(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -348,7 +345,6 @@ class TestV01bisSondeAmelioree:
         assert ligne["sante"]["code"] == 200 and ligne["sante"]["latence_ms"] == 230
         assert ligne["sante"]["muet_depuis"] is None
 
-    @pytest.mark.anyio
     async def test_un_service_MUET_dit_depuis_quand_puis_l_oublie_quand_il_repond(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
