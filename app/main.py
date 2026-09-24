@@ -147,3 +147,4 @@ app.include_router(attribution_publique.router)
 # Sa face d'administration — lecture seule, roles du Loader (25/08).
 app.include_router(admin_attributions.router)
 app.include_router(admin_versions.router)
+app.include_router(admin_versions.router_public)

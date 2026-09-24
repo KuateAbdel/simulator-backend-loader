@@ -44,6 +44,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -58,6 +60,11 @@ from app.routes.dependances import SessionAdmin, admin_complet, exige_admin
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/versions", tags=["admin — versions"])
+#: La webapp lit LA MEME verite, sans compte Loader : ce que cet ecran montre
+#: est public de toute facon (`openapi.json` l'est). Lecture seule ; le
+#: rafraichissement suit `V-01` (une lecture sur cache perime releve), le
+#: bouton « Relever maintenant » reste reserve aux administrateurs du Loader.
+router_public = APIRouter(prefix="/public/versions", tags=["public — versions"])
 
 #: Trois heures, la cadence demandee. La lecture qui trouve le cache plus
 #: vieux que ca le rafraichit ; les autres sont servies telles quelles.
@@ -163,30 +170,68 @@ async def _relever_un(client: httpx.AsyncClient, nom: str, base: str) -> dict[st
 
     `openapi.json` est public sur ces services (`/health`, `/docs`,
     `/openapi.json` en 200 sans jeton, mesure du 08/08).
+
+    AMELIORATION DU 24/09 (meme logique, plus de verite) :
+      - `routes` : la LISTE des `METHODE chemin`, pas seulement leur nombre.
+        Un chemin renomme a nombre constant etait invisible ; il ne l'est plus.
+      - `empreinte_schemas` : une empreinte des schemas (noms, champs requis,
+        proprietes). Le 23/09, `CreateUserSchema` de user-service disait
+        « requis » ce que le serveur n'exige pas : un schema qui bouge sans
+        chemin qui bouge est un changement de contrat, et il se voit ici.
+      - `sante` : le code et la latence de `/health`, releves DANS LE MEME
+        passage. La webapp n'a pas de tableau de bord des services : elle
+        montre cette colonne ; le Loader, qui l'a, peut l'ignorer.
     """
+    sante: dict[str, Any] = {"code": None, "latence_ms": None}
+    try:
+        debut = asyncio.get_running_loop().time()
+        reponse_sante = await client.get(f"{base}/health")
+        sante = {
+            "code": reponse_sante.status_code,
+            "latence_ms": int((asyncio.get_running_loop().time() - debut) * 1000),
+        }
+    except Exception:
+        pass
     try:
         reponse = await client.get(f"{base}/openapi.json")
         reponse.raise_for_status()
         document = reponse.json()
     except Exception:
         return {"joignable": False, "titre": None, "version": None,
-                "chemins": None, "operations": None}
-
+                "chemins": None, "operations": None, "routes": None,
+                "schemas": None, "empreinte_schemas": None, "sante": sante}
     chemins = document.get("paths") or {}
-    operations = sum(
-        1
-        for methodes in chemins.values()
+    routes = sorted(
+        f"{cle.upper()} {chemin}"
+        for chemin, methodes in chemins.items()
         if isinstance(methodes, dict)
         for cle in methodes
         if cle.lower() in {"get", "post", "put", "patch", "delete"}
     )
+    schemas = ((document.get("components") or {}).get("schemas") or {})
+    squelette = {
+        nom_schema: {
+            "requis": sorted(str(x) for x in (defn.get("required") or [])),
+            "proprietes": sorted(str(x) for x in (defn.get("properties") or {})),
+            "enum": [str(x) for x in (defn.get("enum") or [])],
+        }
+        for nom_schema, defn in schemas.items()
+        if isinstance(defn, dict)
+    }
+    empreinte = hashlib.sha1(
+        json.dumps(squelette, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()[:12]
     info = document.get("info") or {}
     return {
         "joignable": True,
         "titre": str(info.get("title") or "").strip() or None,
         "version": str(info.get("version") or "").strip() or None,
         "chemins": len(chemins),
-        "operations": operations,
+        "operations": len(routes),
+        "routes": routes,
+        "schemas": len(squelette),
+        "empreinte_schemas": empreinte,
+        "sante": sante,
     }
 
 
@@ -199,6 +244,26 @@ def _verdict(nom: str, courant: dict[str, Any], precedent: dict[str, Any]) -> di
         return {"gravite": "jamais_lu", "commentaire": "version jamais lue"}
 
     if precedent:
+        # LES ROUTES, UNE PAR UNE. Le nombre peut rester le meme quand un chemin
+        # est renomme : on compare les listes, et on NOMME ce qui a bouge.
+        avant_r, apres_r = precedent.get("routes"), courant.get("routes")
+        if avant_r is not None and apres_r is not None and set(avant_r) != set(apres_r):
+            ajoutees = sorted(set(apres_r) - set(avant_r))
+            retirees = sorted(set(avant_r) - set(apres_r))
+            bouts: list[str] = []
+            if ajoutees:
+                bouts.append(f"+{len(ajoutees)} : " + ", ".join(ajoutees[:3]) + (" …" if len(ajoutees) > 3 else ""))
+            if retirees:
+                bouts.append(f"-{len(retirees)} : " + ", ".join(retirees[:3]) + (" …" if len(retirees) > 3 else ""))
+            monte = precedent.get("version") and courant["version"] and precedent.get("version") != courant["version"]
+            return {
+                "gravite": "changement",
+                "commentaire": (
+                    (f"version {precedent.get('version')} → {courant['version']} ; " if monte else "")
+                    + "routes " + " ; ".join(bouts)
+                    + ("" if monte else " — SANS montee de version, le service ne le dit pas")
+                ),
+            }
         avant_v, apres_v = precedent.get("version"), courant["version"]
         if avant_v and apres_v and avant_v != apres_v:
             return {
@@ -227,6 +292,18 @@ def _verdict(nom: str, courant: dict[str, Any], precedent: dict[str, Any]) -> di
                 ),
             }
 
+        # LES SCHEMAS. Chemins constants, version constante, mais un champ
+        # requis qui apparait ou disparait : le contrat a change (le 23/09,
+        # `register` n'exigeait plus `identity` que sur le papier).
+        avant_e, apres_e = precedent.get("empreinte_schemas"), courant.get("empreinte_schemas")
+        if avant_e and apres_e and avant_e != apres_e:
+            return {
+                "gravite": "changement",
+                "commentaire": (
+                    f"schemas modifies a chemins constants ({precedent.get('schemas')} → {courant.get('schemas')} schemas) "
+                    "— un champ requis ou une propriete a bouge, le contrat est a re-mesurer"
+                ),
+            }
     # Le titre est compare au NOM du service : `user-service` et
     # `identity-service` se declarent tous les deux « Auth Service » (mesure
     # du 10/08). Deux services differents sous le meme nom.
@@ -299,6 +376,10 @@ async def _servir(depot: VersionsServicesRepository) -> dict[str, Any]:
                     "operations": None,
                     "gravite": "jamais_lu",
                     "commentaire": "version jamais lue",
+                    "schemas": None,
+                    "routes_ajoutees": [],
+                    "routes_retirees": [],
+                    "sante": {"code": None, "latence_ms": None, "muet_depuis": None},
                     "releve_le": None,
                     "stable_depuis": None,
                     "expose_depuis": exposition.get(nom),
@@ -309,6 +390,7 @@ async def _servir(depot: VersionsServicesRepository) -> dict[str, Any]:
         historique = doc.get("historique") or []
         precedent = historique[-2] if len(historique) >= 2 else {}
         verdict = _verdict(nom, doc, precedent)
+        avant_r, apres_r = precedent.get("routes"), doc.get("routes")
         lignes.append(
             {
                 "service": nom,
@@ -316,6 +398,15 @@ async def _servir(depot: VersionsServicesRepository) -> dict[str, Any]:
                 "titre": doc.get("titre"),
                 "chemins": doc.get("chemins"),
                 "operations": doc.get("operations"),
+                "schemas": doc.get("schemas"),
+                "routes_ajoutees": sorted(set(apres_r or []) - set(avant_r or [])) if avant_r and apres_r else [],
+                "routes_retirees": sorted(set(avant_r or []) - set(apres_r or [])) if avant_r and apres_r else [],
+                # la sante du DERNIER passage : code de /health, latence, et
+                # depuis quand le service ne repond plus s'il ne repond plus
+                "sante": {
+                    **(doc.get("sante") or {"code": None, "latence_ms": None}),
+                    "muet_depuis": _horodatage(doc.get("muet_depuis")),
+                },
                 **verdict,
                 "releve_le": _horodatage(doc.get("releve_le")),
                 "stable_depuis": _horodatage(doc.get("vu_stable_depuis")),
@@ -385,3 +476,16 @@ async def relever(
     async with _verrou("versions:relever", session.email):
         await _relever_tout()
     return await _servir(VersionsServicesRepository())
+
+
+@router_public.get("")
+async def versions_publiques() -> dict[str, Any]:
+    """La lecture publique — memes lignes, memes verdicts, meme fraicheur."""
+    from app.routes.admin_referentiels import _verrou
+    depot = VersionsServicesRepository()
+    age = await depot.age_du_cache()
+    if age is None or age > FRAICHEUR_SECONDES:
+        with contextlib.suppress(Exception):
+            async with _verrou("versions:relever", "cache"):
+                await _relever_tout()
+    return await _servir(depot)
