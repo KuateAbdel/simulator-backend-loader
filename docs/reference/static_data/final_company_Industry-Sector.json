@@ -757,6 +757,12 @@
       "industry_ids": [
         5
       ]
+    },
+    {
+      "label": "Street Vendor",
+      "industry_ids": [
+        3
+      ]
     }
   ]
 }

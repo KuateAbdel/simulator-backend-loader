@@ -88,9 +88,7 @@ def pousser(cfg: Config, par_industrie: dict[str, list[str]]) -> None:
             )
             avant = len(deja.get("sectors") or [])
             desc = j.get("description")
-            print(
-                print(f"  MISE À JOUR {nom:18} {avant:3} → {len(secteurs):3} → HTTP {code} {desc}")
-            )
+            print(f"  MISE À JOUR {nom:18} {avant:3} → {len(secteurs):3} → HTTP {code} {desc}")
         else:
             print(f"  DÉJÀ LÀ {nom:22} {len(secteurs):3} secteurs (identique)")
 
