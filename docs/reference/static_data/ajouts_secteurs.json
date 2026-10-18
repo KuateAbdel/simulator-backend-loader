@@ -1,0 +1,13 @@
+{
+  "_doctrine": "Les secteurs AJOUTES par-dessus le classeur de JJB. Le classeur (112 secteurs) est immuable : c'est ce que garde le controle de comptes de referentiel_statique.py, et c'est ce que la surcouche reversible respecte deja cote admin (US-B5+). Un secteur demande par la Direction vit DONC ici, pas dans le classeur : ajout tracable, retrait = suppression d'une ligne, et pousser_industries.py pousse classeur + ajouts, donc un nouveau chargement ne perd pas l'ajout.",
+  "_regles": "label unique (classeur et ajouts), industries EXISTANTES uniquement (les 6 du classeur), et chaque ajout porte qui l'a demande et pourquoi.",
+  "ajouts": [
+    {
+      "label": "Street Vendor",
+      "industries": ["Commerce"],
+      "demande_par": "Direction",
+      "demande_le": "2026-10-18",
+      "pourquoi": "onboarding d'un client Business : declarer un vendeur de rue."
+    }
+  ]
+}
