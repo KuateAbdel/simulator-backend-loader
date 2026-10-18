@@ -14,6 +14,13 @@ Le contrat config-service (v1.0.1, lu le 30/09) porte l'industrie comme parent :
 (le secteur porte ses `industry_ids`), mais la relation n:n survit : un secteur-pont
 (Fintech = Finance & Insurance ET Technology) apparaît dans la liste `sectors` de CHACUNE
 de ses industries. La vérification finale le contrôle pour les 28 ponts.
+
+LES AJOUTS, ET POURQUOI ILS NE SONT PAS DANS LE CLASSEUR. Le classeur de JJB est immuable —
+`referentiel_statique.py` en garde les comptes (112 secteurs) pour détecter un fichier tronqué
+ou remplacé, et la surcouche admin (`US-B5+`) pose déjà la règle : base immuable, ajout
+réversible. Un secteur demandé par la Direction vit donc dans
+`docs/reference/static_data/ajouts_secteurs.json`, et ce script pousse CLASSEUR + AJOUTS : un
+nouveau chargement ne perd pas l'ajout, et le retirer tient en une ligne de moins.
 """
 
 from __future__ import annotations
@@ -30,7 +37,16 @@ import httpx
 from app.core.config import settings
 
 FICHIER = Path("docs/reference/static_data/final_company_Industry-Sector.json")
+FICHIER_AJOUTS = Path("docs/reference/static_data/ajouts_secteurs.json")
 B = "https://{s}.test.services.fintech4esg.com/api/v1"
+
+
+def ajouts() -> list[dict[str, Any]]:
+    """Les secteurs ajoutes par-dessus le classeur. Absent = aucun ajout, pas une erreur."""
+    if not FICHIER_AJOUTS.exists():
+        return []
+    lus: Any = json.loads(FICHIER_AJOUTS.read_text(encoding="utf-8")).get("ajouts", [])
+    return list(lus)
 
 
 def taxonomie() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
@@ -43,6 +59,17 @@ def taxonomie() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
         for i in s["industry_ids"]:
             par_industrie[ind[i]].append(s["label"])
             par_secteur[s["label"]].append(ind[i])
+    # LES AJOUTS, APRES le classeur : memes invariants que la surcouche admin — un label unique,
+    # et des industries qui EXISTENT deja (on n'ouvre pas une 7e industrie par un secteur).
+    for a in ajouts():
+        libelle = str(a["label"]).strip()
+        if not libelle or libelle in par_secteur:
+            raise SystemExit(f"ajout refusé : secteur {libelle!r} vide ou déjà au classeur")
+        for nom in a["industries"]:
+            if nom not in par_industrie:
+                raise SystemExit(f"ajout refusé : industrie {nom!r} inconnue du classeur")
+            par_industrie[nom].append(libelle)
+            par_secteur[libelle].append(nom)
     return par_industrie, dict(par_secteur)
 
 
@@ -88,9 +115,7 @@ def pousser(cfg: Config, par_industrie: dict[str, list[str]]) -> None:
             )
             avant = len(deja.get("sectors") or [])
             desc = j.get("description")
-            print(
-                print(f"  MISE À JOUR {nom:18} {avant:3} → {len(secteurs):3} → HTTP {code} {desc}")
-            )
+            print(f"  MISE À JOUR {nom:18} {avant:3} → {len(secteurs):3} → HTTP {code} {desc}")
         else:
             print(f"  DÉJÀ LÀ {nom:22} {len(secteurs):3} secteurs (identique)")
 
@@ -156,9 +181,12 @@ def main() -> None:
     ap.add_argument("--verifier", action="store_true", help="relecture seule, aucune écriture")
     arg = ap.parse_args()
     par_industrie, par_secteur = taxonomie()
+    ajoutes = [str(a["label"]) for a in ajouts()]
     print(
-        f"FICHIER : {len(par_industrie)} industries · {len(par_secteur)} secteurs · "
-        f"{sum(1 for v in par_secteur.values() if len(v) > 1)} ponts"
+        f"FICHIER : {len(par_industrie)} industries · {len(par_secteur)} secteurs "
+        f"({len(par_secteur) - len(ajoutes)} au classeur"
+        + (f" + {len(ajoutes)} ajouté(s) : {', '.join(ajoutes)}" if ajoutes else "")
+        + f") · {sum(1 for v in par_secteur.values() if len(v) > 1)} ponts"
     )
     cfg = Config()
     if not arg.verifier:
